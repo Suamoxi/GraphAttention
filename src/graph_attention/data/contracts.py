@@ -147,6 +147,7 @@ class Mesh:
     edge_index: torch.Tensor
     mesh_id: str | None = None
     node_weights: torch.Tensor | None = None
+    cell_connectivity: torch.Tensor | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -175,6 +176,17 @@ class Mesh:
                 raise TypeError("Mesh.node_weights must use a floating-point dtype.")
             if not torch.isfinite(self.node_weights).all():
                 raise ValueError("Mesh.node_weights contains NaN or Inf values.")
+
+        if self.cell_connectivity is not None:
+            if self.cell_connectivity.ndim != 2:
+                raise ValueError("Mesh.cell_connectivity must have shape [C, K].")
+            if self.cell_connectivity.dtype != torch.long:
+                raise TypeError("Mesh.cell_connectivity must use torch.long indices.")
+            if self.cell_connectivity.numel() > 0:
+                if int(self.cell_connectivity.min()) < 0:
+                    raise ValueError("Mesh.cell_connectivity contains a negative node index.")
+                if int(self.cell_connectivity.max()) >= self.num_nodes:
+                    raise ValueError("Mesh.cell_connectivity references a node outside coords.")
 
     @property
     def num_nodes(self) -> int:
