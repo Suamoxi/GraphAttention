@@ -51,7 +51,7 @@ def collect_runtime_provenance(repo_root: str | Path = ".") -> dict[str, Any]:
         },
         "runtime": {
             "python": platform.python_version(),
-            "pytorch": torch.__version__,
+            "pytorch": str(torch.__version__),
             "cuda": cuda_version,
             "cuda_available": torch.cuda.is_available(),
         },
