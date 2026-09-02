@@ -52,8 +52,35 @@ def _write_snapshot(path: Path, *, num_nodes: int = 8) -> None:
         group.create_dataset("rhoE", data=5.0 * values)
 
 
-def _spec(sample_id: str, snapshot: Path, mesh_id: str, mesh: Path) -> AVBPSampleSpec:
-    return AVBPSampleSpec(sample_id, snapshot, mesh_id, mesh)
+def _write_case(path: Path, case_id: str = "case-a") -> None:
+    path.write_text(
+        f"""case_id: {case_id}
+reference_scheme: test_reference
+references:
+  rho_ref:
+    value: 2.0
+    units: kg/m^3
+    definition: prescribed_reference_density
+    provenance: simulation_setup
+    inference_available: true
+  U_ref:
+    value: 5.0
+    units: m/s
+    definition: prescribed_reference_velocity
+    provenance: simulation_setup
+    inference_available: true
+"""
+    )
+
+
+def _spec(
+    sample_id: str,
+    snapshot: Path,
+    mesh_id: str,
+    mesh: Path,
+    case_id: str | None = None,
+) -> AVBPSampleSpec:
+    return AVBPSampleSpec(sample_id, snapshot, mesh_id, mesh, case_id)
 
 
 def test_avbp_reader_loads_requested_fields_from_separate_mesh(tmp_path: Path) -> None:
@@ -69,6 +96,7 @@ def test_avbp_reader_loads_requested_fields_from_separate_mesh(tmp_path: Path) -
     sample = dataset[0]
 
     assert sample.sample_id == "sample-0"
+    assert sample.case_id is None
     assert tuple(sample.fields) == ("rho", "rhoE")
     assert sample.fields["rho"].dtype == torch.float64
     assert sample.mesh.coords.dtype == torch.float64
@@ -78,6 +106,62 @@ def test_avbp_reader_loads_requested_fields_from_separate_mesh(tmp_path: Path) -
     assert sample.mesh.cell_connectivity.tolist() == [list(range(8))]
     assert sample.metadata["mesh_file"] == str(mesh_path.resolve())
     sample.validate_against(AVBP_FIELD_CATALOG)
+
+
+def test_avbp_reader_attaches_declared_case_references(tmp_path: Path) -> None:
+    mesh_path = tmp_path / "mesh.h5"
+    snapshot_path = tmp_path / "snapshot.h5"
+    case_path = tmp_path / "case.yaml"
+    _write_mesh(mesh_path)
+    _write_snapshot(snapshot_path)
+    _write_case(case_path)
+    dataset = AVBPHDF5Dataset(
+        samples=[_spec("sample-0", snapshot_path, "mesh-a", mesh_path, "case-a")],
+        case_files={"case-a": case_path},
+    )
+
+    sample = dataset[0]
+
+    assert sample.case_id == "case-a"
+    assert sample.reference_scales.scheme == "test_reference"
+    assert sample.reference_scales["rho_ref"].value == 2.0
+    assert sample.reference_scales["U_ref"].value == 5.0
+    assert sample.metadata["case_definition_file"] == str(case_path.resolve())
+
+
+def test_avbp_reader_reuses_case_references_for_multiple_snapshots(tmp_path: Path) -> None:
+    mesh_path = tmp_path / "mesh.h5"
+    first_path = tmp_path / "snapshot_0.h5"
+    second_path = tmp_path / "snapshot_1.h5"
+    case_path = tmp_path / "case.yaml"
+    _write_mesh(mesh_path)
+    _write_snapshot(first_path)
+    _write_snapshot(second_path)
+    _write_case(case_path)
+    dataset = AVBPHDF5Dataset(
+        samples=[
+            _spec("sample-0", first_path, "mesh-a", mesh_path, "case-a"),
+            _spec("sample-1", second_path, "mesh-a", mesh_path, "case-a"),
+        ],
+        case_files={"case-a": case_path},
+    )
+
+    first = dataset[0]
+    second = dataset[1]
+
+    assert first.reference_scales is second.reference_scales
+
+
+def test_avbp_reader_requires_configured_case_file_for_case_id(tmp_path: Path) -> None:
+    mesh_path = tmp_path / "mesh.h5"
+    snapshot_path = tmp_path / "snapshot.h5"
+    _write_mesh(mesh_path)
+    _write_snapshot(snapshot_path)
+
+    with pytest.raises(ValueError, match="missing case definition files"):
+        AVBPHDF5Dataset(
+            samples=[_spec("sample-0", snapshot_path, "mesh-a", mesh_path, "case-a")]
+        )
 
 
 def test_avbp_reader_reuses_one_cached_mesh_for_multiple_snapshots(tmp_path: Path) -> None:
@@ -128,8 +212,10 @@ def test_avbp_reader_supports_multiple_explicit_meshes(tmp_path: Path) -> None:
 def test_avbp_reader_accepts_mapping_specs_for_hydra(tmp_path: Path) -> None:
     mesh_path = tmp_path / "mesh.h5"
     snapshot_path = tmp_path / "snapshot.h5"
+    case_path = tmp_path / "case.yaml"
     _write_mesh(mesh_path)
     _write_snapshot(snapshot_path)
+    _write_case(case_path)
     dataset = AVBPHDF5Dataset(
         samples=[
             {
@@ -137,11 +223,14 @@ def test_avbp_reader_accepts_mapping_specs_for_hydra(tmp_path: Path) -> None:
                 "snapshot_file": str(snapshot_path),
                 "mesh_id": "mesh-a",
                 "mesh_file": str(mesh_path),
+                "case_id": "case-a",
             }
-        ]
+        ],
+        case_files={"case-a": case_path},
     )
 
     assert dataset[0].mesh.mesh_id == "mesh-a"
+    assert dataset[0].case_id == "case-a"
 
 
 def test_avbp_reader_reports_missing_requested_path(tmp_path: Path) -> None:
