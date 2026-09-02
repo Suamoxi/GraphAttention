@@ -118,10 +118,10 @@ class ConvectiveNondimensionalizer:
             raise ValueError(
                 f"Reference '{reference_name}' requires explicit provenance before preprocessing."
             )
-        if not reference.inference_available:
+        if reference.inference_available is not True:
             raise ValueError(
-                f"Reference '{reference_name}' is not available at inference for field "
-                f"'{field_name}'."
+                f"Reference '{reference_name}' must be explicitly marked available at "
+                f"inference for field '{field_name}'."
             )
         if reference.scope is ReferenceScope.SNAPSHOT:
             raise ValueError(
