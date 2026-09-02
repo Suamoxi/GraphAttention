@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from operator import index as operator_index
 from pathlib import Path
 
@@ -17,6 +18,7 @@ _DEFAULT_FIELDS = ("rho", "rhou", "rhov", "rhow", "rhoE")
 _DEFAULT_COORD_PATHS = ("Coordinates/x", "Coordinates/y", "Coordinates/z")
 _DEFAULT_CONNECTIVITY_PATH = "Connectivity/hex->node"
 _VALID_INDEXING = {"auto", "zero", "one"}
+_SAMPLE_SPEC_KEYS = {"sample_id", "snapshot_file", "mesh_id", "mesh_file"}
 
 
 AVBP_FIELD_CATALOG = FieldCatalog(
@@ -98,28 +100,43 @@ AVBP_FIELD_CATALOG = FieldCatalog(
 )
 
 
-class AVBPHDF5Dataset(Dataset[Sample]):
-    """Read named AVBP HDF5 fields and native mesh information.
+@dataclass(frozen=True, slots=True)
+class AVBPSampleSpec:
+    """Explicit association between one AVBP snapshot and its separate mesh file."""
 
-    M3.2 intentionally stops at the data boundary. Cell-to-node connectivity is
-    decoded and stored on ``Mesh.cell_connectivity``. ``Mesh.edge_index`` stays
-    empty until a geometry transform explicitly constructs graph edges.
+    sample_id: str
+    snapshot_file: str | Path
+    mesh_id: str
+    mesh_file: str | Path
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.sample_id, str) or not self.sample_id.strip():
+            raise ValueError("AVBPSampleSpec.sample_id must be a non-empty string")
+        if not isinstance(self.mesh_id, str) or not self.mesh_id.strip():
+            raise ValueError("AVBPSampleSpec.mesh_id must be a non-empty string")
+
+
+class AVBPHDF5Dataset(Dataset[Sample]):
+    """Read explicitly paired AVBP snapshots and separate native mesh files.
+
+    AVBP solution snapshots and meshes are separate files in this project. Each
+    sample therefore declares its snapshot-to-mesh association explicitly.
+    Meshes are decoded lazily and cached once per unique mesh file in each
+    dataset process. Cell-to-node connectivity is stored on
+    ``Mesh.cell_connectivity``; graph-edge construction remains a geometry-layer
+    operation.
     """
 
     def __init__(
         self,
-        files: Sequence[str | Path] | None = None,
-        data_dir: str | Path | None = None,
-        file_pattern: str = "*.h5",
-        recursive: bool = False,
+        samples: Sequence[AVBPSampleSpec | Mapping[str, object]] | None = None,
         field_names: Sequence[str] = _DEFAULT_FIELDS,
         coord_paths: Sequence[str] = _DEFAULT_COORD_PATHS,
         connectivity_path: str = _DEFAULT_CONNECTIVITY_PATH,
         connectivity_indexing: str = "auto",
-        mesh_file: str | Path | None = None,
         catalog: FieldCatalog | None = None,
     ) -> None:
-        self.files = _resolve_files(files, data_dir, file_pattern, recursive)
+        self.sample_specs = _normalize_sample_specs(samples)
         self.field_catalog = catalog or AVBP_FIELD_CATALOG
         self.field_names = tuple(field_names)
         if not self.field_names:
@@ -145,34 +162,40 @@ class AVBPHDF5Dataset(Dataset[Sample]):
             raise ValueError("connectivity_indexing must be one of: auto, zero, one")
         self.connectivity_path = connectivity_path
         self.connectivity_indexing = connectivity_indexing
-
-        self.mesh_file = Path(mesh_file).expanduser() if mesh_file is not None else None
-        if self.mesh_file is not None and not self.mesh_file.is_file():
-            raise FileNotFoundError(f"mesh_file does not exist: {self.mesh_file}")
-        self._shared_mesh = self._read_mesh(self.mesh_file) if self.mesh_file is not None else None
-
-        sample_ids = [path.stem for path in self.files]
-        if len(set(sample_ids)) != len(sample_ids):
-            raise ValueError("AVBP sample file stems must be unique")
+        self._mesh_cache: dict[Path, Mesh] = {}
 
     def __len__(self) -> int:
-        return len(self.files)
+        return len(self.sample_specs)
 
     def __getitem__(self, index: int) -> Sample:
         sample_index = operator_index(index)
-        path = self.files[sample_index]
-        mesh = self._shared_mesh if self._shared_mesh is not None else self._read_mesh(path)
-        fields = self._read_fields(path)
+        spec = self.sample_specs[sample_index]
+        mesh = self._mesh_for(spec)
+        fields = self._read_fields(spec.snapshot_file)
         sample = Sample(
-            sample_id=path.stem,
+            sample_id=spec.sample_id,
             mesh=mesh,
             fields=fields,
-            metadata={"format": "avbp_hdf5", "source_file": str(path)},
+            metadata={
+                "format": "avbp_hdf5",
+                "snapshot_file": str(spec.snapshot_file),
+                "mesh_id": spec.mesh_id,
+                "mesh_file": str(spec.mesh_file),
+            },
         )
         sample.validate_against(self.field_catalog)
         return sample
 
-    def _read_fields(self, path: Path) -> dict[str, torch.Tensor]:
+    def _mesh_for(self, spec: AVBPSampleSpec) -> Mesh:
+        mesh_path = _path_value(spec.mesh_file)
+        mesh = self._mesh_cache.get(mesh_path)
+        if mesh is None:
+            mesh = self._read_mesh(mesh_path, mesh_id=spec.mesh_id)
+            self._mesh_cache[mesh_path] = mesh
+        return mesh
+
+    def _read_fields(self, path_value: str | Path) -> dict[str, torch.Tensor]:
+        path = _path_value(path_value)
         fields: dict[str, torch.Tensor] = {}
         with h5py.File(path, "r") as h5f:
             for spec in self.field_specs:
@@ -180,7 +203,7 @@ class AVBPHDF5Dataset(Dataset[Sample]):
                 fields[spec.name] = _canonicalize_node_field(tensor, spec, path)
         return fields
 
-    def _read_mesh(self, path: Path) -> Mesh:
+    def _read_mesh(self, path: Path, mesh_id: str) -> Mesh:
         with h5py.File(path, "r") as h5f:
             coords = _read_coordinates(h5f, self.coord_paths, path)
             raw_connectivity = _read_tensor(h5f, self.connectivity_path, path)
@@ -192,11 +215,11 @@ class AVBPHDF5Dataset(Dataset[Sample]):
         return Mesh(
             coords=coords,
             edge_index=torch.empty((2, 0), dtype=torch.long),
-            mesh_id=path.stem,
+            mesh_id=mesh_id,
             cell_connectivity=cell_connectivity,
             metadata={
                 "format": "avbp_hdf5",
-                "source_file": str(path),
+                "mesh_file": str(path),
                 "cell_type": "hex",
                 "coord_paths": self.coord_paths,
                 "connectivity_path": self.connectivity_path,
@@ -204,39 +227,89 @@ class AVBPHDF5Dataset(Dataset[Sample]):
         )
 
 
-def _resolve_files(
-    files: Sequence[str | Path] | None,
-    data_dir: str | Path | None,
-    file_pattern: str,
-    recursive: bool,
-) -> tuple[Path, ...]:
-    if isinstance(files, (str, Path)):
-        raise TypeError("files must be a sequence of paths, not one path string")
-    explicit = tuple(Path(path).expanduser() for path in (files or ()))
-    if explicit and data_dir is not None:
-        raise ValueError("configure either files or data_dir, not both")
+def _normalize_sample_specs(
+    samples: Sequence[AVBPSampleSpec | Mapping[str, object]] | None,
+) -> tuple[AVBPSampleSpec, ...]:
+    if samples is None or len(samples) == 0:
+        raise ValueError("samples must contain at least one explicit snapshot/mesh association")
+    if isinstance(samples, (str, Path)):
+        raise TypeError("samples must be a sequence of AVBP sample specifications")
 
-    if explicit:
-        resolved = explicit
-    elif data_dir is not None:
-        root = Path(data_dir).expanduser()
-        if not root.is_dir():
-            raise FileNotFoundError(f"data_dir does not exist or is not a directory: {root}")
-        if not file_pattern:
-            raise ValueError("file_pattern must be non-empty")
-        iterator = root.rglob(file_pattern) if recursive else root.glob(file_pattern)
-        resolved = tuple(sorted(path for path in iterator if path.is_file()))
-    else:
-        raise ValueError("configure at least one AVBP file through files or data_dir")
+    normalized: list[AVBPSampleSpec] = []
+    for position, raw in enumerate(samples):
+        if isinstance(raw, AVBPSampleSpec):
+            sample_id = raw.sample_id
+            snapshot_value = raw.snapshot_file
+            mesh_id = raw.mesh_id
+            mesh_value = raw.mesh_file
+        elif isinstance(raw, Mapping):
+            keys = set(raw)
+            missing = _SAMPLE_SPEC_KEYS - keys
+            extra = keys - _SAMPLE_SPEC_KEYS
+            if missing:
+                raise ValueError(
+                    f"AVBP sample specification {position} is missing keys: {sorted(missing)}"
+                )
+            if extra:
+                raise ValueError(
+                    f"AVBP sample specification {position} has unsupported keys: {sorted(extra)}"
+                )
+            sample_id = _text_value(raw["sample_id"], "sample_id", position)
+            snapshot_value = raw["snapshot_file"]
+            mesh_id = _text_value(raw["mesh_id"], "mesh_id", position)
+            mesh_value = raw["mesh_file"]
+        else:
+            raise TypeError(
+                "each AVBP sample specification must be an AVBPSampleSpec or mapping"
+            )
 
-    if not resolved:
-        raise ValueError("no AVBP HDF5 files matched the configured input")
-    for path in resolved:
-        if not path.is_file():
-            raise FileNotFoundError(f"AVBP sample file does not exist: {path}")
-    if len(set(resolved)) != len(resolved):
-        raise ValueError("AVBP sample files must be unique")
-    return resolved
+        snapshot_path = _existing_file(snapshot_value, "snapshot_file", position)
+        mesh_path = _existing_file(mesh_value, "mesh_file", position)
+        normalized.append(
+            AVBPSampleSpec(
+                sample_id=sample_id,
+                snapshot_file=snapshot_path,
+                mesh_id=mesh_id,
+                mesh_file=mesh_path,
+            )
+        )
+
+    sample_ids = [spec.sample_id for spec in normalized]
+    if len(set(sample_ids)) != len(sample_ids):
+        raise ValueError("AVBP sample_id values must be unique")
+
+    mesh_id_to_path: dict[str, Path] = {}
+    mesh_path_to_id: dict[Path, str] = {}
+    for spec in normalized:
+        mesh_path = _path_value(spec.mesh_file)
+        known_path = mesh_id_to_path.setdefault(spec.mesh_id, mesh_path)
+        if known_path != mesh_path:
+            raise ValueError(f"mesh_id '{spec.mesh_id}' is associated with multiple mesh files")
+        known_id = mesh_path_to_id.setdefault(mesh_path, spec.mesh_id)
+        if known_id != spec.mesh_id:
+            raise ValueError(f"mesh file '{mesh_path}' is associated with multiple mesh_id values")
+    return tuple(normalized)
+
+
+def _text_value(value: object, name: str, position: int) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"AVBP sample specification {position} has invalid {name}")
+    return value
+
+
+def _existing_file(value: object, name: str, position: int) -> Path:
+    if not isinstance(value, (str, Path)):
+        raise TypeError(f"AVBP sample specification {position} has non-path {name}")
+    path = Path(value).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"AVBP sample specification {position} {name} does not exist: {path}"
+        )
+    return path
+
+
+def _path_value(value: str | Path) -> Path:
+    return value if isinstance(value, Path) else Path(value)
 
 
 def _read_tensor(h5f: h5py.File, dataset_path: str, file_path: Path) -> torch.Tensor:
