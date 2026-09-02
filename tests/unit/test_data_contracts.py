@@ -10,6 +10,8 @@ from graph_attention.data import (
     ReferenceScale,
     ReferenceScales,
     ReferenceScope,
+    RegimeParameter,
+    RegimeParameters,
     Sample,
 )
 
@@ -72,6 +74,37 @@ def test_reference_scale_accepts_string_scope_and_rejects_invalid_scope() -> Non
         ReferenceScale("U_ref", 1.0, "bulk_velocity", scope="unknown")
 
 
+def test_regime_parameters_preserve_explicit_dimensionless_semantics() -> None:
+    reynolds = RegimeParameter(
+        name="Re",
+        value=50000.0,
+        definition="rho_ref_U_ref_L_ref_over_mu_ref",
+        provenance="simulation_setup",
+        inference_available=True,
+        derivation="rho_ref * U_ref * L_ref / mu_ref",
+    )
+    mach = RegimeParameter(
+        name="Ma",
+        value=0.2,
+        definition="U_ref_over_a_ref",
+        provenance="simulation_setup",
+        inference_available=True,
+    )
+    parameters = RegimeParameters((reynolds, mach))
+
+    assert parameters.names == ("Re", "Ma")
+    assert parameters["Re"].value == 50000.0
+    assert parameters["Re"].derivation == "rho_ref * U_ref * L_ref / mu_ref"
+    assert parameters.require(["Ma", "Re"]) == (mach, reynolds)
+
+
+def test_regime_parameters_reject_duplicate_names() -> None:
+    parameter = RegimeParameter("Ma", 0.1, "U_ref_over_a_ref")
+
+    with pytest.raises(ValueError, match="Duplicate regime parameter"):
+        RegimeParameters((parameter, parameter))
+
+
 def test_mesh_validates_canonical_node_graph_shapes() -> None:
     mesh = Mesh(
         coords=torch.tensor([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
@@ -126,14 +159,19 @@ def test_sample_validates_node_support_and_components_against_catalog() -> None:
         coords=torch.zeros((4, 3)),
         edge_index=torch.tensor([[0, 1, 2], [1, 2, 3]], dtype=torch.long),
     )
+    regime_parameters = RegimeParameters(
+        (RegimeParameter("Ma", 0.2, "U_ref_over_a_ref", provenance="case"),)
+    )
     sample = Sample(
         sample_id="case-a/snapshot-0001",
         mesh=mesh,
         fields={"rho": torch.ones(4), "momentum": torch.ones((4, 3))},
         case_id="case-a",
+        regime_parameters=regime_parameters,
     )
 
     assert sample.case_id == "case-a"
+    assert sample.regime_parameters is regime_parameters
     sample.validate_against(catalog)
 
     bad = Sample(
