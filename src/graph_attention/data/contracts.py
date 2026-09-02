@@ -133,7 +133,9 @@ class ReferenceScale:
         try:
             scope = ReferenceScope(self.scope)
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"Reference scale '{self.name}' has invalid scope '{self.scope}'.") from exc
+            raise ValueError(
+                f"Reference scale '{self.name}' has invalid scope '{self.scope}'."
+            ) from exc
         object.__setattr__(self, "scope", scope)
         if not isinstance(self.inference_available, bool):
             raise TypeError(
