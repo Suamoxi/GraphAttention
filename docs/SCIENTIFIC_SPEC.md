@@ -18,9 +18,9 @@ The repository is not defined as an operator-learning framework. Some tasks may 
 
 The fundamental scientific abstraction is:
 
-\[
+$$
 \boxed{\text{CFD field} + \text{mesh geometry/topology} + \text{task}}
-\]
+$$
 
 ## 2. Mesh-agnostic versus mesh-free
 
@@ -42,9 +42,9 @@ The same learned weights should be applicable to different meshes whose field se
 
 For the initial framework:
 
-\[
+$$
 \boxed{\text{one graph vertex} = \text{one CFD mesh node}}
-\]
+$$
 
 Cells and faces may provide:
 
@@ -65,17 +65,17 @@ The model may use native mesh connectivity together with geometric information.
 
 For an edge `i -> j`, common geometric quantities include:
 
-\[
+$$
 \Delta r_{ij} = r_j-r_i,
-\]
+$$
 
-\[
+$$
 d_{ij}=\|\Delta r_{ij}\|,
-\]
+$$
 
-\[
+$$
 \hat r_{ij}=\frac{\Delta r_{ij}}{d_{ij}}.
-\]
+$$
 
 Additional scientifically meaningful geometric quantities may include:
 
@@ -135,9 +135,9 @@ The task defines **what is used**.
 
 The model input channel count is task-dependent:
 
-\[
+$$
 C = C_{\mathrm{task}}.
-\]
+$$
 
 Channel semantics and order must be explicit by field/component name. Scientific behavior must never depend on anonymous index ranges such as “channels 0:5” without an accompanying semantic contract.
 
@@ -161,7 +161,7 @@ Raw dimensional magnitudes from different CFD cases must not be assumed directly
 
 The required conceptual sequence is:
 
-\[
+$$
 \boxed{
 \text{dimensional CFD}
 \rightarrow
@@ -169,17 +169,17 @@ The required conceptual sequence is:
 \rightarrow
 \text{training-set statistical scaling}
 }
-\]
+$$
 
 Each case defines physically meaningful reference quantities appropriate to the problem, such as:
 
-\[
+$$
 U_{\mathrm{ref}},\quad
 L_{\mathrm{ref}},\quad
 \rho_{\mathrm{ref}},\quad
 T_{\mathrm{ref}},\quad
 p_{\mathrm{ref}}.
-\]
+$$
 
 Reference values may vary numerically between cases. Their physical definition and role must be explicit.
 
@@ -187,48 +187,48 @@ Reference values may vary numerically between cases. Their physical definition a
 
 Velocity:
 
-\[
+$$
 \mathbf u^*=\frac{\mathbf u}{U_{\mathrm{ref}}}.
-\]
+$$
 
 Coordinates:
 
-\[
+$$
 \mathbf x^*=\frac{\mathbf x}{L_{\mathrm{ref}}}.
-\]
+$$
 
 Density:
 
-\[
+$$
 \rho^*=\frac{\rho}{\rho_{\mathrm{ref}}}.
-\]
+$$
 
 Momentum density:
 
-\[
+$$
 (\rho\mathbf u)^*=
 \frac{\rho\mathbf u}{\rho_{\mathrm{ref}}U_{\mathrm{ref}}}.
-\]
+$$
 
 Energy density, when consistent with the chosen energy definition:
 
-\[
+$$
 (\rho E)^*=
 \frac{\rho E}{\rho_{\mathrm{ref}}U_{\mathrm{ref}}^2}.
-\]
+$$
 
 Pressure fluctuation/offset form:
 
-\[
+$$
 p'^*=
 \frac{p-p_{\mathrm{ref}}}{\rho_{\mathrm{ref}}U_{\mathrm{ref}}^2}.
-\]
+$$
 
 Rate-of-strain:
 
-\[
+$$
 S_{ij}^*=\frac{L_{\mathrm{ref}}}{U_{\mathrm{ref}}}S_{ij}.
-\]
+$$
 
 The precise transformation for each field is part of the scientific specification and must not be inferred only from dimensional intuition inside implementation code.
 
@@ -252,14 +252,14 @@ Dimensionless regime parameters may be provided as global conditioning when they
 
 Examples include:
 
-\[
+$$
 Re_{\mathrm{ref}}=
 \frac{\rho_{\mathrm{ref}}U_{\mathrm{ref}}L_{\mathrm{ref}}}{\mu_{\mathrm{ref}}},
-\]
+$$
 
-\[
+$$
 Ma_{\mathrm{ref}}=\frac{U_{\mathrm{ref}}}{a_{\mathrm{ref}}}.
-\]
+$$
 
 Other candidates such as `Pr`, `gamma`, forcing parameters, or chemistry parameters should be included only when relevant to the governing physics and meaningfully variable across cases.
 
@@ -279,9 +279,9 @@ Dimensionless regime parameters do not replace explicit geometry or mesh-resolut
 
 For multiresolution or LES applications, resolution must remain explicitly representable, for example:
 
-\[
+$$
 \Delta_i^*=\frac{\Delta_i}{L_{\mathrm{ref}}},
-\]
+$$
 
 where `Delta_i` may be global, local, directional, volume-derived, or metric-derived depending on the mesh and task.
 
@@ -289,17 +289,17 @@ M0 does not prescribe one universal resolution metric. It requires the metric an
 
 The model interface conceptually distinguishes:
 
-\[
+$$
 \boxed{\text{local dimensionless physical state}}
-\]
+$$
 
-\[
+$$
 \boxed{\text{geometry and resolution information}}
-\]
+$$
 
-\[
+$$
 \boxed{\text{global physical-regime conditioning}}
-\]
+$$
 
 These categories may interact in the learned architecture but must not be implicitly conflated during preprocessing.
 
@@ -309,9 +309,9 @@ Node numbering is not a physical property.
 
 Let `P` be a permutation matrix corresponding to a consistent renumbering of mesh nodes. A node-level graph model must satisfy, up to documented numerical tolerance:
 
-\[
+$$
 f(PX, PR, PAP^T, \ldots)=P f(X,R,A,\ldots).
-\]
+$$
 
 Here:
 
@@ -352,33 +352,33 @@ Examples:
 
 ### Deterministic regression
 
-\[
+$$
 X\rightarrow Y.
-\]
+$$
 
 ### Temporal increment prediction
 
-\[
+$$
 X_t\rightarrow X_{t+1}-X_t.
-\]
+$$
 
 ### Super-resolution
 
-\[
+$$
 X_c \rightarrow X_f
-\]
+$$
 
 or preferably in some settings:
 
-\[
+$$
 X_f = \mathcal I(X_c)+\delta X_\theta.
-\]
+$$
 
 ### Conditional generative modelling
 
-\[
+$$
 p_\theta(X_f\mid X_c,G_c,G_f).
-\]
+$$
 
 ### Diffusion
 

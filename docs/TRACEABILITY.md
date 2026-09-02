@@ -10,7 +10,7 @@ The central rule is:
 
 Every scientifically meaningful feature should be traceable through:
 
-\[
+$$
 \boxed{
 \text{scientific concept}
 \rightarrow
@@ -22,7 +22,7 @@ Every scientifically meaningful feature should be traceable through:
 \rightarrow
 \text{experiment/benchmark}
 }
-\]
+$$
 
 ## 2. Evidence categories
 

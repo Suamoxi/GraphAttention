@@ -12,7 +12,7 @@ A checkpoint alone is not a complete experiment artifact.
 
 A reproducible run must preserve enough information to reconstruct:
 
-\[
+$$
 \boxed{
 \text{data}
 +\text{field semantics}
@@ -22,7 +22,7 @@ A reproducible run must preserve enough information to reconstruct:
 +\text{optimization}
 +\text{runtime environment}
 }
-\]
+$$
 
 ## 3. Required run metadata
 

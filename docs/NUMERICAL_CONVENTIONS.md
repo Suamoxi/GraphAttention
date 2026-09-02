@@ -35,11 +35,11 @@ Variable-mesh training uses explicit per-device microbatch budgets.
 
 At minimum support hard constraints of the form:
 
-\[
+$$
 N_{\mathrm{total}}\le N_{\max},
 \qquad
 E_{\mathrm{total}}\le E_{\max}.
-\]
+$$
 
 The concrete values are hardware/model configuration and must be recorded with benchmarks and runs.
 
@@ -55,10 +55,10 @@ A target optimizer batch may be defined by a number or weight of independent phy
 
 Let each physical sample `g` have scalar sample loss `L_g` and statistical weight `s_g`. The intended optimizer-level objective is conceptually:
 
-\[
+$$
 L_{\mathrm{opt}}=
 \frac{\sum_g s_g L_g}{\sum_g s_g}.
-\]
+$$
 
 The implementation must preserve this objective regardless of how those samples are partitioned across microbatches or DDP ranks.
 
@@ -70,18 +70,18 @@ A fine mesh must not receive greater statistical weight solely because it has mo
 
 If no scientifically justified quadrature weights are available:
 
-\[
+$$
 L_g=\frac{1}{N_g}\sum_{i=1}^{N_g}\ell_{gi}.
-\]
+$$
 
 ### 6.2 Physically weighted reduction
 
 Where control-volume, quadrature, area, or other physical integration weights `w_i` are available and appropriate:
 
-\[
+$$
 L_g=
 \frac{\sum_i w_i\ell_{gi}}{\sum_i w_i}.
-\]
+$$
 
 For wall quantities, weights may represent surface area rather than volume.
 
@@ -93,11 +93,11 @@ Do not naïvely average rank-local mean losses when DDP ranks contain different 
 
 The effective global objective must correspond to:
 
-\[
+$$
 L=
 \frac{\sum_r\sum_{g\in r}s_gL_g}
 {\sum_r\sum_{g\in r}s_g}.
-\]
+$$
 
 Implementation details may use scaled local losses or explicit distributed reductions, but the resulting gradient must represent the intended global statistical objective within numerical tolerance.
 
@@ -121,35 +121,35 @@ Two references with the same unit are not interchangeable when their physical de
 
 Potential case-level scales include:
 
-\[
+$$
 U_{\mathrm{ref}},
 L_{\mathrm{ref}},
 \rho_{\mathrm{ref}},
 T_{\mathrm{ref}},
 p_{\mathrm{ref}}.
-\]
+$$
 
 Common transformations may include:
 
-\[
+$$
 \mathbf u^*=\frac{\mathbf u}{U_{\mathrm{ref}}},
 \quad
 \mathbf x^*=\frac{\mathbf x}{L_{\mathrm{ref}}},
 \quad
 \rho^*=\frac{\rho}{\rho_{\mathrm{ref}}},
-\]
+$$
 
-\[
+$$
 (\rho\mathbf u)^*=\frac{\rho\mathbf u}{\rho_{\mathrm{ref}}U_{\mathrm{ref}}},
-\]
+$$
 
-\[
+$$
 (\rho E)^*=\frac{\rho E}{\rho_{\mathrm{ref}}U_{\mathrm{ref}}^2},
-\]
+$$
 
-\[
+$$
 p'^*=\frac{p-p_{\mathrm{ref}}}{\rho_{\mathrm{ref}}U_{\mathrm{ref}}^2}.
-\]
+$$
 
 These equations are examples, not permission to infer transformations automatically. Each supported field must have an explicit transformation contract.
 
@@ -157,11 +157,11 @@ These equations are examples, not permission to infer transformations automatica
 
 After physical nondimensionalization, an optional training-set scaler may be applied:
 
-\[
+$$
 \tilde q=
 \frac{q^*-\mu_{q^*,\mathrm{train}}}
 {\sigma_{q^*,\mathrm{train}}}.
-\]
+$$
 
 Requirements:
 
@@ -188,9 +188,9 @@ Resolution is distinct from physical regime.
 
 When required, define nondimensional resolution descriptors such as:
 
-\[
+$$
 \Delta_i^*=\frac{\Delta_i}{L_{\mathrm{ref}}}.
-\]
+$$
 
 `Delta_i` may be defined from:
 

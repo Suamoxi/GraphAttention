@@ -6,9 +6,9 @@ This document defines the software boundaries and dependency direction of the CF
 
 The repository is designed around:
 
-\[
+$$
 \boxed{\text{CFD field} + \text{mesh geometry/topology} + \text{task}}
-\]
+$$
 
 It is not organized around a single learning paradigm such as autoregressive simulation, operator learning, or diffusion. These are tasks that consume common scientific data and geometry infrastructure.
 
@@ -149,23 +149,23 @@ The canonical batched representation is a disconnected union of graphs.
 
 For graphs `G_1, ..., G_B`:
 
-\[
+$$
 N_{\mathrm{total}} = \sum_g N_g,
 \qquad
 E_{\mathrm{total}} = \sum_g E_g.
-\]
+$$
 
 Node tensors are concatenated:
 
-\[
+$$
 X_{\mathrm{packed}} \in \mathbb{R}^{N_{\mathrm{total}}\times C}.
-\]
+$$
 
 Edges are concatenated with node-index offsets:
 
-\[
+$$
 \mathrm{edge\_index}_{\mathrm{packed}} \in \mathbb{N}^{2\times E_{\mathrm{total}}}.
-\]
+$$
 
 Sample membership is retained through metadata such as:
 
@@ -179,19 +179,19 @@ No edges exist between samples unless a future method explicitly introduces cros
 
 A core architecture rule is:
 
-\[
+$$
 \boxed{\text{microbatch} \neq \text{optimizer batch}}
-\]
+$$
 
 ### 6.1 Microbatch
 
 A microbatch is a computational packing unit constrained by hardware/model limits. Initial hard constraints should include both:
 
-\[
+$$
 N_{\mathrm{total}} \le N_{\max},
 \qquad
 E_{\mathrm{total}} \le E_{\max}.
-\]
+$$
 
 The concrete values are hardware/model-specific configuration, not repository constants.
 
@@ -229,17 +229,17 @@ These mechanisms must not be hidden inside ordinary batching.
 
 The repository distinguishes conceptually:
 
-\[
+$$
 X^* = \text{local dimensionless physical state},
-\]
+$$
 
-\[
+$$
 G^* = \text{geometry and resolution information},
-\]
+$$
 
-\[
+$$
 c = \text{global physical-regime conditioning}.
-\]
+$$
 
 Runtime containers may store these together for efficiency, but they must remain separately identifiable by metadata and interfaces.
 

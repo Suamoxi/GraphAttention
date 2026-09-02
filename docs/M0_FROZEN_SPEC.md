@@ -10,9 +10,9 @@ It supports multiple learning paradigms, including deterministic regression, wal
 
 The core abstraction is:
 
-\[
+$$
 \boxed{\text{CFD field} + \text{mesh geometry/topology} + \text{task}}
-\]
+$$
 
 Mesh connectivity and geometry are first-class inputs. Learned parameters must not depend on a particular mesh size, node numbering, or topology.
 
@@ -24,11 +24,11 @@ Different meshes may coexist in the same microbatch.
 
 Computational microbatches are constrained by explicit node/edge budgets:
 
-\[
+$$
 N_{\mathrm{total}}\le N_{\max},
 \qquad
 E_{\mathrm{total}}\le E_{\max}.
-\]
+$$
 
 Computational microbatch size and statistical optimizer batch size are distinct. Gradient accumulation must preserve the intended sample-level objective.
 
@@ -40,9 +40,9 @@ Sampler and packer are separate mechanisms. DDP weighting must correspond to the
 
 For the initial repository:
 
-\[
+$$
 \boxed{\text{one graph vertex} = \text{one CFD mesh node}}
-\]
+$$
 
 Native CFD connectivity is preserved. Cells/faces may provide geometry and numerical metadata but are not initially separate learned graph entities.
 
@@ -62,7 +62,7 @@ Stored and derived quantities remain distinguishable.
 
 Preprocessing follows:
 
-\[
+$$
 \boxed{
 \text{dimensional CFD}
 \rightarrow
@@ -70,7 +70,7 @@ Preprocessing follows:
 \rightarrow
 \text{training-set statistical scaling}
 }
-\]
+$$
 
 Reference-scale numerical values may differ between cases, but their semantic definitions must be explicit and consistent.
 
@@ -86,15 +86,15 @@ Node indices are implementation identifiers rather than physical quantities.
 
 For a consistent node permutation `P`, graph models must satisfy up to numerical tolerance:
 
-\[
+$$
 f(PX,PR,PAP^T,\ldots)=P f(X,R,A,\ldots).
-\]
+$$
 
 This preserves mesh structure while changing only labels. Raw node IDs, storage order, and edge-list order must not carry scientific meaning unless explicitly documented.
 
 ## M0.7 — Ownership boundaries
 
-\[
+$$
 \boxed{
 \begin{aligned}
 \text{Data} &\rightarrow \text{what exists}\\
@@ -104,7 +104,7 @@ This preserves mesh structure while changing only labels. Raw node IDs, storage 
 \text{Trainer} &\rightarrow \text{how it is optimized}
 \end{aligned}
 }
-\]
+$$
 
 A model change should not require rewriting raw file readers. A task change should not require rewriting geometry algorithms. A file-format change should not require modifying scientific model equations.
 
@@ -112,7 +112,7 @@ A model change should not require rewriting raw file readers. A task change shou
 
 Priority:
 
-\[
+$$
 \boxed{
 \text{scientific correctness}
 \rightarrow
@@ -124,7 +124,7 @@ Priority:
 \rightarrow
 \text{maintainability}
 }
-\]
+$$
 
 Native PyTorch is preferred only when adequate for the target workload. Specialized libraries are acceptable when they provide meaningful capability/efficiency advantages.
 
