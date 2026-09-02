@@ -56,6 +56,8 @@ The initial canonical mesh contract represents CFD mesh nodes as graph vertices:
 - optional `node_weights [N]` for future quadrature/control-volume use;
 - optional mesh identifier and metadata.
 
+M3.2 extends this runtime contract with optional native `cell_connectivity [C, K]`, also using zero-based `torch.long` node indices. This preserves cell-to-node topology supplied by a CFD source without making cells separate learned graph entities or forcing the data reader to construct model graph edges.
+
 The contract validates dimensions, finite coordinates/weights, and connectivity bounds. It deliberately does not prescribe directed/undirected duplication, self-loop policy, edge ordering, geometric features, dilation, or long-range augmentation; those are geometry/model decisions.
 
 ### `Sample`
