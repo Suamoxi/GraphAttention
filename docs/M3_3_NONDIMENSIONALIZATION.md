@@ -2,7 +2,7 @@
 
 ## Status
 
-The scientific definition for M3.3 is frozen by this document. Runtime preprocessing code and numerical reference tests remain to be implemented.
+The M3.3 scientific definition is frozen. The baseline runtime reference metadata and forward/inverse field transformations are implemented, pending target-environment validation. Automatic case-reference extraction, coordinate nondimensionalization, regime conditioning, and statistical scaling remain deferred.
 
 ## 1. Purpose
 
@@ -192,9 +192,11 @@ They must be available from information legitimately known for the task at infer
 
 Snapshot-dependent physical references are allowed only if snapshot-wise invariance is itself an explicit scientific objective and the required quantity is legitimately available at inference.
 
+The baseline runtime implementation is intentionally stricter: `ConvectiveNondimensionalizer` rejects snapshot-scoped references. A future task that truly requires snapshot-level reference semantics must introduce and test that exception explicitly.
+
 ## 9. Reference metadata contract
 
-Every physical reference used by preprocessing must carry enough information to reconstruct its meaning. Conceptually this includes:
+Every physical reference used by preprocessing must carry enough information to reconstruct its meaning. Runtime `ReferenceScale` supports:
 
 ```text
 name
@@ -203,12 +205,15 @@ units
 physical definition
 provenance
 scope
+inference availability
 optional derivation rule
 ```
 
-The existing M2 `ReferenceScale` runtime contract records only part of this information. M3.3 implementation must extend or accompany that contract minimally rather than hiding missing semantics in generic metadata.
+`ReferenceScales.scheme` names the declared reference scheme for the collection. Physical preprocessing requires a non-empty scheme and requires units and provenance for every reference it actually uses.
 
-A missing required reference is an error. The implementation must not silently substitute `1.0`, infer a semantic definition from units, or switch reference definitions between cases.
+The low-level data contract permits partially populated references so source readers can represent information before a complete preprocessing specification is available. Such references cannot be used by the baseline physical transform until the required semantics are present.
+
+A missing required reference is an error. The implementation does not silently substitute `1.0`, infer a semantic definition from units, or switch reference definitions between cases.
 
 ## 10. Invertibility
 
@@ -230,7 +235,31 @@ $$
 
 Round-trip tests are mandatory for every implemented transformation.
 
-## 11. Statistical scaling remains separate
+## 11. Runtime implementation
+
+`graph_attention.data.ConvectiveNondimensionalizer` implements the multiplicative baseline transformations for the currently supported canonical physical fields:
+
+```text
+rho
+rhou
+rhov
+rhow
+rhoE
+pressure
+temperature
+vis_lam
+vis_turb
+```
+
+The transform consumes an explicit `ReferenceScales` object and a mapping of named tensors. It returns a new mapping and does not mutate the supplied tensors or infer a transform for unknown names.
+
+References are required only when a requested field actually depends on them. For example, transforming `rho` requires `rho_ref` but does not require an irrelevant `T_ref`.
+
+The inverse `dimensionalize` operation uses the same field scales. Numerical tests cover exact known scales and floating-point round trips.
+
+The runtime implementation deliberately does not nondimensionalize coordinates yet. Coordinate scaling requires an explicit `x_origin` convention in addition to `L_ref`, and that convention must not be guessed from a mesh bounding box.
+
+## 12. Statistical scaling remains separate
 
 After physical nondimensionalization, an optional training-only scaler may later use statistics such as:
 
@@ -240,42 +269,52 @@ $$
 
 Those statistics are learned from the training split only and frozen for validation, testing, and inference.
 
-M3.3 must not blur reference-state provenance with learned statistical-scaler provenance.
+M3.3 does not blur reference-state provenance with learned statistical-scaler provenance.
 
-## 12. Assumptions, edge cases, and deferred decisions
+## 13. Assumptions, edge cases, and deferred decisions
 
 ### Frozen assumptions
 
 - The initial M3.3 equations target compressible Navier-Stokes-like state variables while allowing irrelevant references to be absent for other governing systems.
-- Reference scales are case-level by default.
+- Reference scales are case- or operating-condition-level in the baseline runtime transform.
 - The baseline uses a coherent convective basis rather than independent per-field magnitude normalization.
 - `Re`, `Ma`, and similar dimensionless numbers are physical-regime descriptors rather than replacements for dimensional reference scales.
 - Concrete definitions of `U_ref` and `L_ref` may differ between explicitly declared flow-family reference schemes.
+- Reference values and field values are assumed to use a mutually coherent unit system; M3.3 records unit strings but does not perform unit conversion.
 
 ### Explicit failure behavior
 
 - Missing required references fail.
-- Incompatible or semantically undefined reference schemes fail.
-- A transformation is not inferred from a field's tensor shape or units alone.
-- Target-dependent normalization unavailable at inference is rejected.
+- A missing reference scheme fails.
+- Non-positive references used as multiplicative physical scales fail.
+- Used references without units or provenance fail.
+- References marked unavailable at inference fail.
+- Snapshot-scoped references fail in the baseline implementation.
+- Unsupported field names fail rather than silently passing through unchanged.
+- Non-floating physical tensors fail rather than being implicitly cast.
+- A transformation is not inferred from a field's tensor shape, numerical range, or units alone.
 
 ### Deferred
 
-- The exact runtime representation/API for reference schemes.
 - Automatic extraction of case references from AVBP configuration files.
+- Association/injection of reference schemes into `AVBPHDF5Dataset` samples.
+- Physical coordinate nondimensionalization and its explicit origin convention.
 - Global model-conditioning interfaces for `Re`, `Ma`, `Pr`, and related quantities.
 - Statistical scaling implementation.
 - Specialized wall-unit representations such as `u_tau`, `y+`, or `Re_tau`-based quantities.
+- Pressure-offset transforms; the baseline implements absolute pressure scaling only.
+- Unit conversion or dimensional-analysis enforcement between fields and references.
 - Interpretation of AVBP `VertexData/volume` as a physical quadrature weight.
 
-## 13. Implementation gate
+## 14. Implementation gate
 
-Before M3.3 implementation is considered complete, it must include at least:
+The baseline runtime implementation includes:
 
-- explicit named reference semantics and provenance;
+- explicit named reference semantics, scope, inference availability, and provenance hooks;
 - field-specific forward transformations;
 - inverse transformations;
 - round-trip numerical reference tests;
 - missing-reference and anti-leakage failure tests;
-- no dependence on sample node count, node numbering, or mesh topology;
-- documentation and traceability updates for any deviation from this directive.
+- no dependence on sample node count, node numbering, or mesh topology.
+
+Target-environment `pytest`, Ruff, and format validation remain required before the runtime portion is marked validated.

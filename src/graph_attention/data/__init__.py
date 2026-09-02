@@ -9,14 +9,17 @@ from .contracts import (
     Mesh,
     ReferenceScale,
     ReferenceScales,
+    ReferenceScope,
     Sample,
 )
+from .nondimensionalization import ConvectiveNondimensionalizer
 from .synthetic import SyntheticMeshDataset
 
 __all__ = [
     "AVBP_FIELD_CATALOG",
     "AVBPHDF5Dataset",
     "AVBPSampleSpec",
+    "ConvectiveNondimensionalizer",
     "FieldCatalog",
     "FieldRole",
     "FieldSpec",
@@ -24,6 +27,7 @@ __all__ = [
     "Mesh",
     "ReferenceScale",
     "ReferenceScales",
+    "ReferenceScope",
     "Sample",
     "SyntheticMeshDataset",
 ]

@@ -55,7 +55,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 has a frozen scientific directive for case-level reference states and physical nondimensionalization; implementation and numerical reference tests are next. Packed graph batching, tasks, and sparse attention remain later work.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 now contains the frozen scientific directive plus the baseline runtime reference metadata and invertible convective field transforms; target-environment validation is pending. Packed graph batching, tasks, and sparse attention remain later work.
 
 Current smoke checks:
 

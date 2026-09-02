@@ -38,6 +38,14 @@ class FieldRole(StrEnum):
     GLOBAL_METADATA = "global_metadata"
 
 
+class ReferenceScope(StrEnum):
+    """Physical scope at which a reference quantity is defined."""
+
+    CASE = "case"
+    OPERATING_CONDITION = "operating_condition"
+    SNAPSHOT = "snapshot"
+
+
 @dataclass(frozen=True, slots=True)
 class FieldSpec:
     """Semantic description of one canonical field."""
@@ -98,12 +106,16 @@ class FieldCatalog:
 
 @dataclass(frozen=True, slots=True)
 class ReferenceScale:
-    """One case-level physical reference quantity and its semantics."""
+    """One physical reference quantity and its explicit semantics."""
 
     name: str
     value: float
     definition: str
     provenance: str | None = None
+    units: str | None = None
+    scope: ReferenceScope = ReferenceScope.CASE
+    inference_available: bool = True
+    derivation: str | None = None
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -112,16 +124,34 @@ class ReferenceScale:
             raise ValueError(f"Reference scale '{self.name}' needs an explicit definition.")
         if not isfinite(self.value):
             raise ValueError(f"Reference scale '{self.name}' must be finite.")
+        if self.provenance is not None and not self.provenance.strip():
+            raise ValueError(f"Reference scale '{self.name}' has empty provenance.")
+        if self.units is not None and not self.units.strip():
+            raise ValueError(f"Reference scale '{self.name}' has empty units.")
+        if self.derivation is not None and not self.derivation.strip():
+            raise ValueError(f"Reference scale '{self.name}' has empty derivation.")
+        try:
+            scope = ReferenceScope(self.scope)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Reference scale '{self.name}' has invalid scope '{self.scope}'.") from exc
+        object.__setattr__(self, "scope", scope)
+        if not isinstance(self.inference_available, bool):
+            raise TypeError(
+                f"Reference scale '{self.name}' inference_available must be a bool."
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class ReferenceScales:
-    """Collection of uniquely named case-level reference quantities."""
+    """Collection of uniquely named physical reference quantities."""
 
     scales: tuple[ReferenceScale, ...] = ()
+    scheme: str | None = None
     _by_name: Mapping[str, ReferenceScale] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.scheme is not None and not self.scheme.strip():
+            raise ValueError("ReferenceScales.scheme must be non-empty when provided.")
         by_name: dict[str, ReferenceScale] = {}
         for scale in self.scales:
             if scale.name in by_name:
@@ -137,6 +167,15 @@ class ReferenceScales:
             return self._by_name[name]
         except KeyError as exc:
             raise KeyError(f"Unknown reference scale '{name}'.") from exc
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(scale.name for scale in self.scales)
+
+    def require(self, names: tuple[str, ...] | list[str]) -> tuple[ReferenceScale, ...]:
+        """Return requested references in the exact requested order."""
+
+        return tuple(self[name] for name in names)
 
 
 @dataclass(slots=True)

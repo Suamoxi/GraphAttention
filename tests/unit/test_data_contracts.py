@@ -9,6 +9,7 @@ from graph_attention.data import (
     Mesh,
     ReferenceScale,
     ReferenceScales,
+    ReferenceScope,
     Sample,
 )
 
@@ -48,12 +49,27 @@ def test_reference_scales_preserve_definition_separately_from_value() -> None:
                 value=12.5,
                 definition="bulk_velocity",
                 provenance="case_metadata",
+                units="m/s",
+                scope=ReferenceScope.CASE,
             ),
-        )
+        ),
+        scheme="bulk_flow_reference",
     )
 
     assert scales["U_ref"].value == 12.5
     assert scales["U_ref"].definition == "bulk_velocity"
+    assert scales["U_ref"].units == "m/s"
+    assert scales["U_ref"].scope is ReferenceScope.CASE
+    assert scales.scheme == "bulk_flow_reference"
+    assert scales.names == ("U_ref",)
+
+
+def test_reference_scale_accepts_string_scope_and_rejects_invalid_scope() -> None:
+    scale = ReferenceScale("U_ref", 1.0, "bulk_velocity", scope="operating_condition")
+    assert scale.scope is ReferenceScope.OPERATING_CONDITION
+
+    with pytest.raises(ValueError, match="invalid scope"):
+        ReferenceScale("U_ref", 1.0, "bulk_velocity", scope="unknown")
 
 
 def test_mesh_validates_canonical_node_graph_shapes() -> None:
