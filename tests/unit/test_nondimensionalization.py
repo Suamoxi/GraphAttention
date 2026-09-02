@@ -108,9 +108,7 @@ def test_missing_reference_fails_without_fallback() -> None:
 
 
 def test_reference_scheme_is_required_for_physical_preprocessing() -> None:
-    references = ReferenceScales(
-        (_scale("rho_ref", 2.0, "reference_density", "kg/m^3"),)
-    )
+    references = ReferenceScales((_scale("rho_ref", 2.0, "reference_density", "kg/m^3"),))
 
     with pytest.raises(ValueError, match="explicit reference scheme"):
         ConvectiveNondimensionalizer(references)
