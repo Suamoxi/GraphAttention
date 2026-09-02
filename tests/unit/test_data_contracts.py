@@ -130,8 +130,10 @@ def test_sample_validates_node_support_and_components_against_catalog() -> None:
         sample_id="case-a/snapshot-0001",
         mesh=mesh,
         fields={"rho": torch.ones(4), "momentum": torch.ones((4, 3))},
+        case_id="case-a",
     )
 
+    assert sample.case_id == "case-a"
     sample.validate_against(catalog)
 
     bad = Sample(
@@ -141,6 +143,13 @@ def test_sample_validates_node_support_and_components_against_catalog() -> None:
     )
     with pytest.raises(ValueError, match="declares 3 components"):
         bad.validate_against(catalog)
+
+
+def test_sample_rejects_invalid_case_id() -> None:
+    mesh = Mesh(torch.zeros((1, 3)), torch.empty((2, 0), dtype=torch.long))
+
+    with pytest.raises(ValueError, match="case_id"):
+        Sample("sample", mesh, {"rho": torch.ones(1)}, case_id="")
 
 
 def test_sample_rejects_unknown_field_when_validated() -> None:
