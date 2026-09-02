@@ -75,6 +75,7 @@ Every meaningful training run should preserve at least:
 
 ### Physical preprocessing
 
+- authoritative case-definition document or exact preserved content/hash;
 - reference-scale definitions;
 - reference-value derivation rules;
 - case-specific reference values where needed for exact replay;
@@ -147,16 +148,24 @@ Vector/tensor components must retain explicit ordering.
 
 For each reference quantity, preserve both numerical value/derivation and semantic definition.
 
+The M3.3 baseline uses an authoritative case-definition document. Its `value` entries are explicit numerical values; optional `derivation` entries document how those values were obtained but are not evaluated by the runtime loader.
+
 Example:
 
 ```yaml
-U_ref:
-  definition: bulk_velocity
-  provenance: boundary_conditions
-  value: ...
+case_id: case_a
+reference_scheme: bulk_flow_reference
+references:
+  U_ref:
+    definition: bulk_velocity
+    provenance: boundary_conditions
+    units: m/s
+    value: ...
+    inference_available: true
+    derivation: prescribed value from simulation setup
 ```
 
-A value without its definition is insufficient.
+A value without its definition is insufficient. The case document itself, or stable content sufficient to reconstruct it exactly, must be retained with the run.
 
 At inference, the new case may have a different numerical value, but it must be obtained using the same documented definition rules unless a new preprocessing specification is intentionally introduced.
 
@@ -213,7 +222,7 @@ An inference output should be traceable to:
 - inference resolved config;
 - input case/sample identity;
 - input field provenance;
-- new-case reference values and derivation;
+- authoritative new-case definition and reference values/derivation;
 - frozen training scaler;
 - model/runtime versions;
 - random seed if sampling/generation is stochastic.
