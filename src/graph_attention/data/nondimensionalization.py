@@ -1,4 +1,4 @@
-"""Explicit M3.3 physical nondimensionalization for supported CFD fields."""
+"""Explicit M3.3 physical nondimensionalization for supported CFD quantities."""
 
 from __future__ import annotations
 
@@ -25,8 +25,9 @@ _FIELD_REFERENCE_POWERS: dict[str, tuple[tuple[str, int], ...]] = {
 class ConvectiveNondimensionalizer:
     """Apply the frozen M3.3 convective reference-state convention.
 
-    The class transforms only explicitly supported canonical field names. It
-    never infers a transformation from tensor shape, units, or numerical range.
+    The class transforms only explicitly supported canonical field names and
+    canonical coordinate tensors. It never infers a transformation from tensor
+    shape, units, or numerical range.
     """
 
     reference_scales: ReferenceScales
@@ -55,6 +56,11 @@ class ConvectiveNondimensionalizer:
             )
         return scale
 
+    def coordinate_scale(self) -> float:
+        """Return the dimensional length scale used for canonical coordinates."""
+
+        return self._validated_reference("coordinates", "L_ref").value
+
     def nondimensionalize(
         self,
         fields: Mapping[str, torch.Tensor],
@@ -70,6 +76,18 @@ class ConvectiveNondimensionalizer:
         """Invert M3.3 nondimensionalization for supplied named fields."""
 
         return self._transform(fields, inverse=True)
+
+    def nondimensionalize_coordinates(self, coords: torch.Tensor) -> torch.Tensor:
+        """Return canonical coordinates divided by ``L_ref``."""
+
+        self._validate_coordinates(coords)
+        return coords / self.coordinate_scale()
+
+    def dimensionalize_coordinates(self, coords: torch.Tensor) -> torch.Tensor:
+        """Invert canonical coordinate nondimensionalization."""
+
+        self._validate_coordinates(coords)
+        return coords * self.coordinate_scale()
 
     def _transform(
         self,
@@ -88,6 +106,17 @@ class ConvectiveNondimensionalizer:
             scale = self.field_scale(name)
             transformed[name] = tensor * scale if inverse else tensor / scale
         return transformed
+
+    @staticmethod
+    def _validate_coordinates(coords: torch.Tensor) -> None:
+        if not isinstance(coords, torch.Tensor):
+            raise TypeError("Coordinates must be a torch.Tensor.")
+        if coords.ndim != 2:
+            raise ValueError("Coordinates must have canonical shape [N, D].")
+        if not coords.is_floating_point():
+            raise TypeError("Coordinates must be floating-point for nondimensionalization.")
+        if not torch.isfinite(coords).all():
+            raise ValueError("Coordinates contain NaN or Inf values.")
 
     def _validated_reference(
         self,
