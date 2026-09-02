@@ -32,20 +32,26 @@ A catalogue is a uniquely named collection of `FieldSpec` objects. It provides o
 
 M2 does not yet define task input/target selection; that belongs to the task layer.
 
-### `ReferenceScale` and `ReferenceScales`
+### `ReferenceScale`, `ReferenceScope`, and `ReferenceScales`
 
-Each physical reference quantity stores its numerical value separately from its semantic definition and provenance. For example:
+Each physical reference quantity stores its numerical value separately from its semantic definition and provenance. M3.3 extends the original M2 contract with optional units, explicit scope, inference availability, and an optional derivation description. `ReferenceScales` can also name the reference scheme that gives the collection a coherent physical meaning.
+
+For example:
 
 ```text
+scheme: bulk_flow_reference
 name: U_ref
 value: 12.5
 definition: bulk_velocity
+units: m/s
 provenance: case_metadata
+scope: case
+inference_available: true
 ```
 
-Two values with the same units are therefore not interchangeable unless their definitions also match.
+Supported scopes are `case`, `operating_condition`, and `snapshot`. The baseline M3.3 preprocessing rejects snapshot-scoped references; supporting them later requires an explicit scientific objective rather than a silent normalization choice.
 
-M2 records reference quantities only. It does not yet apply nondimensionalization or training-set statistical scaling.
+The low-level data contract still permits references whose units/provenance are not yet populated so readers can represent partially known source metadata. Physical preprocessing is stricter: every reference it actually uses must have the M3.3 semantic metadata required by that transformation.
 
 ### `Mesh`
 
