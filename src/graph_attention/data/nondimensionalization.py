@@ -18,8 +18,6 @@ _FIELD_REFERENCE_POWERS: dict[str, tuple[tuple[str, int], ...]] = {
     "rhoE": (("rho_ref", 1), ("U_ref", 2)),
     "pressure": (("rho_ref", 1), ("U_ref", 2)),
     "temperature": (("T_ref", 1),),
-    "vis_lam": (("rho_ref", 1), ("U_ref", 1), ("L_ref", 1)),
-    "vis_turb": (("rho_ref", 1), ("U_ref", 1), ("L_ref", 1)),
 }
 
 
