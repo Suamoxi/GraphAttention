@@ -106,7 +106,7 @@ $$
 }
 $$
 
-Auxiliary fields use the same coherent basis when they are included:
+Auxiliary fields use the same coherent basis when their exact physical semantics are known:
 
 $$
 p^*=\frac{p}{\rho_{\mathrm{ref}}U_{\mathrm{ref}}^2},
@@ -121,6 +121,8 @@ $$
 $$
 
 A pressure fluctuation or offset transformation such as `(p - p_ref) / (rho_ref U_ref^2)` is allowed only when that offset has an explicit physical/task definition. It is not the default substitute for the absolute pressure scaling above.
+
+The generic viscosity equation applies to dynamic viscosity `mu`. The current AVBP fields `vis_lam` and `vis_turb` are not mapped to that equation until their exact stored physical convention is confirmed. M3.3 does not infer dynamic-versus-kinematic viscosity semantics from their names.
 
 Coordinates may use:
 
@@ -165,7 +167,7 @@ $$
 \mu^*=\frac{\mu}{\rho_{\mathrm{ref}}U_{\mathrm{ref}}L_{\mathrm{ref}}}
 $$
 
-preserves Reynolds-number information. Independently dividing every constant-viscosity case by its own viscosity would instead force `mu*=1` and erase that distinction.
+preserves Reynolds-number information when `mu` is the relevant dynamic viscosity. Independently dividing every constant-viscosity case by its own viscosity would instead force `mu*=1` and erase that distinction.
 
 The same principle applies to other quantities: a scale is chosen from a coherent physical reference scheme, not independently per field merely to make magnitudes close to one.
 
@@ -209,7 +211,7 @@ inference availability
 optional derivation rule
 ```
 
-`ReferenceScales.scheme` names the declared reference scheme for the collection. Physical preprocessing requires a non-empty scheme and requires units and provenance for every reference it actually uses.
+`ReferenceScales.scheme` names the declared reference scheme for the collection. Physical preprocessing requires a non-empty scheme and requires units, provenance, and `inference_available=true` for every reference it actually uses.
 
 The low-level data contract permits partially populated references so source readers can represent information before a complete preprocessing specification is available. Such references cannot be used by the baseline physical transform until the required semantics are present.
 
@@ -247,8 +249,6 @@ rhow
 rhoE
 pressure
 temperature
-vis_lam
-vis_turb
 ```
 
 The transform consumes an explicit `ReferenceScales` object and a mapping of named tensors. It returns a new mapping and does not mutate the supplied tensors or infer a transform for unknown names.
@@ -288,7 +288,7 @@ M3.3 does not blur reference-state provenance with learned statistical-scaler pr
 - A missing reference scheme fails.
 - Non-positive references used as multiplicative physical scales fail.
 - Used references without units or provenance fail.
-- References marked unavailable at inference fail.
+- References not explicitly marked available at inference fail.
 - Snapshot-scoped references fail in the baseline implementation.
 - Unsupported field names fail rather than silently passing through unchanged.
 - Non-floating physical tensors fail rather than being implicitly cast.
@@ -303,6 +303,7 @@ M3.3 does not blur reference-state provenance with learned statistical-scaler pr
 - Statistical scaling implementation.
 - Specialized wall-unit representations such as `u_tau`, `y+`, or `Re_tau`-based quantities.
 - Pressure-offset transforms; the baseline implements absolute pressure scaling only.
+- Mapping of AVBP `vis_lam` and `vis_turb` until dynamic/kinematic and stored-unit semantics are confirmed.
 - Unit conversion or dimensional-analysis enforcement between fields and references.
 - Interpretation of AVBP `VertexData/volume` as a physical quadrature weight.
 
