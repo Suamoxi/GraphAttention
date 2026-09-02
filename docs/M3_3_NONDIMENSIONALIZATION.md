@@ -229,11 +229,11 @@ $$
 
 The simulation author provides one YAML case-definition document containing the reference values known from the simulation setup. The framework does not derive those values from an instantaneous solution snapshot.
 
-The current schema is:
+The following schema example is illustrative only; its numerical values are not reference values for the current HIT dataset:
 
 ```yaml
-case_id: HIT_LES_FORCED
-reference_scheme: hit_forcing_reference
+case_id: example_case
+reference_scheme: example_reference
 
 references:
   rho_ref:
@@ -246,7 +246,7 @@ references:
   U_ref:
     value: 69.44
     units: m/s
-    definition: prescribed_turbulent_velocity_scale
+    definition: prescribed_characteristic_velocity
     provenance: simulation_setup
     inference_available: true
     scope: case
