@@ -2,7 +2,7 @@
 
 ## Status
 
-The M3.3 scientific definition is frozen. The baseline runtime reference metadata and forward/inverse field transformations are implemented, pending target-environment validation. Automatic case-reference extraction, coordinate nondimensionalization, regime conditioning, and statistical scaling remain deferred.
+The M3.3 scientific definition is frozen. The baseline reference metadata and forward/inverse convective field transformations were validated on Calypso with the 47-test suite on 2026-09-02. M3.3 now also implements explicit YAML case-definition loading and attachment of declared case references to AVBP samples; that new integration still requires target-environment validation. Coordinate nondimensionalization, regime conditioning, and statistical scaling remain deferred.
 
 ## 1. Purpose
 
@@ -124,13 +124,15 @@ A pressure fluctuation or offset transformation such as `(p - p_ref) / (rho_ref 
 
 The generic viscosity equation applies to dynamic viscosity `mu`. The current AVBP fields `vis_lam` and `vis_turb` are not mapped to that equation until their exact stored physical convention is confirmed. M3.3 does not infer dynamic-versus-kinematic viscosity semantics from their names.
 
-Coordinates may use:
+The baseline coordinate nondimensionalization is:
 
 $$
-\mathbf x^*=\frac{\mathbf x-\mathbf x_{\mathrm{origin}}}{L_{\mathrm{ref}}},
+\boxed{
+\mathbf x^*=\frac{\mathbf x}{L_{\mathrm{ref}}}
+}
 $$
 
-where the origin convention is explicit. This physical operation is distinct from numerical per-mesh bounding-box centering or normalization.
+An additional translation such as `(x - x_origin) / L_ref` is a separate explicit coordinate-origin convention, not a requirement for nondimensionalization. In particular, relative geometry cancels any common origin shift. Numerical per-mesh bounding-box centering remains a distinct geometry normalization operation.
 
 ## 5. Reynolds, Mach, and other regime descriptors
 
@@ -217,7 +219,65 @@ The low-level data contract permits partially populated references so source rea
 
 A missing required reference is an error. The implementation does not silently substitute `1.0`, infer a semantic definition from units, or switch reference definitions between cases.
 
-## 10. Invertibility
+## 10. Authoritative case-definition documents
+
+The baseline project convention is now:
+
+$$
+\boxed{\text{reference quantities are declared, not inferred}}
+$$
+
+The simulation author provides one YAML case-definition document containing the reference values known from the simulation setup. The framework does not derive those values from an instantaneous solution snapshot.
+
+The current schema is:
+
+```yaml
+case_id: HIT_LES_FORCED
+reference_scheme: hit_forcing_reference
+
+references:
+  rho_ref:
+    value: 1.2
+    units: kg/m^3
+    definition: prescribed_reference_density
+    provenance: simulation_setup
+    inference_available: true
+
+  U_ref:
+    value: 69.44
+    units: m/s
+    definition: prescribed_turbulent_velocity_scale
+    provenance: simulation_setup
+    inference_available: true
+    scope: case
+    derivation: Ma_ref * sqrt(gamma * R * T_ref)
+```
+
+`value` is authoritative and must be an explicit numeric literal. `derivation` is provenance/documentation only: the loader does not evaluate it and does not implement a physical-expression engine. This is the selected option for derived reference quantities. If `U_ref` was obtained from a prescribed Mach number and thermodynamic state, the simulation author stores the resulting numerical value and records the equation used in `derivation`.
+
+Each reference requires `value`, `units`, `definition`, `provenance`, and explicit `inference_available`. `scope` is optional and defaults to `case`; `derivation` is optional. Unknown keys fail so misspelled scientific metadata cannot silently disappear.
+
+`CaseDefinition` loads and validates this file with OmegaConf without resolving reference-value interpolation. `CaseDefinition.source_path` records which document supplied the reference state.
+
+Dimensionless regime descriptors such as `Re`, `Ma`, and `Pr` remain conceptually separate from `ReferenceScale`. Their persisted runtime contract and model-conditioning interface are still deferred rather than mixing them into reference scales prematurely.
+
+## 11. AVBP case attachment
+
+`AVBPHDF5Dataset` accepts a `case_files` mapping from `case_id` to the authoritative case-definition file. Individual `AVBPSampleSpec` entries may carry `case_id` independently of `mesh_id`.
+
+This supports, for example, one mesh reused across several physical operating conditions:
+
+```text
+mesh_shared + case_A
+mesh_shared + case_B
+mesh_shared + case_C
+```
+
+Case definitions are loaded once at dataset construction. Samples sharing a `case_id` reuse the same immutable `ReferenceScales` object. The returned `Sample.case_id` is explicit and `Sample.reference_scales` receives the declared case references. The case-definition path is retained as sample provenance.
+
+A sample without `case_id` remains valid for raw data inspection and carries empty reference scales. A sample that declares `case_id` but has no configured case file fails at dataset construction.
+
+## 12. Invertibility
 
 Physical nondimensionalization must be invertible up to documented floating-point tolerance.
 
@@ -237,7 +297,7 @@ $$
 
 Round-trip tests are mandatory for every implemented transformation.
 
-## 11. Runtime implementation
+## 13. Runtime field implementation
 
 `graph_attention.data.ConvectiveNondimensionalizer` implements the multiplicative baseline transformations for the currently supported canonical physical fields:
 
@@ -257,26 +317,29 @@ References are required only when a requested field actually depends on them. Fo
 
 The inverse `dimensionalize` operation uses the same field scales. Numerical tests cover exact known scales and floating-point round trips.
 
-The runtime implementation deliberately does not nondimensionalize coordinates yet. Coordinate scaling requires an explicit `x_origin` convention in addition to `L_ref`, and that convention must not be guessed from a mesh bounding box.
+Coordinate nondimensionalization is not yet implemented in runtime code even though its baseline scientific definition is now `coords / L_ref`.
 
-## 12. Statistical scaling remains separate
+## 14. Statistical scaling remains separate
 
-After physical nondimensionalization, an optional training-only scaler may later use statistics such as:
+After physical nondimensionalization, an optional training-only scaler will use statistics such as:
 
 $$
 \hat q=\frac{q^*-\mu_{q^*,\mathrm{train}}}{\sigma_{q^*,\mathrm{train}}}.
 $$
 
-Those statistics are learned from the training split only and frozen for validation, testing, and inference.
+Those statistics must be learned from the training split only and frozen for validation, testing, and inference.
+
+Statistical scaling is intentionally not implemented in this M3.3 step because the repository does not yet have the task/split interfaces that define which named fields/components belong to the learned representation and which samples constitute the training split. Implementing a fitted scaler before those contracts would either fit the wrong population or invent premature interfaces. It must be implemented before meaningful M6 training, after the M5 task and split semantics exist.
 
 M3.3 does not blur reference-state provenance with learned statistical-scaler provenance.
 
-## 13. Assumptions, edge cases, and deferred decisions
+## 15. Assumptions, edge cases, and deferred decisions
 
 ### Frozen assumptions
 
 - The initial M3.3 equations target compressible Navier-Stokes-like state variables while allowing irrelevant references to be absent for other governing systems.
 - Reference scales are case- or operating-condition-level in the baseline runtime transform.
+- Reference values used by the framework are authoritative values supplied by the simulation author rather than inferred from target snapshots.
 - The baseline uses a coherent convective basis rather than independent per-field magnitude normalization.
 - `Re`, `Ma`, and similar dimensionless numbers are physical-regime descriptors rather than replacements for dimensional reference scales.
 - Concrete definitions of `U_ref` and `L_ref` may differ between explicitly declared flow-family reference schemes.
@@ -286,30 +349,33 @@ M3.3 does not blur reference-state provenance with learned statistical-scaler pr
 
 - Missing required references fail.
 - A missing reference scheme fails.
+- A declared `case_id` without a configured case file fails.
+- Case-file identity mismatches and unknown schema keys fail.
+- Reference values that are not explicit numeric literals fail.
 - Non-positive references used as multiplicative physical scales fail.
 - Used references without units or provenance fail.
 - References not explicitly marked available at inference fail.
-- Snapshot-scoped references fail in the baseline implementation.
+- Snapshot-scoped references fail in the baseline transform.
 - Unsupported field names fail rather than silently passing through unchanged.
 - Non-floating physical tensors fail rather than being implicitly cast.
 - A transformation is not inferred from a field's tensor shape, numerical range, or units alone.
 
 ### Deferred
 
-- Automatic extraction of case references from AVBP configuration files.
-- Association/injection of reference schemes into `AVBPHDF5Dataset` samples.
-- Physical coordinate nondimensionalization and its explicit origin convention.
-- Global model-conditioning interfaces for `Re`, `Ma`, `Pr`, and related quantities.
-- Statistical scaling implementation.
+- Runtime coordinate nondimensionalization using `coords / L_ref`.
+- Optional coordinate-origin transforms, which remain separate from physical nondimensionalization.
+- Persisted global regime descriptors and model-conditioning interfaces for `Re`, `Ma`, `Pr`, and related quantities.
+- Statistical scaling implementation after task/split semantics exist.
 - Specialized wall-unit representations such as `u_tau`, `y+`, or `Re_tau`-based quantities.
 - Pressure-offset transforms; the baseline implements absolute pressure scaling only.
 - Mapping of AVBP `vis_lam` and `vis_turb` until dynamic/kinematic and stored-unit semantics are confirmed.
 - Unit conversion or dimensional-analysis enforcement between fields and references.
 - Interpretation of AVBP `VertexData/volume` as a physical quadrature weight.
+- Automatic import from AVBP setup/configuration files; this is no longer the authoritative path and would only be a future convenience importer.
 
-## 14. Implementation gate
+## 16. Implementation gate
 
-The baseline runtime implementation includes:
+The baseline runtime field transform includes:
 
 - explicit named reference semantics, scope, inference availability, and provenance hooks;
 - field-specific forward transformations;
@@ -318,4 +384,13 @@ The baseline runtime implementation includes:
 - missing-reference and anti-leakage failure tests;
 - no dependence on sample node count, node numbering, or mesh topology.
 
-Target-environment `pytest`, Ruff, and format validation remain required before the runtime portion is marked validated.
+The case-definition integration adds:
+
+- authoritative explicit YAML reference values;
+- literal-value validation with non-evaluated derivation metadata;
+- explicit case identity distinct from mesh identity;
+- one-time case-file loading and reuse across snapshots;
+- attachment to `Sample.reference_scales`;
+- failure tests for missing or mismatched case definitions.
+
+Target-environment `pytest`, Ruff, and format validation remain required for the new case-definition integration before that portion is marked validated.
