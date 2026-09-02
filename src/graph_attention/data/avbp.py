@@ -146,7 +146,9 @@ class AVBPHDF5Dataset(Dataset[Sample]):
         self.field_specs = self.field_catalog.require(list(self.field_names))
         for spec in self.field_specs:
             if not spec.stored or spec.source_path is None:
-                raise ValueError(f"AVBP reader requires a stored source_path for field '{spec.name}'")
+                raise ValueError(
+                    f"AVBP reader requires a stored source_path for field '{spec.name}'"
+                )
             if spec.support is not FieldSupport.NODE:
                 raise ValueError(
                     f"M3.2 AVBP reader currently supports node fields only; "
@@ -259,9 +261,7 @@ def _normalize_sample_specs(
             mesh_id = _text_value(raw["mesh_id"], "mesh_id", position)
             mesh_value = raw["mesh_file"]
         else:
-            raise TypeError(
-                "each AVBP sample specification must be an AVBPSampleSpec or mapping"
-            )
+            raise TypeError("each AVBP sample specification must be an AVBPSampleSpec or mapping")
 
         snapshot_path = _existing_file(snapshot_value, "snapshot_file", position)
         mesh_path = _existing_file(mesh_value, "mesh_file", position)
@@ -433,7 +433,8 @@ def _normalize_hex_connectivity(
 
     if zero_valid and one_valid:
         raise ValueError(
-            "AVBP connectivity indexing is ambiguous; configure connectivity_indexing as zero or one"
+            "AVBP connectivity indexing is ambiguous; configure "
+            "connectivity_indexing as zero or one"
         )
     if zero_valid:
         return conn
