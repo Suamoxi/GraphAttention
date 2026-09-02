@@ -52,8 +52,6 @@ def test_convective_nondimensionalization_matches_frozen_field_scales() -> None:
         "rhoE": torch.tensor([100.0], dtype=torch.float64),
         "pressure": torch.tensor([50.0], dtype=torch.float64),
         "temperature": torch.tensor([600.0], dtype=torch.float64),
-        "vis_lam": torch.tensor([40.0], dtype=torch.float64),
-        "vis_turb": torch.tensor([20.0], dtype=torch.float64),
     }
 
     result = transform.nondimensionalize(fields)
@@ -66,8 +64,6 @@ def test_convective_nondimensionalization_matches_frozen_field_scales() -> None:
         "rhoE": 2.0,
         "pressure": 1.0,
         "temperature": 2.0,
-        "vis_lam": 1.0,
-        "vis_turb": 0.5,
     }
     for name, value in expected.items():
         assert result[name].dtype == torch.float64
@@ -194,8 +190,9 @@ def test_nonpositive_reference_is_rejected_when_used() -> None:
 def test_unsupported_or_nonfloating_fields_do_not_silently_pass_through() -> None:
     transform = ConvectiveNondimensionalizer(_references())
 
-    with pytest.raises(KeyError, match="No M3.3 nondimensionalization"):
-        transform.nondimensionalize({"mpi_rank": torch.tensor([0.0])})
+    for name in ("mpi_rank", "vis_lam", "vis_turb"):
+        with pytest.raises(KeyError, match="No M3.3 nondimensionalization"):
+            transform.nondimensionalize({name: torch.tensor([0.0])})
 
     with pytest.raises(TypeError, match="must be floating-point"):
         transform.nondimensionalize({"rho": torch.tensor([1], dtype=torch.int64)})
