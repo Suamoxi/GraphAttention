@@ -6,10 +6,11 @@ model, task, batching, and preprocessing behavior.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from math import isfinite
-from typing import Any, Mapping
+from typing import Any
 
 import torch
 
@@ -32,148 +33,169 @@ class FieldRole(StrEnum):
     DERIVED_PHYSICAL = "derived_physical"
     GEOMETRY_BOUNDARY = "geometry_boundary"
     DIAGNOSTIC = "diagnostic"
-    SOLVER_METADATA = "solver_metadata"
+    COMPUTATIONAL_METADATA = "computational_metadata"
     FORCING_INTERNAL = "forcing_internal"
     GLOBAL_METADATA = "global_metadata"
 
 
 @dataclass(frozen=True, slots=True)
 class FieldSpec:
-    """Semantic description of one canonical field."""
+    """Semantic description of one supported CFD quantity."""
 
     name: str
     support: FieldSupport
     role: FieldRole
-    components: tuple[str, ...] = ("value",)
     source_path: str | None = None
+    components: tuple[str, ...] = ()
     units: str | None = None
     provenance: str | None = None
     stored: bool = True
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise ValueError("FieldSpec.name must be non-empty.")
-        if not self.components:
-            raise ValueError(f"Field '{self.name}' must define at least one component.")
-        if any(not component.strip() for component in self.components):
-            raise ValueError(f"Field '{self.name}' contains an empty component name.")
+        if not self.name:
+            raise ValueError("field name must be non-empty")
+        if self.source_path == "":
+            raise ValueError("source_path must be non-empty when provided")
         if len(set(self.components)) != len(self.components):
-            raise ValueError(f"Field '{self.name}' contains duplicate component names.")
+            raise ValueError(f"field '{self.name}' has duplicate component names")
+        if any(not component for component in self.components):
+            raise ValueError(f"field '{self.name}' has an empty component name")
+
+    @property
+    def component_count(self) -> int:
+        """Number of explicit components, or one for a scalar field."""
+
+        return len(self.components) or 1
 
 
-@dataclass(frozen=True, slots=True)
 class FieldCatalog:
-    """Immutable collection of uniquely named field specifications."""
+    """Ordered catalogue of supported fields keyed by canonical name."""
 
-    fields: tuple[FieldSpec, ...]
-    _by_name: Mapping[str, FieldSpec] = field(init=False, repr=False, compare=False)
+    def __init__(self, fields: tuple[FieldSpec, ...] | list[FieldSpec]) -> None:
+        self._fields = tuple(fields)
+        names = [field.name for field in self._fields]
+        if len(set(names)) != len(names):
+            duplicates = sorted(name for name in set(names) if names.count(name) > 1)
+            raise ValueError(f"duplicate field names: {duplicates}")
+        self._by_name = {field.name: field for field in self._fields}
 
-    def __post_init__(self) -> None:
-        by_name: dict[str, FieldSpec] = {}
-        for spec in self.fields:
-            if spec.name in by_name:
-                raise ValueError(f"Duplicate field name '{spec.name}' in catalog.")
-            by_name[spec.name] = spec
-        object.__setattr__(self, "_by_name", by_name)
+    def __iter__(self):
+        return iter(self._fields)
 
-    def __contains__(self, name: str) -> bool:
+    def __len__(self) -> int:
+        return len(self._fields)
+
+    def __contains__(self, name: object) -> bool:
         return name in self._by_name
 
-    def __getitem__(self, name: str) -> FieldSpec:
+    def get(self, name: str) -> FieldSpec:
+        """Return one declared field or fail with a semantic error."""
+
         try:
             return self._by_name[name]
         except KeyError as exc:
-            raise KeyError(f"Unknown field '{name}'.") from exc
+            raise KeyError(f"unknown field '{name}'") from exc
+
+    def require(self, names: list[str] | tuple[str, ...]) -> tuple[FieldSpec, ...]:
+        """Resolve field names while preserving the requested order."""
+
+        return tuple(self.get(name) for name in names)
 
     @property
     def names(self) -> tuple[str, ...]:
-        return tuple(spec.name for spec in self.fields)
-
-    def require(self, names: tuple[str, ...] | list[str]) -> tuple[FieldSpec, ...]:
-        """Return requested fields in the exact requested order."""
-
-        return tuple(self[name] for name in names)
+        return tuple(field.name for field in self._fields)
 
 
 @dataclass(frozen=True, slots=True)
 class ReferenceScale:
-    """One case-level physical reference quantity and its semantics."""
+    """One case-level physical reference quantity."""
 
     name: str
     value: float
     definition: str
-    provenance: str | None = None
+    provenance: str
+    units: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.name.strip():
-            raise ValueError("ReferenceScale.name must be non-empty.")
-        if not self.definition.strip():
-            raise ValueError(f"Reference scale '{self.name}' needs an explicit definition.")
+        if not self.name:
+            raise ValueError("reference scale name must be non-empty")
+        if not self.definition:
+            raise ValueError(f"reference scale '{self.name}' needs a definition")
+        if not self.provenance:
+            raise ValueError(f"reference scale '{self.name}' needs provenance")
         if not isfinite(self.value):
-            raise ValueError(f"Reference scale '{self.name}' must be finite.")
+            raise ValueError(f"reference scale '{self.name}' must be finite")
 
 
-@dataclass(frozen=True, slots=True)
 class ReferenceScales:
-    """Collection of uniquely named case-level reference quantities."""
+    """Named case-level reference quantities with explicit semantics."""
 
-    scales: tuple[ReferenceScale, ...] = ()
-    _by_name: Mapping[str, ReferenceScale] = field(init=False, repr=False, compare=False)
+    def __init__(self, scales: tuple[ReferenceScale, ...] | list[ReferenceScale] = ()) -> None:
+        self._scales = tuple(scales)
+        names = [scale.name for scale in self._scales]
+        if len(set(names)) != len(names):
+            duplicates = sorted(name for name in set(names) if names.count(name) > 1)
+            raise ValueError(f"duplicate reference scale names: {duplicates}")
+        self._by_name = {scale.name: scale for scale in self._scales}
 
-    def __post_init__(self) -> None:
-        by_name: dict[str, ReferenceScale] = {}
-        for scale in self.scales:
-            if scale.name in by_name:
-                raise ValueError(f"Duplicate reference scale '{scale.name}'.")
-            by_name[scale.name] = scale
-        object.__setattr__(self, "_by_name", by_name)
+    def __iter__(self):
+        return iter(self._scales)
 
-    def __contains__(self, name: str) -> bool:
+    def __len__(self) -> int:
+        return len(self._scales)
+
+    def __contains__(self, name: object) -> bool:
         return name in self._by_name
 
-    def __getitem__(self, name: str) -> ReferenceScale:
+    def get(self, name: str) -> ReferenceScale:
         try:
             return self._by_name[name]
         except KeyError as exc:
-            raise KeyError(f"Unknown reference scale '{name}'.") from exc
+            raise KeyError(f"unknown reference scale '{name}'") from exc
+
+    def value(self, name: str) -> float:
+        return self.get(name).value
 
 
 @dataclass(slots=True)
 class Mesh:
-    """Canonical node-based CFD mesh representation for one sample."""
+    """Canonical M2 representation of one native node-based CFD mesh."""
 
     coords: torch.Tensor
     edge_index: torch.Tensor
     mesh_id: str | None = None
     node_weights: torch.Tensor | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.coords.ndim != 2:
-            raise ValueError("Mesh.coords must have shape [N, D].")
+            raise ValueError("coords must have shape [N, D]")
         if not self.coords.is_floating_point():
-            raise TypeError("Mesh.coords must use a floating-point dtype.")
-        if not torch.isfinite(self.coords).all():
-            raise ValueError("Mesh.coords contains NaN or Inf values.")
+            raise TypeError("coords must use a floating-point dtype")
+        if self.coords.numel() and not torch.isfinite(self.coords).all().item():
+            raise ValueError("coords must be finite")
 
         if self.edge_index.ndim != 2 or self.edge_index.shape[0] != 2:
-            raise ValueError("Mesh.edge_index must have shape [2, E].")
+            raise ValueError("edge_index must have shape [2, E]")
         if self.edge_index.dtype != torch.long:
-            raise TypeError("Mesh.edge_index must use torch.long indices.")
+            raise TypeError("edge_index must use torch.long indices")
 
-        if self.edge_index.numel() > 0:
-            if int(self.edge_index.min()) < 0:
-                raise ValueError("Mesh.edge_index contains a negative node index.")
-            if int(self.edge_index.max()) >= self.num_nodes:
-                raise ValueError("Mesh.edge_index references a node outside coords.")
+        if self.edge_index.numel():
+            min_index = int(self.edge_index.min())
+            max_index = int(self.edge_index.max())
+            if min_index < 0 or max_index >= self.num_nodes:
+                raise ValueError(
+                    "edge_index contains node indices outside the valid "
+                    f"[0, {self.num_nodes}) range"
+                )
 
         if self.node_weights is not None:
             if self.node_weights.ndim != 1 or self.node_weights.shape[0] != self.num_nodes:
-                raise ValueError("Mesh.node_weights must have shape [N].")
+                raise ValueError("node_weights must have shape [N]")
             if not self.node_weights.is_floating_point():
-                raise TypeError("Mesh.node_weights must use a floating-point dtype.")
-            if not torch.isfinite(self.node_weights).all():
-                raise ValueError("Mesh.node_weights contains NaN or Inf values.")
+                raise TypeError("node_weights must use a floating-point dtype")
+            if self.node_weights.numel() and not torch.isfinite(self.node_weights).all().item():
+                raise ValueError("node_weights must be finite")
 
     @property
     def num_nodes(self) -> int:
@@ -190,44 +212,50 @@ class Mesh:
 
 @dataclass(slots=True)
 class Sample:
-    """One physical CFD sample with named fields and one native mesh."""
+    """One CFD sample plus its native mesh and case-level metadata."""
 
     sample_id: str
     mesh: Mesh
     fields: Mapping[str, torch.Tensor]
     reference_scales: ReferenceScales = field(default_factory=ReferenceScales)
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.sample_id.strip():
-            raise ValueError("Sample.sample_id must be non-empty.")
-        if len(set(self.fields)) != len(self.fields):
-            raise ValueError("Sample field names must be unique.")
-        for name, value in self.fields.items():
-            if not name.strip():
-                raise ValueError("Sample contains an empty field name.")
-            if not isinstance(value, torch.Tensor):
-                raise TypeError(f"Sample field '{name}' must be a torch.Tensor.")
+        if not self.sample_id:
+            raise ValueError("sample_id must be non-empty")
+        self.fields = dict(self.fields)
 
     def validate_against(self, catalog: FieldCatalog) -> None:
-        """Validate loaded fields against their declared spatial support.
+        """Validate loaded tensors against declared semantic field contracts."""
 
-        M2 can validate node-supported fields because the canonical mesh node
-        count is known. Cell/face support sizes are intentionally not guessed.
-        """
+        for name, tensor in self.fields.items():
+            spec = catalog.get(name)
+            if not isinstance(tensor, torch.Tensor):
+                raise TypeError(f"field '{name}' must be a torch.Tensor")
 
-        for name, value in self.fields.items():
-            spec = catalog[name]
-            if spec.support is FieldSupport.NODE:
-                if value.ndim == 0 or value.shape[0] != self.mesh.num_nodes:
-                    raise ValueError(
-                        f"Node field '{name}' must have leading dimension N="
-                        f"{self.mesh.num_nodes}, got shape {tuple(value.shape)}."
-                    )
-            expected_components = len(spec.components)
-            if expected_components > 1:
-                if value.ndim < 2 or value.shape[-1] != expected_components:
-                    raise ValueError(
-                        f"Field '{name}' declares {expected_components} components "
-                        f"but has shape {tuple(value.shape)}."
-                    )
+            if spec.support == FieldSupport.NODE:
+                self._validate_node_field(spec, tensor)
+
+    def _validate_node_field(self, spec: FieldSpec, tensor: torch.Tensor) -> None:
+        if tensor.ndim == 0:
+            raise ValueError(f"node field '{spec.name}' must have a node dimension")
+        if tensor.shape[0] != self.mesh.num_nodes:
+            raise ValueError(
+                f"node field '{spec.name}' has {tensor.shape[0]} nodes, "
+                f"expected {self.mesh.num_nodes}"
+            )
+
+        component_count = spec.component_count
+        if component_count == 1:
+            if tensor.ndim not in {1, 2}:
+                raise ValueError(
+                    f"scalar node field '{spec.name}' must have shape [N] or [N, 1]"
+                )
+            if tensor.ndim == 2 and tensor.shape[1] != 1:
+                raise ValueError(f"scalar node field '{spec.name}' must have one component")
+        else:
+            if tensor.ndim != 2 or tensor.shape[1] != component_count:
+                raise ValueError(
+                    f"node field '{spec.name}' must have shape "
+                    f"[N, {component_count}] for components {spec.components}"
+                )
