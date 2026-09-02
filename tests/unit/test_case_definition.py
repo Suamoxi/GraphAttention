@@ -24,6 +24,18 @@ references:
     inference_available: true
     scope: operating_condition
     derivation: Ma_ref * sqrt(gamma * R * T_ref)
+regime:
+  Re:
+    value: 50000.0
+    definition: rho_ref_U_ref_L_ref_over_mu_ref
+    provenance: simulation_setup
+    inference_available: true
+    derivation: rho_ref * U_ref * L_ref / mu_ref
+  Ma:
+    value: 0.2
+    definition: U_ref_over_a_ref
+    provenance: simulation_setup
+    inference_available: true
 """
     )
 
@@ -44,6 +56,10 @@ def test_case_definition_loads_explicit_values_and_derivation_as_metadata(
     assert case.reference_scales["U_ref"].value == 69.44
     assert case.reference_scales["U_ref"].scope is ReferenceScope.OPERATING_CONDITION
     assert case.reference_scales["U_ref"].derivation == "Ma_ref * sqrt(gamma * R * T_ref)"
+    assert case.regime_parameters.names == ("Re", "Ma")
+    assert case.regime_parameters["Re"].value == 50000.0
+    assert case.regime_parameters["Re"].derivation == "rho_ref * U_ref * L_ref / mu_ref"
+    assert case.regime_parameters["Ma"].value == 0.2
 
 
 def test_case_definition_requires_literal_numeric_reference_values(tmp_path: Path) -> None:
@@ -56,6 +72,31 @@ references:
     value: ${oc.env:U_REF}
     units: m/s
     definition: prescribed_velocity
+    provenance: simulation_setup
+    inference_available: true
+"""
+    )
+
+    with pytest.raises(TypeError, match="explicit numeric literal"):
+        load_case_definition(path)
+
+
+def test_case_definition_requires_literal_numeric_regime_values(tmp_path: Path) -> None:
+    path = tmp_path / "case.yaml"
+    path.write_text(
+        """case_id: case-a
+reference_scheme: test
+references:
+  U_ref:
+    value: 10.0
+    units: m/s
+    definition: prescribed_velocity
+    provenance: simulation_setup
+    inference_available: true
+regime:
+  Ma:
+    value: ${oc.env:MACH}
+    definition: U_ref_over_a_ref
     provenance: simulation_setup
     inference_available: true
 """
@@ -80,6 +121,32 @@ references:
     )
 
     with pytest.raises(ValueError, match="inference_available"):
+        load_case_definition(path)
+
+
+def test_case_definition_rejects_unknown_regime_keys(tmp_path: Path) -> None:
+    path = tmp_path / "case.yaml"
+    path.write_text(
+        """case_id: case-a
+reference_scheme: test
+references:
+  U_ref:
+    value: 10.0
+    units: m/s
+    definition: prescribed_velocity
+    provenance: simulation_setup
+    inference_available: true
+regime:
+  Ma:
+    value: 0.2
+    definition: U_ref_over_a_ref
+    provenance: simulation_setup
+    inference_available: true
+    units: dimensionless
+"""
+    )
+
+    with pytest.raises(ValueError, match="unsupported keys"):
         load_case_definition(path)
 
 
