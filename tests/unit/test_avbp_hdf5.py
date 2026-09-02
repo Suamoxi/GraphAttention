@@ -210,9 +210,7 @@ def test_auto_indexing_rejects_ambiguous_connectivity(tmp_path: Path) -> None:
     snapshot_path = tmp_path / "snapshot.h5"
     _write_mesh(mesh_path, one_based=True, extra_node=True)
     _write_snapshot(snapshot_path, num_nodes=9)
-    dataset = AVBPHDF5Dataset(
-        samples=[_spec("sample-0", snapshot_path, "mesh-a", mesh_path)]
-    )
+    dataset = AVBPHDF5Dataset(samples=[_spec("sample-0", snapshot_path, "mesh-a", mesh_path)])
 
     with pytest.raises(ValueError, match="indexing is ambiguous"):
         dataset[0]
