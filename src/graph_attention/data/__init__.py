@@ -11,6 +11,8 @@ from .contracts import (
     ReferenceScale,
     ReferenceScales,
     ReferenceScope,
+    RegimeParameter,
+    RegimeParameters,
     Sample,
 )
 from .nondimensionalization import ConvectiveNondimensionalizer
@@ -30,6 +32,8 @@ __all__ = [
     "ReferenceScale",
     "ReferenceScales",
     "ReferenceScope",
+    "RegimeParameter",
+    "RegimeParameters",
     "Sample",
     "SyntheticMeshDataset",
     "load_case_definition",
