@@ -299,6 +299,22 @@ Distinguish clearly between:
 
 Do not convert an inference into a performance or scientific claim merely because the code compiles or asymptotic complexity appears favorable.
 
+## Implementation reporting
+
+For every implementation, refactor, data contract, numerical method, model change, benchmark, or proposed design, explicitly report the assumptions and relevant edge cases to the user or reviewer.
+
+At minimum report:
+
+- assumptions introduced by the change and assumptions inherited from external data, libraries, or prior repository decisions;
+- edge cases that are handled and how they behave;
+- edge cases that are deliberately unsupported, deferred, or still unvalidated;
+- failure behavior when an assumption is violated;
+- efficiency, memory, numerical, or scientific trade-offs caused by those assumptions where relevant.
+
+Do not leave a material assumption implicit merely because it appears in code, configuration, or tests. If missing information could materially change the correct design, ask for that information before implementing rather than silently choosing a convention.
+
+After implementation, summarize the assumptions, supported edge cases, deferred edge cases, and remaining validation gaps alongside the normal test/benchmark status.
+
 ## Performance policy
 
 Performance is a first-class requirement.
