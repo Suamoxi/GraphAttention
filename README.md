@@ -16,9 +16,9 @@ The framework is intended to support multiple learning paradigms without making 
 
 The fundamental project abstraction is:
 
-\[
+$$
 \boxed{\text{CFD field} + \text{mesh geometry/topology} + \text{task}}
-\]
+$$
 
 The repository is CFD-specific. The model is mesh-aware but mesh-agnostic: mesh connectivity and geometry are first-class runtime inputs, while learned parameters must not depend on a particular mesh size, node numbering, or topology.
 
@@ -39,9 +39,9 @@ The repository is CFD-specific. The model is mesh-aware but mesh-agnostic: mesh 
 
 For the first version of the repository:
 
-\[
+$$
 \boxed{\text{one graph vertex} = \text{one CFD mesh node}}
-\]
+$$
 
 The native CFD mesh is preserved. Cells and faces may supply geometric or numerical metadata such as volumes, normals, boundary information, and quadrature weights, but they are not initially separate learned graph entities.
 
