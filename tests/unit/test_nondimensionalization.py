@@ -84,6 +84,47 @@ def test_convective_nondimensionalization_round_trip() -> None:
         assert torch.allclose(restored[name], tensor, rtol=1e-12, atol=1e-12)
 
 
+def test_coordinate_nondimensionalization_uses_L_ref_and_round_trips() -> None:
+    transform = ConvectiveNondimensionalizer(_references())
+    coords = torch.tensor(
+        [[0.0, 4.0, -8.0], [2.0, 6.0, 12.0]],
+        dtype=torch.float64,
+    )
+
+    dimensionless = transform.nondimensionalize_coordinates(coords)
+    restored = transform.dimensionalize_coordinates(dimensionless)
+
+    expected = torch.tensor(
+        [[0.0, 1.0, -2.0], [0.5, 1.5, 3.0]],
+        dtype=torch.float64,
+    )
+    assert transform.coordinate_scale() == 4.0
+    assert torch.equal(dimensionless, expected)
+    assert torch.allclose(restored, coords, rtol=1e-12, atol=1e-12)
+
+
+def test_coordinate_nondimensionalization_requires_L_ref() -> None:
+    references = ReferenceScales(
+        (_scale("rho_ref", 2.0, "reference_density", "kg/m^3"),),
+        scheme="missing_length_test",
+    )
+    transform = ConvectiveNondimensionalizer(references)
+
+    with pytest.raises(ValueError, match="missing reference 'L_ref'"):
+        transform.nondimensionalize_coordinates(torch.zeros((2, 3)))
+
+
+def test_coordinate_nondimensionalization_rejects_invalid_coordinate_tensors() -> None:
+    transform = ConvectiveNondimensionalizer(_references())
+
+    with pytest.raises(ValueError, match=r"shape \[N, D\]"):
+        transform.nondimensionalize_coordinates(torch.zeros(3))
+    with pytest.raises(TypeError, match="must be floating-point"):
+        transform.nondimensionalize_coordinates(torch.zeros((2, 3), dtype=torch.int64))
+    with pytest.raises(ValueError, match="NaN or Inf"):
+        transform.nondimensionalize_coordinates(torch.tensor([[0.0, float("nan")]]))
+
+
 def test_only_references_required_by_requested_fields_are_needed() -> None:
     references = ReferenceScales(
         (_scale("rho_ref", 2.0, "reference_density", "kg/m^3"),),
