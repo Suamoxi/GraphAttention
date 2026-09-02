@@ -311,7 +311,11 @@ def _normalize_hex_connectivity(
     num_nodes: int,
     indexing: str,
 ) -> torch.Tensor:
-    if connectivity.dtype == torch.bool or connectivity.is_floating_point() or connectivity.is_complex():
+    if (
+        connectivity.dtype == torch.bool
+        or connectivity.is_floating_point()
+        or connectivity.is_complex()
+    ):
         raise TypeError("AVBP hex connectivity must use an integer dtype")
     conn = connectivity.to(dtype=torch.long)
 
