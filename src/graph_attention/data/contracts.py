@@ -39,7 +39,7 @@ class FieldRole(StrEnum):
 
 
 class ReferenceScope(StrEnum):
-    """Physical scope at which a reference quantity is defined."""
+    """Physical scope at which a case-level quantity is defined."""
 
     CASE = "case"
     OPERATING_CONDITION = "operating_condition"
@@ -180,6 +180,76 @@ class ReferenceScales:
         return tuple(self[name] for name in names)
 
 
+@dataclass(frozen=True, slots=True)
+class RegimeParameter:
+    """One explicitly defined dimensionless physical-regime descriptor."""
+
+    name: str
+    value: float
+    definition: str
+    provenance: str | None = None
+    scope: ReferenceScope = ReferenceScope.CASE
+    inference_available: bool | None = None
+    derivation: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("RegimeParameter.name must be non-empty.")
+        if not self.definition.strip():
+            raise ValueError(f"Regime parameter '{self.name}' needs an explicit definition.")
+        if not isfinite(self.value):
+            raise ValueError(f"Regime parameter '{self.name}' must be finite.")
+        if self.provenance is not None and not self.provenance.strip():
+            raise ValueError(f"Regime parameter '{self.name}' has empty provenance.")
+        if self.derivation is not None and not self.derivation.strip():
+            raise ValueError(f"Regime parameter '{self.name}' has empty derivation.")
+        try:
+            scope = ReferenceScope(self.scope)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Regime parameter '{self.name}' has invalid scope '{self.scope}'."
+            ) from exc
+        object.__setattr__(self, "scope", scope)
+        if self.inference_available is not None and not isinstance(self.inference_available, bool):
+            raise TypeError(
+                f"Regime parameter '{self.name}' inference_available must be a bool or None."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeParameters:
+    """Collection of uniquely named dimensionless physical-regime descriptors."""
+
+    parameters: tuple[RegimeParameter, ...] = ()
+    _by_name: Mapping[str, RegimeParameter] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        by_name: dict[str, RegimeParameter] = {}
+        for parameter in self.parameters:
+            if parameter.name in by_name:
+                raise ValueError(f"Duplicate regime parameter '{parameter.name}'.")
+            by_name[parameter.name] = parameter
+        object.__setattr__(self, "_by_name", by_name)
+
+    def __contains__(self, name: str) -> bool:
+        return name in self._by_name
+
+    def __getitem__(self, name: str) -> RegimeParameter:
+        try:
+            return self._by_name[name]
+        except KeyError as exc:
+            raise KeyError(f"Unknown regime parameter '{name}'.") from exc
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(parameter.name for parameter in self.parameters)
+
+    def require(self, names: tuple[str, ...] | list[str]) -> tuple[RegimeParameter, ...]:
+        """Return requested regime parameters in the exact requested order."""
+
+        return tuple(self[name] for name in names)
+
+
 @dataclass(slots=True)
 class Mesh:
     """Canonical node-based CFD mesh representation for one sample."""
@@ -252,6 +322,7 @@ class Sample:
     reference_scales: ReferenceScales = field(default_factory=ReferenceScales)
     metadata: Mapping[str, Any] = field(default_factory=dict)
     case_id: str | None = None
+    regime_parameters: RegimeParameters = field(default_factory=RegimeParameters)
 
     def __post_init__(self) -> None:
         if not self.sample_id.strip():

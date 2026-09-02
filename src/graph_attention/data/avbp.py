@@ -20,6 +20,7 @@ from .contracts import (
     FieldSupport,
     Mesh,
     ReferenceScales,
+    RegimeParameters,
     Sample,
 )
 
@@ -159,8 +160,7 @@ class AVBPHDF5Dataset(Dataset[Sample]):
         missing_case_ids = required_case_ids - self.case_definitions.keys()
         if missing_case_ids:
             raise ValueError(
-                "missing case definition files for case_id values: "
-                f"{sorted(missing_case_ids)}"
+                f"missing case definition files for case_id values: {sorted(missing_case_ids)}"
             )
 
         self.field_catalog = catalog or AVBP_FIELD_CATALOG
@@ -221,6 +221,11 @@ class AVBPHDF5Dataset(Dataset[Sample]):
             ),
             metadata=metadata,
             case_id=spec.case_id,
+            regime_parameters=(
+                case_definition.regime_parameters
+                if case_definition is not None
+                else RegimeParameters()
+            ),
         )
         sample.validate_against(self.field_catalog)
         return sample
@@ -304,11 +309,7 @@ def _normalize_sample_specs(
             mesh_id = _text_value(raw["mesh_id"], "mesh_id", position)
             mesh_value = raw["mesh_file"]
             raw_case_id = raw.get("case_id")
-            case_id = (
-                None
-                if raw_case_id is None
-                else _text_value(raw_case_id, "case_id", position)
-            )
+            case_id = None if raw_case_id is None else _text_value(raw_case_id, "case_id", position)
         else:
             raise TypeError("each AVBP sample specification must be an AVBPSampleSpec or mapping")
 

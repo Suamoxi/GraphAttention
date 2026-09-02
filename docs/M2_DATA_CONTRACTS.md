@@ -53,7 +53,23 @@ Supported scopes are `case`, `operating_condition`, and `snapshot`. The baseline
 
 The low-level data contract still permits references whose units/provenance are not yet populated so readers can represent partially known source metadata. Physical preprocessing is stricter: every reference it actually uses must have the M3.3 semantic metadata required by that transformation.
 
-M3.3 additionally provides file-backed `CaseDefinition` loading. A case document declares literal reference values and their semantics; it does not infer them from instantaneous CFD fields. `CaseDefinition.source_path` preserves the authoritative document path separately from each reference's scientific provenance.
+### `RegimeParameter` and `RegimeParameters`
+
+M3.3 represents dimensionless case descriptors such as `Re`, `Ma`, `Pr`, `Re_tau`, or another explicitly defined control separately from dimensional reference scales.
+
+A `RegimeParameter` stores:
+
+- canonical name;
+- dimensionless numerical value;
+- explicit physical definition;
+- provenance;
+- physical scope;
+- inference availability;
+- optional human-readable derivation.
+
+`RegimeParameters` is an immutable uniquely named collection. The generic contract requires finite values but does not assume every dimensionless descriptor must be strictly positive; a task or specialized physical definition may impose a stronger domain later.
+
+M3.3 additionally provides file-backed `CaseDefinition` loading. A case document declares literal reference values and optional literal regime descriptors; it does not infer them from instantaneous CFD fields. `CaseDefinition.source_path` preserves the authoritative document path separately from each quantity's scientific provenance.
 
 ### `Mesh`
 
@@ -77,6 +93,7 @@ A sample contains:
 - one native `Mesh`;
 - named loaded field tensors;
 - `ReferenceScales` when a physical case definition is attached;
+- `RegimeParameters` when dimensionless case descriptors are declared;
 - non-scientific/general sample metadata.
 
 `case_id` identifies the physical case or operating-condition definition used for the sample. It must not be inferred from `mesh_id`: one mesh may be reused by several physical cases.
@@ -93,6 +110,7 @@ M2 does not implement:
 - nondimensionalization;
 - statistical scaling;
 - task channel selection;
+- regime-to-model conditioning;
 - packed graph batching;
 - sampler/packer logic;
 - Lightning data modules;
@@ -103,7 +121,7 @@ Those capabilities are later milestones and should consume these contracts rathe
 
 ## Why runtime `Mesh`/`Sample` are not frozen dataclasses
 
-`FieldSpec`, `FieldCatalog`, and reference-scale semantics are immutable value contracts. `Mesh` and `Sample` contain `torch.Tensor` objects, which are mutable regardless of dataclass freezing. Marking the containers frozen would therefore provide misleading immutability rather than a real scientific guarantee.
+`FieldSpec`, `FieldCatalog`, reference-scale semantics, and regime-parameter semantics are immutable value contracts. `Mesh` and `Sample` contain `torch.Tensor` objects, which are mutable regardless of dataclass freezing. Marking the containers frozen would therefore provide misleading immutability rather than a real scientific guarantee.
 
 ## M2 validation gate
 
@@ -120,6 +138,7 @@ pass and the following behaviors are tested:
 - duplicate field names are rejected;
 - component order is explicit;
 - reference values retain explicit definitions;
+- regime parameters retain explicit dimensionless definitions;
 - canonical mesh tensor shapes and edge bounds are validated;
 - node-supported sample fields are checked against mesh node count;
 - unknown fields cannot silently pass catalogue validation.

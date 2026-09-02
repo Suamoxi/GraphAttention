@@ -55,7 +55,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. The M3.3 convective field transform has been validated on Calypso; explicit per-case YAML reference documents and AVBP sample attachment are now implemented and await target-environment validation. Coordinate nondimensionalization, statistical scaling, packed graph batching, tasks, and sparse attention remain later work.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 now implements explicit per-case reference documents, field nondimensionalization, canonical coordinate scaling by `L_ref`, and typed dimensionless regime descriptors; final target-environment validation of the combined M3.3 runtime is pending. Statistical train-set scaling remains a later task/split-dependent preprocessing stage. Packed graph batching, tasks, and sparse attention remain later work.
 
 Current smoke checks:
 

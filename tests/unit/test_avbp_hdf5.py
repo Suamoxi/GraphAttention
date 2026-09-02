@@ -69,6 +69,17 @@ references:
     definition: prescribed_reference_velocity
     provenance: simulation_setup
     inference_available: true
+regime:
+  Re:
+    value: 10000.0
+    definition: rho_ref_U_ref_L_ref_over_mu_ref
+    provenance: simulation_setup
+    inference_available: true
+  Ma:
+    value: 0.1
+    definition: U_ref_over_a_ref
+    provenance: simulation_setup
+    inference_available: true
 """
     )
 
@@ -97,6 +108,7 @@ def test_avbp_reader_loads_requested_fields_from_separate_mesh(tmp_path: Path) -
 
     assert sample.sample_id == "sample-0"
     assert sample.case_id is None
+    assert sample.regime_parameters.names == ()
     assert tuple(sample.fields) == ("rho", "rhoE")
     assert sample.fields["rho"].dtype == torch.float64
     assert sample.mesh.coords.dtype == torch.float64
@@ -126,6 +138,8 @@ def test_avbp_reader_attaches_declared_case_references(tmp_path: Path) -> None:
     assert sample.reference_scales.scheme == "test_reference"
     assert sample.reference_scales["rho_ref"].value == 2.0
     assert sample.reference_scales["U_ref"].value == 5.0
+    assert sample.regime_parameters["Re"].value == 10000.0
+    assert sample.regime_parameters["Ma"].value == 0.1
     assert sample.metadata["case_definition_file"] == str(case_path.resolve())
 
 
@@ -150,6 +164,7 @@ def test_avbp_reader_reuses_case_references_for_multiple_snapshots(tmp_path: Pat
     second = dataset[1]
 
     assert first.reference_scales is second.reference_scales
+    assert first.regime_parameters is second.regime_parameters
 
 
 def test_avbp_reader_requires_configured_case_file_for_case_id(tmp_path: Path) -> None:
@@ -159,9 +174,7 @@ def test_avbp_reader_requires_configured_case_file_for_case_id(tmp_path: Path) -
     _write_snapshot(snapshot_path)
 
     with pytest.raises(ValueError, match="missing case definition files"):
-        AVBPHDF5Dataset(
-            samples=[_spec("sample-0", snapshot_path, "mesh-a", mesh_path, "case-a")]
-        )
+        AVBPHDF5Dataset(samples=[_spec("sample-0", snapshot_path, "mesh-a", mesh_path, "case-a")])
 
 
 def test_avbp_reader_reuses_one_cached_mesh_for_multiple_snapshots(tmp_path: Path) -> None:
