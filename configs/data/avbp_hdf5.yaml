@@ -1,0 +1,18 @@
+_target_: graph_attention.data.AVBPHDF5Dataset
+files: null
+data_dir: null
+file_pattern: "*.h5"
+recursive: false
+field_names:
+  - rho
+  - rhou
+  - rhov
+  - rhow
+  - rhoE
+coord_paths:
+  - Coordinates/x
+  - Coordinates/y
+  - Coordinates/z
+connectivity_path: Connectivity/hex->node
+connectivity_indexing: auto
+mesh_file: null

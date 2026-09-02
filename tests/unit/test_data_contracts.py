@@ -76,6 +76,24 @@ def test_mesh_rejects_out_of_range_connectivity() -> None:
         )
 
 
+def test_mesh_validates_optional_native_cell_connectivity() -> None:
+    connectivity = torch.tensor([[0, 1, 2, 3]], dtype=torch.long)
+    mesh = Mesh(
+        coords=torch.zeros((4, 3)),
+        edge_index=torch.empty((2, 0), dtype=torch.long),
+        cell_connectivity=connectivity,
+    )
+
+    assert mesh.cell_connectivity is connectivity
+
+    with pytest.raises(ValueError, match="cell_connectivity references a node outside coords"):
+        Mesh(
+            coords=torch.zeros((4, 3)),
+            edge_index=torch.empty((2, 0), dtype=torch.long),
+            cell_connectivity=torch.tensor([[0, 1, 2, 4]], dtype=torch.long),
+        )
+
+
 def test_sample_validates_node_support_and_components_against_catalog() -> None:
     catalog = FieldCatalog(
         (

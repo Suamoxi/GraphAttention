@@ -1,5 +1,6 @@
 """Data ownership layer: what exists in the CFD source."""
 
+from .avbp import AVBP_FIELD_CATALOG, AVBPHDF5Dataset
 from .contracts import (
     FieldCatalog,
     FieldRole,
@@ -13,6 +14,8 @@ from .contracts import (
 from .synthetic import SyntheticMeshDataset
 
 __all__ = [
+    "AVBP_FIELD_CATALOG",
+    "AVBPHDF5Dataset",
     "FieldCatalog",
     "FieldRole",
     "FieldSpec",
