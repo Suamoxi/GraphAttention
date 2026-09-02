@@ -1,0 +1,118 @@
+import pytest
+import torch
+
+from graph_attention.data import (
+    FieldCatalog,
+    FieldRole,
+    FieldSpec,
+    FieldSupport,
+    Mesh,
+    ReferenceScale,
+    ReferenceScales,
+    Sample,
+)
+
+
+def test_field_catalog_preserves_semantics_and_requested_order() -> None:
+    rho = FieldSpec(
+        name="rho",
+        support=FieldSupport.NODE,
+        role=FieldRole.PRIMARY_STATE,
+        source_path="/GaseousPhase/rho",
+        units="kg/m^3",
+    )
+    momentum = FieldSpec(
+        name="momentum",
+        support=FieldSupport.NODE,
+        role=FieldRole.PRIMARY_STATE,
+        components=("x", "y", "z"),
+        provenance="stored as rhou/rhov/rhow components",
+    )
+    catalog = FieldCatalog((rho, momentum))
+
+    assert catalog.names == ("rho", "momentum")
+    assert catalog.require(["momentum", "rho"]) == (momentum, rho)
+
+
+def test_field_catalog_rejects_duplicate_names() -> None:
+    spec = FieldSpec("rho", FieldSupport.NODE, FieldRole.PRIMARY_STATE)
+    with pytest.raises(ValueError, match="Duplicate field name"):
+        FieldCatalog((spec, spec))
+
+
+def test_reference_scales_preserve_definition_separately_from_value() -> None:
+    scales = ReferenceScales(
+        (
+            ReferenceScale(
+                name="U_ref",
+                value=12.5,
+                definition="bulk_velocity",
+                provenance="case_metadata",
+            ),
+        )
+    )
+
+    assert scales["U_ref"].value == 12.5
+    assert scales["U_ref"].definition == "bulk_velocity"
+
+
+def test_mesh_validates_canonical_node_graph_shapes() -> None:
+    mesh = Mesh(
+        coords=torch.tensor([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+        edge_index=torch.tensor([[0, 1, 2], [1, 2, 0]], dtype=torch.long),
+        node_weights=torch.tensor([0.2, 0.3, 0.5]),
+    )
+
+    assert mesh.num_nodes == 3
+    assert mesh.num_edges == 3
+    assert mesh.spatial_dim == 2
+
+
+def test_mesh_rejects_out_of_range_connectivity() -> None:
+    with pytest.raises(ValueError, match="outside coords"):
+        Mesh(
+            coords=torch.zeros((2, 3)),
+            edge_index=torch.tensor([[0, 1], [1, 2]], dtype=torch.long),
+        )
+
+
+def test_sample_validates_node_support_and_components_against_catalog() -> None:
+    catalog = FieldCatalog(
+        (
+            FieldSpec("rho", FieldSupport.NODE, FieldRole.PRIMARY_STATE),
+            FieldSpec(
+                "momentum",
+                FieldSupport.NODE,
+                FieldRole.PRIMARY_STATE,
+                components=("x", "y", "z"),
+            ),
+        )
+    )
+    mesh = Mesh(
+        coords=torch.zeros((4, 3)),
+        edge_index=torch.tensor([[0, 1, 2], [1, 2, 3]], dtype=torch.long),
+    )
+    sample = Sample(
+        sample_id="case-a/snapshot-0001",
+        mesh=mesh,
+        fields={"rho": torch.ones(4), "momentum": torch.ones((4, 3))},
+    )
+
+    sample.validate_against(catalog)
+
+    bad = Sample(
+        sample_id="case-a/snapshot-0002",
+        mesh=mesh,
+        fields={"momentum": torch.ones((4, 2))},
+    )
+    with pytest.raises(ValueError, match="declares 3 components"):
+        bad.validate_against(catalog)
+
+
+def test_sample_rejects_unknown_field_when_validated() -> None:
+    catalog = FieldCatalog(())
+    mesh = Mesh(torch.zeros((1, 3)), torch.empty((2, 0), dtype=torch.long))
+    sample = Sample("sample", mesh, {"mystery": torch.ones(1)})
+
+    with pytest.raises(KeyError, match="Unknown field"):
+        sample.validate_against(catalog)
