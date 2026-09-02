@@ -10,21 +10,31 @@ The data layer reads what exists in the AVBP HDF5 source. It does not choose lea
 
 For this project, an AVBP solution snapshot and its mesh are separate HDF5 files. A dataset may contain several meshes, with many snapshots sharing each mesh.
 
-The association is therefore explicit for every physical sample:
+The mandatory association is therefore explicit for every physical sample:
 
 ```text
 sample_id + snapshot_file + mesh_id + mesh_file
 ```
 
-`AVBPSampleSpec` is the corresponding runtime contract. `AVBPHDF5Dataset` accepts either `AVBPSampleSpec` instances or mappings with exactly those four keys, which allows Hydra to supply the same information directly.
+M3.3 may additionally associate the sample with an explicit physical case definition through:
 
-The reader does not infer mesh association from file stems, directory names, or ordering. Duplicate `sample_id` values are rejected. A `mesh_id` must refer to exactly one mesh file, and one mesh file must not silently receive several `mesh_id` values.
+```text
+case_id
+```
+
+`AVBPSampleSpec` is the corresponding runtime contract. `AVBPHDF5Dataset` accepts either `AVBPSampleSpec` instances or mappings containing the four mandatory keys and optional `case_id`, which allows Hydra to supply the same information directly.
+
+The reader does not infer mesh or case association from file stems, directory names, or ordering. Duplicate `sample_id` values are rejected. A `mesh_id` must refer to exactly one mesh file, and one mesh file must not silently receive several `mesh_id` values. Mesh identity and case identity are independent: several physical cases may legitimately reuse the same mesh.
+
+When `case_id` is supplied, `case_files` must contain a matching declared case-definition document. The case document is loaded by M3.3 infrastructure and its immutable `ReferenceScales` are attached to the returned `Sample`. Raw M3.2 inspection remains possible without a case definition; in that situation the sample carries empty reference scales and later physical preprocessing will fail if required references are absent.
 
 ## Mesh caching and data efficiency
 
 Meshes are decoded lazily and cached by canonical mesh path inside each dataset process. If 100 snapshots refer to the same mesh, that process performs 100 snapshot reads but only one mesh decode/read after the cache is warm.
 
 The cached `Mesh` object is reused by samples that share that mesh. Current geometry transforms are functional and return new `Mesh` objects rather than mutating the cached base mesh. Callers must therefore treat dataset-owned cached mesh tensors as read-only. A future transformation that requires in-place or sample-specific mesh mutation must copy explicitly rather than modifying shared cached state.
+
+Declared case definitions are loaded once when the dataset is constructed. Samples sharing one `case_id` reuse the same immutable `ReferenceScales` object rather than rereading or reconstructing the case metadata per snapshot.
 
 With `DataLoader(num_workers > 0)`, workers are separate processes and may each own a mesh cache. M3.2 does not add shared-memory mesh infrastructure before a measured CPU-memory need exists.
 
@@ -95,25 +105,31 @@ This preserves the dependency direction:
 
 ```text
 AVBP sample specification
-    -> snapshot fields + cached native mesh
+    -> snapshot fields + cached native mesh + optional declared case references
     -> geometry transform
     -> graph edge_index
 ```
 
 ## Hydra configuration
 
-The `data=avbp_hdf5` config intentionally contains an empty `samples` list. Real runs must provide explicit associations, for example:
+The `data=avbp_hdf5` config intentionally contains an empty `samples` list and empty `case_files` mapping. Real runs provide explicit associations. For example:
 
 ```yaml
+case_files:
+  case_a: /data/case_a/case.yaml
+  case_b: /data/case_b/case.yaml
+
 samples:
   - sample_id: case_a_000001
     snapshot_file: /data/case_a/snapshot_000001.h5
-    mesh_id: mesh_a
-    mesh_file: /data/case_a/mesh.h5
+    mesh_id: mesh_shared
+    mesh_file: /data/mesh/mesh.h5
+    case_id: case_a
   - sample_id: case_b_000001
     snapshot_file: /data/case_b/snapshot_000001.h5
-    mesh_id: mesh_b
-    mesh_file: /data/case_b/mesh.h5
+    mesh_id: mesh_shared
+    mesh_file: /data/mesh/mesh.h5
+    case_id: case_b
 ```
 
 M3.2 does not add implicit directory discovery because it would reintroduce an unverified rule for deciding which mesh belongs to which snapshot. A generated manifest may be added later if a concrete dataset-layout rule can create the same explicit associations reproducibly.
@@ -132,6 +148,8 @@ M3.2 is a project adaptation rather than a direct copy. The important changes ar
 - no padded `neighbor_idx` / `neighbor_mask` construction;
 - graph-edge construction moved to the geometry layer;
 - ambiguous connectivity indexing fails explicitly.
+
+M3.3 later adds explicit sample-to-case association and declared reference-file attachment without changing how AVBP solution or mesh HDF5 data are interpreted.
 
 ## Real-data validation
 
@@ -157,7 +175,7 @@ M3.2 does not implement:
 
 - derived physical quantities;
 - species discovery under `RhoSpecies`;
-- reference-scale extraction;
+- automatic inference of reference scales from AVBP solution or mesh fields;
 - physical nondimensionalization;
 - training-set statistical scaling;
 - task input/target selection;
