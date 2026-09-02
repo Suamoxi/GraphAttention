@@ -137,9 +137,7 @@ class ReferenceScale:
                 f"Reference scale '{self.name}' has invalid scope '{self.scope}'."
             ) from exc
         object.__setattr__(self, "scope", scope)
-        if self.inference_available is not None and not isinstance(
-            self.inference_available, bool
-        ):
+        if self.inference_available is not None and not isinstance(self.inference_available, bool):
             raise TypeError(
                 f"Reference scale '{self.name}' inference_available must be a bool or None."
             )
