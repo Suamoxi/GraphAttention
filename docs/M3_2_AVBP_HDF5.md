@@ -133,6 +133,24 @@ M3.2 is a project adaptation rather than a direct copy. The important changes ar
 - graph-edge construction moved to the geometry layer;
 - ambiguous connectivity indexing fails explicitly.
 
+## Real-data validation
+
+M3.2 was validated on Calypso on 2026-09-02 against a real `HIT_LES_FORCED` AVBP solution/mesh pair.
+
+Observed real-file properties were:
+
+```text
+conservative snapshot fields: 35937 nodes
+coordinates:                  [35937, 3]
+raw hex connectivity:         262144 entries
+canonical hex connectivity:   [32768, 8]
+canonical node-index range:   0 .. 35936
+```
+
+The five conservative fields `rho`, `rhou`, `rhov`, `rhow`, and `rhoE` all matched the mesh node count and retained their source `float64` dtype. The real reader check completed successfully.
+
+The same mesh also contains explicit AVBP `Periodicity/*` data because the HIT domain is a fully periodic cube. M3.2 does not decode that metadata into graph edges. Therefore `hex_connectivity_to_edge_index` currently represents ordinary cell-edge topology only and must not be claimed to represent the complete physical periodic topology for such a case. Periodic equivalence and translation-aware geometry are deliberately deferred to a later geometry extension.
+
 ## Deliberate non-goals
 
 M3.2 does not implement:
@@ -146,21 +164,23 @@ M3.2 does not implement:
 - packed graph batching;
 - node/edge budget packing;
 - shared-memory mesh caches across DataLoader workers;
+- periodic node-equivalence decoding or periodic graph edges;
+- periodic translation correction for relative geometry;
+- interpretation of `VertexData/volume` as a quadrature/control-volume weight;
 - graph dilation or long-range edges;
 - sparse attention.
 
 ## Validation gate
 
-Before M3.2 is considered complete, run on the target development environment:
+M3.2 is complete for its declared scope.
 
-```bash
-git pull --rebase origin main
-pytest
-ruff check .
-ruff format --check .
-python scripts/inspect_config.py
+The final target-development checks were:
+
+```text
+pytest                 -> 34 passed
+ruff check .           -> passed
+ruff format --check .  -> passed
+real AVBP reader check -> passed
 ```
 
-The unit tests create small temporary HDF5 snapshot and mesh files separately. They validate named-field loading, explicit multi-mesh association, mesh reuse within one dataset process, dtype preservation, missing-field diagnostics, association consistency, indexing ambiguity, and deterministic hex-to-edge conversion.
-
-A final M3.2 check should also load real project AVBP snapshot/mesh associations and inspect field, coordinate, and connectivity shapes. Passing temporary-file tests alone proves the reader contract, not compatibility with every historical solver export.
+The real-file validation establishes compatibility with the tested project AVBP/HDF5 convention. It is not a claim that every historical or future AVBP export uses the same paths, topology, cell type, or periodic encoding.

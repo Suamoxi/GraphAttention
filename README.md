@@ -44,6 +44,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 - [`docs/M2_DATA_CONTRACTS.md`](docs/M2_DATA_CONTRACTS.md): core field, reference-scale, mesh, and sample runtime contracts.
 - [`docs/M3_1_SYNTHETIC_DATA.md`](docs/M3_1_SYNTHETIC_DATA.md): deterministic non-physical variable-mesh data used to exercise the real data contracts.
 - [`docs/M3_2_AVBP_HDF5.md`](docs/M3_2_AVBP_HDF5.md): named-field AVBP/HDF5 reading and native hexahedral connectivity handling.
+- [`docs/M3_3_NONDIMENSIONALIZATION.md`](docs/M3_3_NONDIMENSIONALIZATION.md): M3.3 reference-state and physical nondimensionalization directive.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): software boundaries, runtime representation, and dependency direction.
 - [`docs/SCIENTIFIC_SPEC.md`](docs/SCIENTIFIC_SPEC.md): scientific scope, graph assumptions, field semantics, and required invariances.
 - [`docs/NUMERICAL_CONVENTIONS.md`](docs/NUMERICAL_CONVENTIONS.md): nondimensionalization, normalization, loss weighting, precision, and batching conventions.
@@ -54,7 +55,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 adds the first real AVBP/HDF5 reader with named field semantics, native cell connectivity, explicit source-index canonicalization, and a separate geometry transform for sparse node edges. Physical nondimensionalization/statistical scaling, packed graph batching, tasks, and sparse attention remain later work.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 has a frozen scientific directive for case-level reference states and physical nondimensionalization; implementation and numerical reference tests are next. Packed graph batching, tasks, and sparse attention remain later work.
 
 Current smoke checks:
 
