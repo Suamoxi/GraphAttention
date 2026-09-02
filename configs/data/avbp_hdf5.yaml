@@ -1,5 +1,6 @@
 _target_: graph_attention.data.AVBPHDF5Dataset
 samples: []
+case_files: {}
 field_names:
   - rho
   - rhou

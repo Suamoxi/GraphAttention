@@ -36,6 +36,7 @@ def test_avbp_hdf5_config_composes() -> None:
 
     assert cfg.data._target_ == "graph_attention.data.AVBPHDF5Dataset"
     assert list(cfg.data.samples) == []
+    assert dict(cfg.data.case_files) == {}
     assert list(cfg.data.field_names) == ["rho", "rhou", "rhov", "rhow", "rhoE"]
     assert cfg.data.connectivity_path == "Connectivity/hex->node"
     assert cfg.data.connectivity_indexing == "auto"
