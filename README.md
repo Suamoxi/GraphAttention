@@ -1,18 +1,10 @@
-# CFD Mesh Scientific Machine Learning Framework
+# GraphAttention
 
 ## Purpose
 
-This repository is a scientific machine-learning framework for modelling CFD fields on meshes of varying size, resolution, and topology, with a focus on efficient sparse geometric neural architectures.
+GraphAttention is a scientific machine-learning framework for modelling CFD fields on meshes of varying size, resolution, and topology, with a focus on efficient sparse geometric neural architectures.
 
-The framework is intended to support multiple learning paradigms without making any one of them the defining abstraction of the repository. Supported or planned problem classes include:
-
-- deterministic regression;
-- wall-quantity prediction;
-- super-resolution;
-- operator learning;
-- generative modelling;
-- diffusion models;
-- flow matching.
+The framework is intended to support multiple learning paradigms without making any one of them the defining abstraction of the repository. Supported or planned problem classes include deterministic regression, wall-quantity prediction, super-resolution, operator learning, and conditional or unconditional generative modelling such as diffusion and flow matching.
 
 The fundamental project abstraction is:
 
@@ -47,6 +39,8 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Documentation
 
+- [`docs/M0_FROZEN_SPEC.md`](docs/M0_FROZEN_SPEC.md): authoritative frozen M0 decisions.
+- [`docs/M1_FOUNDATION.md`](docs/M1_FOUNDATION.md): technical repository foundation and completion gate.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): software boundaries, runtime representation, and dependency direction.
 - [`docs/SCIENTIFIC_SPEC.md`](docs/SCIENTIFIC_SPEC.md): scientific scope, graph assumptions, field semantics, and required invariances.
 - [`docs/NUMERICAL_CONVENTIONS.md`](docs/NUMERICAL_CONVENTIONS.md): nondimensionalization, normalization, loss weighting, precision, and batching conventions.
@@ -55,6 +49,16 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 - [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md): performance evidence levels and benchmark protocol.
 - [`AGENTS.md`](AGENTS.md): mandatory rules for agents and contributors modifying the repository.
 
-## Development status
+## Current status
 
-The repository design is currently governed by the frozen M0 specification documented in the files above. Real architecture work should begin only after the repository contracts and testing infrastructure required by M0 are in place.
+M0 is frozen. M1 establishes packaging, configuration, development tooling, package ownership boundaries, and minimal runtime provenance. Scientific data contracts, packed graph batching, task implementations, and sparse attention are intentionally deferred to later milestones.
+
+For the M1 smoke checks:
+
+```bash
+python -m pip install -e ".[dev]"
+python scripts/inspect_config.py
+pytest
+ruff check .
+ruff format --check .
+```
