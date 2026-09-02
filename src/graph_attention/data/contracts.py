@@ -251,10 +251,15 @@ class Sample:
     fields: Mapping[str, torch.Tensor]
     reference_scales: ReferenceScales = field(default_factory=ReferenceScales)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    case_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.sample_id.strip():
             raise ValueError("Sample.sample_id must be non-empty.")
+        if self.case_id is not None and (
+            not isinstance(self.case_id, str) or not self.case_id.strip()
+        ):
+            raise ValueError("Sample.case_id must be a non-empty string when provided.")
         if len(set(self.fields)) != len(self.fields):
             raise ValueError("Sample field names must be unique.")
         for name, value in self.fields.items():
