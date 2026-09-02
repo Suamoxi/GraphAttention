@@ -1,0 +1,32 @@
+case_id: example_case
+reference_scheme: example_reference
+
+references:
+  rho_ref:
+    value: 1.0
+    units: kg/m^3
+    definition: replace_with_case_specific_density_definition
+    provenance: replace_with_simulation_setup_source
+    inference_available: true
+
+  U_ref:
+    value: 1.0
+    units: m/s
+    definition: replace_with_case_specific_velocity_definition
+    provenance: replace_with_simulation_setup_source
+    inference_available: true
+    derivation: replace_with_human_readable_derivation_if_applicable
+
+  L_ref:
+    value: 1.0
+    units: m
+    definition: replace_with_case_specific_length_definition
+    provenance: replace_with_simulation_setup_source
+    inference_available: true
+
+  T_ref:
+    value: 1.0
+    units: K
+    definition: replace_with_case_specific_temperature_definition
+    provenance: replace_with_simulation_setup_source
+    inference_available: true
