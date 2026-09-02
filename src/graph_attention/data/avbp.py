@@ -12,13 +12,23 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .contracts import FieldCatalog, FieldRole, FieldSpec, FieldSupport, Mesh, Sample
+from .case_definition import CaseDefinition, load_case_definitions
+from .contracts import (
+    FieldCatalog,
+    FieldRole,
+    FieldSpec,
+    FieldSupport,
+    Mesh,
+    ReferenceScales,
+    Sample,
+)
 
 _DEFAULT_FIELDS = ("rho", "rhou", "rhov", "rhow", "rhoE")
 _DEFAULT_COORD_PATHS = ("Coordinates/x", "Coordinates/y", "Coordinates/z")
 _DEFAULT_CONNECTIVITY_PATH = "Connectivity/hex->node"
 _VALID_INDEXING = {"auto", "zero", "one"}
-_SAMPLE_SPEC_KEYS = {"sample_id", "snapshot_file", "mesh_id", "mesh_file"}
+_SAMPLE_SPEC_REQUIRED_KEYS = {"sample_id", "snapshot_file", "mesh_id", "mesh_file"}
+_SAMPLE_SPEC_OPTIONAL_KEYS = {"case_id"}
 
 
 AVBP_FIELD_CATALOG = FieldCatalog(
@@ -102,34 +112,41 @@ AVBP_FIELD_CATALOG = FieldCatalog(
 
 @dataclass(frozen=True, slots=True)
 class AVBPSampleSpec:
-    """Explicit association between one AVBP snapshot and its separate mesh file."""
+    """Explicit association between one AVBP snapshot, mesh, and optional case."""
 
     sample_id: str
     snapshot_file: str | Path
     mesh_id: str
     mesh_file: str | Path
+    case_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.sample_id, str) or not self.sample_id.strip():
             raise ValueError("AVBPSampleSpec.sample_id must be a non-empty string")
         if not isinstance(self.mesh_id, str) or not self.mesh_id.strip():
             raise ValueError("AVBPSampleSpec.mesh_id must be a non-empty string")
+        if self.case_id is not None and (
+            not isinstance(self.case_id, str) or not self.case_id.strip()
+        ):
+            raise ValueError("AVBPSampleSpec.case_id must be a non-empty string when provided")
 
 
 class AVBPHDF5Dataset(Dataset[Sample]):
-    """Read explicitly paired AVBP snapshots and separate native mesh files.
+    """Read explicitly paired AVBP snapshots, meshes, and declared case references.
 
     AVBP solution snapshots and meshes are separate files in this project. Each
     sample therefore declares its snapshot-to-mesh association explicitly.
+    Optional case identifiers point to separately declared physical case files.
     Meshes are decoded lazily and cached once per unique mesh file in each
-    dataset process. Cell-to-node connectivity is stored on
-    ``Mesh.cell_connectivity``; graph-edge construction remains a geometry-layer
-    operation.
+    dataset process. Case definitions are loaded once at dataset construction.
+    Cell-to-node connectivity is stored on ``Mesh.cell_connectivity``;
+    graph-edge construction remains a geometry-layer operation.
     """
 
     def __init__(
         self,
         samples: Sequence[AVBPSampleSpec | Mapping[str, object]] | None = None,
+        case_files: Mapping[str, str | Path] | None = None,
         field_names: Sequence[str] = _DEFAULT_FIELDS,
         coord_paths: Sequence[str] = _DEFAULT_COORD_PATHS,
         connectivity_path: str = _DEFAULT_CONNECTIVITY_PATH,
@@ -137,6 +154,15 @@ class AVBPHDF5Dataset(Dataset[Sample]):
         catalog: FieldCatalog | None = None,
     ) -> None:
         self.sample_specs = _normalize_sample_specs(samples)
+        self.case_definitions = load_case_definitions(case_files)
+        required_case_ids = {spec.case_id for spec in self.sample_specs if spec.case_id is not None}
+        missing_case_ids = required_case_ids - self.case_definitions.keys()
+        if missing_case_ids:
+            raise ValueError(
+                "missing case definition files for case_id values: "
+                f"{sorted(missing_case_ids)}"
+            )
+
         self.field_catalog = catalog or AVBP_FIELD_CATALOG
         self.field_names = tuple(field_names)
         if not self.field_names:
@@ -174,19 +200,35 @@ class AVBPHDF5Dataset(Dataset[Sample]):
         spec = self.sample_specs[sample_index]
         mesh = self._mesh_for(spec)
         fields = self._read_fields(spec.snapshot_file)
+        case_definition = self._case_definition_for(spec)
+        metadata = {
+            "format": "avbp_hdf5",
+            "snapshot_file": str(spec.snapshot_file),
+            "mesh_id": spec.mesh_id,
+            "mesh_file": str(spec.mesh_file),
+        }
+        if case_definition is not None:
+            metadata["case_definition_file"] = str(case_definition.source_path)
+
         sample = Sample(
             sample_id=spec.sample_id,
             mesh=mesh,
             fields=fields,
-            metadata={
-                "format": "avbp_hdf5",
-                "snapshot_file": str(spec.snapshot_file),
-                "mesh_id": spec.mesh_id,
-                "mesh_file": str(spec.mesh_file),
-            },
+            reference_scales=(
+                case_definition.reference_scales
+                if case_definition is not None
+                else ReferenceScales()
+            ),
+            metadata=metadata,
+            case_id=spec.case_id,
         )
         sample.validate_against(self.field_catalog)
         return sample
+
+    def _case_definition_for(self, spec: AVBPSampleSpec) -> CaseDefinition | None:
+        if spec.case_id is None:
+            return None
+        return self.case_definitions[spec.case_id]
 
     def _mesh_for(self, spec: AVBPSampleSpec) -> Mesh:
         mesh_path = _path_value(spec.mesh_file)
@@ -244,10 +286,11 @@ def _normalize_sample_specs(
             snapshot_value = raw.snapshot_file
             mesh_id = raw.mesh_id
             mesh_value = raw.mesh_file
+            case_id = raw.case_id
         elif isinstance(raw, Mapping):
             keys = set(raw)
-            missing = _SAMPLE_SPEC_KEYS - keys
-            extra = keys - _SAMPLE_SPEC_KEYS
+            missing = _SAMPLE_SPEC_REQUIRED_KEYS - keys
+            extra = keys - _SAMPLE_SPEC_REQUIRED_KEYS - _SAMPLE_SPEC_OPTIONAL_KEYS
             if missing:
                 raise ValueError(
                     f"AVBP sample specification {position} is missing keys: {sorted(missing)}"
@@ -260,6 +303,12 @@ def _normalize_sample_specs(
             snapshot_value = raw["snapshot_file"]
             mesh_id = _text_value(raw["mesh_id"], "mesh_id", position)
             mesh_value = raw["mesh_file"]
+            raw_case_id = raw.get("case_id")
+            case_id = (
+                None
+                if raw_case_id is None
+                else _text_value(raw_case_id, "case_id", position)
+            )
         else:
             raise TypeError("each AVBP sample specification must be an AVBPSampleSpec or mapping")
 
@@ -271,6 +320,7 @@ def _normalize_sample_specs(
                 snapshot_file=snapshot_path,
                 mesh_id=mesh_id,
                 mesh_file=mesh_path,
+                case_id=case_id,
             )
         )
 
