@@ -33,9 +33,7 @@ class ConvectiveNondimensionalizer:
 
     def __post_init__(self) -> None:
         if self.reference_scales.scheme is None:
-            raise ValueError(
-                "physical nondimensionalization requires an explicit reference scheme"
-            )
+            raise ValueError("physical nondimensionalization requires an explicit reference scheme")
 
     def field_scale(self, field_name: str) -> float:
         """Return the dimensional multiplicative scale for one canonical field."""
@@ -105,8 +103,7 @@ class ConvectiveNondimensionalizer:
 
         if reference.value <= 0.0:
             raise ValueError(
-                f"Reference '{reference_name}' must be strictly positive for field "
-                f"'{field_name}'."
+                f"Reference '{reference_name}' must be strictly positive for field '{field_name}'."
             )
         if reference.units is None:
             raise ValueError(
