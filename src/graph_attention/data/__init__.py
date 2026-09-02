@@ -10,6 +10,7 @@ from .contracts import (
     ReferenceScales,
     Sample,
 )
+from .synthetic import SyntheticMeshDataset
 
 __all__ = [
     "FieldCatalog",
@@ -20,4 +21,5 @@ __all__ = [
     "ReferenceScale",
     "ReferenceScales",
     "Sample",
+    "SyntheticMeshDataset",
 ]

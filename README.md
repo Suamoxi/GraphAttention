@@ -42,6 +42,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 - [`docs/M0_FROZEN_SPEC.md`](docs/M0_FROZEN_SPEC.md): authoritative frozen M0 decisions.
 - [`docs/M1_FOUNDATION.md`](docs/M1_FOUNDATION.md): technical repository foundation and completion gate.
 - [`docs/M2_DATA_CONTRACTS.md`](docs/M2_DATA_CONTRACTS.md): core field, reference-scale, mesh, and sample runtime contracts.
+- [`docs/M3_1_SYNTHETIC_DATA.md`](docs/M3_1_SYNTHETIC_DATA.md): deterministic non-physical variable-mesh data used to exercise the real data contracts.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): software boundaries, runtime representation, and dependency direction.
 - [`docs/SCIENTIFIC_SPEC.md`](docs/SCIENTIFIC_SPEC.md): scientific scope, graph assumptions, field semantics, and required invariances.
 - [`docs/NUMERICAL_CONVENTIONS.md`](docs/NUMERICAL_CONVENTIONS.md): nondimensionalization, normalization, loss weighting, precision, and batching conventions.
@@ -52,7 +53,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0 and M1 are complete. M2 introduces the minimal scientific data contracts for named field semantics, case-level reference quantities, native node-based meshes, and physical samples. Concrete CFD readers, physical preprocessing, packed graph batching, tasks, and sparse attention remain later milestones.
+M0-M2 are complete. M3.1 adds a deterministic synthetic `Dataset` that produces valid `Sample` objects with variable node counts, edge counts, geometry, and topology. The synthetic values are explicitly non-physical and exist only to test data/runtime behavior before real CFD I/O is introduced. AVBP/HDF5 readers, physical preprocessing, packed graph batching, tasks, and sparse attention remain later work.
 
 Current smoke checks:
 
