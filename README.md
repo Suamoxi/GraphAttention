@@ -41,6 +41,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 - [`docs/M0_FROZEN_SPEC.md`](docs/M0_FROZEN_SPEC.md): authoritative frozen M0 decisions.
 - [`docs/M1_FOUNDATION.md`](docs/M1_FOUNDATION.md): technical repository foundation and completion gate.
+- [`docs/M2_DATA_CONTRACTS.md`](docs/M2_DATA_CONTRACTS.md): core field, reference-scale, mesh, and sample runtime contracts.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): software boundaries, runtime representation, and dependency direction.
 - [`docs/SCIENTIFIC_SPEC.md`](docs/SCIENTIFIC_SPEC.md): scientific scope, graph assumptions, field semantics, and required invariances.
 - [`docs/NUMERICAL_CONVENTIONS.md`](docs/NUMERICAL_CONVENTIONS.md): nondimensionalization, normalization, loss weighting, precision, and batching conventions.
@@ -51,9 +52,9 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0 is frozen. M1 establishes packaging, configuration, development tooling, package ownership boundaries, and minimal runtime provenance. Scientific data contracts, packed graph batching, task implementations, and sparse attention are intentionally deferred to later milestones.
+M0 and M1 are complete. M2 introduces the minimal scientific data contracts for named field semantics, case-level reference quantities, native node-based meshes, and physical samples. Concrete CFD readers, physical preprocessing, packed graph batching, tasks, and sparse attention remain later milestones.
 
-For the M1 smoke checks:
+Current smoke checks:
 
 ```bash
 python -m pip install -e ".[dev]"
