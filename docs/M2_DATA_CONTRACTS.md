@@ -53,6 +53,8 @@ Supported scopes are `case`, `operating_condition`, and `snapshot`. The baseline
 
 The low-level data contract still permits references whose units/provenance are not yet populated so readers can represent partially known source metadata. Physical preprocessing is stricter: every reference it actually uses must have the M3.3 semantic metadata required by that transformation.
 
+M3.3 additionally provides file-backed `CaseDefinition` loading. A case document declares literal reference values and their semantics; it does not infer them from instantaneous CFD fields. `CaseDefinition.source_path` preserves the authoritative document path separately from each reference's scientific provenance.
+
 ### `Mesh`
 
 The initial canonical mesh contract represents CFD mesh nodes as graph vertices:
@@ -71,10 +73,13 @@ The contract validates dimensions, finite coordinates/weights, and connectivity 
 A sample contains:
 
 - stable `sample_id`;
+- optional explicit `case_id`, distinct from mesh identity;
 - one native `Mesh`;
 - named loaded field tensors;
-- case-level `ReferenceScales`;
+- `ReferenceScales` when a physical case definition is attached;
 - non-scientific/general sample metadata.
+
+`case_id` identifies the physical case or operating-condition definition used for the sample. It must not be inferred from `mesh_id`: one mesh may be reused by several physical cases.
 
 `Sample.validate_against(FieldCatalog)` validates declared field availability and the aspects of support that M2 can know without inventing cell/face topology. Node-supported fields must have leading dimension `N`; explicitly grouped multi-component fields must preserve their documented final component dimension.
 
