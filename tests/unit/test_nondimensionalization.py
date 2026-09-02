@@ -13,10 +13,10 @@ def _scale(
     name: str,
     value: float,
     definition: str,
-    units: str,
+    units: str | None,
     *,
     scope: ReferenceScope = ReferenceScope.CASE,
-    inference_available: bool = True,
+    inference_available: bool | None = True,
     provenance: str | None = "test_case_definition",
 ) -> ReferenceScale:
     return ReferenceScale(
@@ -131,7 +131,17 @@ def test_reference_scheme_is_required_for_physical_preprocessing() -> None:
                 "kg/m^3",
                 inference_available=False,
             ),
-            "not available at inference",
+            "explicitly marked available at inference",
+        ),
+        (
+            _scale(
+                "rho_ref",
+                2.0,
+                "reference_density",
+                "kg/m^3",
+                inference_available=None,
+            ),
+            "explicitly marked available at inference",
         ),
         (
             _scale(
@@ -152,6 +162,10 @@ def test_reference_scheme_is_required_for_physical_preprocessing() -> None:
                 provenance=None,
             ),
             "requires explicit provenance",
+        ),
+        (
+            _scale("rho_ref", 2.0, "reference_density", None),
+            "requires explicit units",
         ),
     ],
 )
