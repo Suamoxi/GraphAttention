@@ -114,7 +114,7 @@ class ReferenceScale:
     provenance: str | None = None
     units: str | None = None
     scope: ReferenceScope = ReferenceScope.CASE
-    inference_available: bool = True
+    inference_available: bool | None = None
     derivation: str | None = None
 
     def __post_init__(self) -> None:
@@ -137,9 +137,11 @@ class ReferenceScale:
                 f"Reference scale '{self.name}' has invalid scope '{self.scope}'."
             ) from exc
         object.__setattr__(self, "scope", scope)
-        if not isinstance(self.inference_available, bool):
+        if self.inference_available is not None and not isinstance(
+            self.inference_available, bool
+        ):
             raise TypeError(
-                f"Reference scale '{self.name}' inference_available must be a bool."
+                f"Reference scale '{self.name}' inference_available must be a bool or None."
             )
 
 
