@@ -2,7 +2,9 @@
 
 ## Status
 
-The M3.3 scientific definition is frozen. The baseline reference metadata and forward/inverse convective field transformations were validated on Calypso with the 47-test suite on 2026-09-02. M3.3 now also implements explicit YAML case-definition loading and attachment of declared case references to AVBP samples; that new integration still requires target-environment validation. Coordinate nondimensionalization, regime conditioning, and statistical scaling remain deferred.
+The M3.3 scientific definition is frozen. The baseline reference metadata and forward/inverse convective field transformations were validated on Calypso with the 47-test suite on 2026-09-02. The subsequent explicit case-definition integration passed 55 tests, `ruff check .`, and configuration inspection on Calypso; its only reported issue was formatting, which is folded into the current change.
+
+The remaining baseline M3.3 runtime scope is now implemented: canonical coordinate scaling by `L_ref` and typed persistence of declared dimensionless regime descriptors. Target-environment validation of this final integration is still required. Statistical train-set scaling remains intentionally outside M3.3 runtime completion because it requires the later task and train-split contracts.
 
 ## 1. Purpose
 
@@ -78,7 +80,7 @@ $$
 
 A quantity that is irrelevant to the governing problem must not be invented merely to satisfy an implementation interface. For example, an incompressible problem need not fabricate `T_ref` or `Ma`.
 
-## 4. Baseline field transformations
+## 4. Baseline field and coordinate transformations
 
 For the AVBP conservative state:
 
@@ -157,7 +159,9 @@ The definition of `a_ref` follows the thermodynamic model of the case. An ideal-
 
 Other dimensionless controls such as `Pr`, `Re_tau`, `Re_lambda`, forcing parameters, or chemistry parameters may be retained when relevant and consistently defined.
 
-These values may later be model-visible global conditioning. They do not replace the reference-state system because the same `Re` or `Ma` can arise from many different dimensional reference states.
+M3.3 represents these quantities with `RegimeParameter` and `RegimeParameters`. Each parameter carries a literal dimensionless value, explicit definition, provenance, scope, inference availability, and optional human-readable derivation. The generic contract requires finite values but does not impose positivity on every possible dimensionless descriptor.
+
+These values may later be model-visible global conditioning. M3.3 only preserves their semantics and attaches them to samples; selecting and encoding regime conditioning belongs to the later task/model interface. They do not replace the reference-state system because the same `Re` or `Ma` can arise from many different dimensional reference states.
 
 ## 6. Preserve the physical regime
 
@@ -198,6 +202,8 @@ Snapshot-dependent physical references are allowed only if snapshot-wise invaria
 
 The baseline runtime implementation is intentionally stricter: `ConvectiveNondimensionalizer` rejects snapshot-scoped references. A future task that truly requires snapshot-level reference semantics must introduce and test that exception explicitly.
 
+Regime descriptors also record `inference_available`. M3.3 preserves this flag but does not yet choose conditioning variables; a later task must reject a requested conditioning descriptor that is unavailable at inference.
+
 ## 9. Reference metadata contract
 
 Every physical reference used by preprocessing must carry enough information to reconstruct its meaning. Runtime `ReferenceScale` supports:
@@ -221,13 +227,13 @@ A missing required reference is an error. The implementation does not silently s
 
 ## 10. Authoritative case-definition documents
 
-The baseline project convention is now:
+The baseline project convention is:
 
 $$
-\boxed{\text{reference quantities are declared, not inferred}}
+\boxed{\text{physical case quantities are declared, not inferred}}
 $$
 
-The simulation author provides one YAML case-definition document containing the reference values known from the simulation setup. The framework does not derive those values from an instantaneous solution snapshot.
+The simulation author provides one YAML case-definition document containing reference values and optional regime descriptors known from the simulation setup. The framework does not derive those values from an instantaneous solution snapshot.
 
 The following schema example is illustrative only; its numerical values are not reference values for the current HIT dataset:
 
@@ -251,15 +257,34 @@ references:
     inference_available: true
     scope: case
     derivation: Ma_ref * sqrt(gamma * R * T_ref)
+
+  L_ref:
+    value: 0.5
+    units: m
+    definition: prescribed_characteristic_length
+    provenance: simulation_setup
+    inference_available: true
+
+regime:
+  Re:
+    value: 50000.0
+    definition: rho_ref_U_ref_L_ref_over_mu_ref
+    provenance: simulation_setup
+    inference_available: true
+    derivation: rho_ref * U_ref * L_ref / mu_ref
+
+  Ma:
+    value: 0.2
+    definition: U_ref_over_a_ref
+    provenance: simulation_setup
+    inference_available: true
 ```
 
-`value` is authoritative and must be an explicit numeric literal. `derivation` is provenance/documentation only: the loader does not evaluate it and does not implement a physical-expression engine. This is the selected option for derived reference quantities. If `U_ref` was obtained from a prescribed Mach number and thermodynamic state, the simulation author stores the resulting numerical value and records the equation used in `derivation`.
+Every `value` is authoritative and must be an explicit numeric literal. `derivation` is provenance/documentation only: the loader does not evaluate it and does not implement a physical-expression engine. If `U_ref`, `Re`, or another quantity was obtained from other prescribed setup values, the simulation author stores the resulting numerical value and records the equation used in `derivation`.
 
-Each reference requires `value`, `units`, `definition`, `provenance`, and explicit `inference_available`. `scope` is optional and defaults to `case`; `derivation` is optional. Unknown keys fail so misspelled scientific metadata cannot silently disappear.
+Each reference requires `value`, `units`, `definition`, `provenance`, and explicit `inference_available`. Each regime descriptor requires `value`, `definition`, `provenance`, and explicit `inference_available`; it is dimensionless and therefore does not accept a `units` key. `scope` is optional and defaults to `case`; `derivation` is optional. Unknown keys fail so misspelled scientific metadata cannot silently disappear.
 
-`CaseDefinition` loads and validates this file with OmegaConf without resolving reference-value interpolation. `CaseDefinition.source_path` records which document supplied the reference state.
-
-Dimensionless regime descriptors such as `Re`, `Ma`, and `Pr` remain conceptually separate from `ReferenceScale`. Their persisted runtime contract and model-conditioning interface are still deferred rather than mixing them into reference scales prematurely.
+`CaseDefinition` loads and validates this file with OmegaConf without resolving value interpolation. `CaseDefinition.source_path` records which document supplied the physical case definition.
 
 ## 11. AVBP case attachment
 
@@ -273,9 +298,9 @@ mesh_shared + case_B
 mesh_shared + case_C
 ```
 
-Case definitions are loaded once at dataset construction. Samples sharing a `case_id` reuse the same immutable `ReferenceScales` object. The returned `Sample.case_id` is explicit and `Sample.reference_scales` receives the declared case references. The case-definition path is retained as sample provenance.
+Case definitions are loaded once at dataset construction. Samples sharing a `case_id` reuse the same immutable `ReferenceScales` and `RegimeParameters` objects. The returned `Sample.case_id` is explicit; `Sample.reference_scales` and `Sample.regime_parameters` receive the declared case quantities. The case-definition path is retained as sample provenance.
 
-A sample without `case_id` remains valid for raw data inspection and carries empty reference scales. A sample that declares `case_id` but has no configured case file fails at dataset construction.
+A sample without `case_id` remains valid for raw data inspection and carries empty reference/regime collections. A sample that declares `case_id` but has no configured case file fails at dataset construction.
 
 ## 12. Invertibility
 
@@ -292,12 +317,18 @@ $$
 $$
 
 $$
-\rho E=(\rho E)^*\rho_{\mathrm{ref}}U_{\mathrm{ref}}^2.
+\rho E=(\rho E)^*\rho_{\mathrm{ref}}U_{\mathrm{ref}}^2,
+$$
+
+and:
+
+$$
+\mathbf x=\mathbf x^*L_{\mathrm{ref}}.
 $$
 
 Round-trip tests are mandatory for every implemented transformation.
 
-## 13. Runtime field implementation
+## 13. Runtime physical preprocessing implementation
 
 `graph_attention.data.ConvectiveNondimensionalizer` implements the multiplicative baseline transformations for the currently supported canonical physical fields:
 
@@ -313,11 +344,18 @@ temperature
 
 The transform consumes an explicit `ReferenceScales` object and a mapping of named tensors. It returns a new mapping and does not mutate the supplied tensors or infer a transform for unknown names.
 
-References are required only when a requested field actually depends on them. For example, transforming `rho` requires `rho_ref` but does not require an irrelevant `T_ref`.
+References are required only when a requested quantity actually depends on them. For example, transforming `rho` requires `rho_ref`; coordinate scaling requires `L_ref`; neither requires an irrelevant `T_ref`.
 
-The inverse `dimensionalize` operation uses the same field scales. Numerical tests cover exact known scales and floating-point round trips.
+Canonical `coords [N, D]` are transformed explicitly through:
 
-Coordinate nondimensionalization is not yet implemented in runtime code even though its baseline scientific definition is now `coords / L_ref`.
+```text
+nondimensionalize_coordinates(coords) -> coords / L_ref
+dimensionalize_coordinates(coords_star) -> coords_star * L_ref
+```
+
+Coordinate preprocessing validates canonical rank, floating dtype, and finite values. It does not mutate the cached dimensional `Mesh` and does not apply an implicit origin shift. The current runtime method transforms the coordinate tensor only; it intentionally does not claim that other optional `Mesh` quantities such as `node_weights` have been physically nondimensionalized.
+
+The inverse field and coordinate operations use the same reference scales. Numerical tests cover exact known scales and floating-point round trips.
 
 ## 14. Statistical scaling remains separate
 
@@ -329,7 +367,7 @@ $$
 
 Those statistics must be learned from the training split only and frozen for validation, testing, and inference.
 
-Statistical scaling is intentionally not implemented in this M3.3 step because the repository does not yet have the task/split interfaces that define which named fields/components belong to the learned representation and which samples constitute the training split. Implementing a fitted scaler before those contracts would either fit the wrong population or invent premature interfaces. It must be implemented before meaningful M6 training, after the M5 task and split semantics exist.
+Statistical scaling is intentionally not implemented in M3.3 because the repository does not yet have the task/split interfaces that define which named fields/components belong to the learned representation and which samples constitute the training split. Implementing a fitted scaler before those contracts would either fit the wrong population or invent premature interfaces. It must be implemented before meaningful M6 training, after the M5 task and split semantics exist.
 
 M3.3 does not blur reference-state provenance with learned statistical-scaler provenance.
 
@@ -339,11 +377,11 @@ M3.3 does not blur reference-state provenance with learned statistical-scaler pr
 
 - The initial M3.3 equations target compressible Navier-Stokes-like state variables while allowing irrelevant references to be absent for other governing systems.
 - Reference scales are case- or operating-condition-level in the baseline runtime transform.
-- Reference values used by the framework are authoritative values supplied by the simulation author rather than inferred from target snapshots.
+- Reference and regime values used by the framework are authoritative values supplied by the simulation author rather than inferred from target snapshots.
 - The baseline uses a coherent convective basis rather than independent per-field magnitude normalization.
 - `Re`, `Ma`, and similar dimensionless numbers are physical-regime descriptors rather than replacements for dimensional reference scales.
-- Concrete definitions of `U_ref` and `L_ref` may differ between explicitly declared flow-family reference schemes.
-- Reference values and field values are assumed to use a mutually coherent unit system; M3.3 records unit strings but does not perform unit conversion.
+- Concrete definitions of `U_ref`, `L_ref`, and regime descriptors may differ between explicitly declared flow-family schemes, but their definitions must remain explicit.
+- Reference values, field values, and coordinate values are assumed to use a mutually coherent unit system; M3.3 records reference unit strings but does not perform unit conversion or verify coordinate units.
 
 ### Explicit failure behavior
 
@@ -351,46 +389,52 @@ M3.3 does not blur reference-state provenance with learned statistical-scaler pr
 - A missing reference scheme fails.
 - A declared `case_id` without a configured case file fails.
 - Case-file identity mismatches and unknown schema keys fail.
-- Reference values that are not explicit numeric literals fail.
+- Reference or regime values that are not explicit numeric literals fail.
+- Non-finite reference or regime values fail at the runtime contract.
 - Non-positive references used as multiplicative physical scales fail.
 - Used references without units or provenance fail.
-- References not explicitly marked available at inference fail.
+- References not explicitly marked available at inference fail when used for physical preprocessing.
 - Snapshot-scoped references fail in the baseline transform.
 - Unsupported field names fail rather than silently passing through unchanged.
-- Non-floating physical tensors fail rather than being implicitly cast.
-- A transformation is not inferred from a field's tensor shape, numerical range, or units alone.
+- Non-floating physical fields or coordinates fail rather than being implicitly cast.
+- Non-canonical or non-finite coordinate tensors fail.
+- A transformation is not inferred from a tensor shape, numerical range, filename, or units alone.
 
-### Deferred
+### Deliberately deferred beyond baseline M3.3
 
-- Runtime coordinate nondimensionalization using `coords / L_ref`.
 - Optional coordinate-origin transforms, which remain separate from physical nondimensionalization.
-- Persisted global regime descriptors and model-conditioning interfaces for `Re`, `Ma`, `Pr`, and related quantities.
+- Task/model selection and encoding of persisted `Re`, `Ma`, `Pr`, and related regime descriptors.
 - Statistical scaling implementation after task/split semantics exist.
 - Specialized wall-unit representations such as `u_tau`, `y+`, or `Re_tau`-based quantities.
 - Pressure-offset transforms; the baseline implements absolute pressure scaling only.
 - Mapping of AVBP `vis_lam` and `vis_turb` until dynamic/kinematic and stored-unit semantics are confirmed.
-- Unit conversion or dimensional-analysis enforcement between fields and references.
+- Unit conversion or dimensional-analysis enforcement between fields, coordinates, and references.
 - Interpretation of AVBP `VertexData/volume` as a physical quadrature weight.
-- Automatic import from AVBP setup/configuration files; this is no longer the authoritative path and would only be a future convenience importer.
+- Automatic import from AVBP setup/configuration files; this is not the authoritative path and would only be a future convenience importer.
 
 ## 16. Implementation gate
 
-The baseline runtime field transform includes:
+The baseline M3.3 runtime scope now includes:
 
 - explicit named reference semantics, scope, inference availability, and provenance hooks;
-- field-specific forward transformations;
-- inverse transformations;
-- round-trip numerical reference tests;
-- missing-reference and anti-leakage failure tests;
-- no dependence on sample node count, node numbering, or mesh topology.
-
-The case-definition integration adds:
-
-- authoritative explicit YAML reference values;
-- literal-value validation with non-evaluated derivation metadata;
+- authoritative explicit YAML reference values with non-evaluated derivation metadata;
 - explicit case identity distinct from mesh identity;
 - one-time case-file loading and reuse across snapshots;
-- attachment to `Sample.reference_scales`;
-- failure tests for missing or mismatched case definitions.
+- field-specific forward/inverse physical transformations;
+- canonical forward/inverse coordinate scaling by `L_ref`;
+- typed dimensionless `RegimeParameter` / `RegimeParameters` persistence;
+- attachment of references and regime descriptors to `Sample`;
+- round-trip numerical reference tests;
+- missing-reference, schema, case-association, and anti-leakage failure tests;
+- no dependence on sample node count, node numbering, or mesh topology.
 
-Target-environment `pytest`, Ruff, and format validation remain required for the new case-definition integration before that portion is marked validated.
+Baseline M3.3 implementation is complete when the merged code passes on the target environment:
+
+```text
+pytest
+ruff check .
+ruff format --check .
+python scripts/inspect_config.py
+```
+
+A real case-definition file containing the actual physical reference values for a target simulation is still required before an end-to-end real-data nondimensionalization claim can be made. Statistical train-set scaling is a later task/split-dependent preprocessing stage and is not part of this M3.3 completion gate.
