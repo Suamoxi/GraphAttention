@@ -1,2 +1,5 @@
-name: baseline
-# The trivial baseline model is introduced in M4, not M1.
+_target_: graph_attention.models.NodeLinearBaseline
+in_channels: 2
+out_channels: 1
+conditioning_channels: 0
+bias: true
