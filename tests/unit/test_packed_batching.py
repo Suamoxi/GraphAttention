@@ -55,10 +55,7 @@ def test_pack_samples_builds_disconnected_variable_graph_batch() -> None:
 
     offsets = (0, 4, 9)
     expected_edges = torch.cat(
-        [
-            sample.mesh.edge_index + offset
-            for sample, offset in zip(samples, offsets, strict=True)
-        ],
+        [sample.mesh.edge_index + offset for sample, offset in zip(samples, offsets, strict=True)],
         dim=1,
     )
     torch.testing.assert_close(batch.edge_index, expected_edges)

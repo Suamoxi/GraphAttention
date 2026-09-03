@@ -172,10 +172,7 @@ def main() -> None:
         rtol=args.rtol,
         atol=args.atol,
     )
-    print(
-        f"  round_trip: max_abs={max_abs_error:.12e} "
-        f"scale_relative={scale_relative_error:.12e}"
-    )
+    print(f"  round_trip: max_abs={max_abs_error:.12e} scale_relative={scale_relative_error:.12e}")
     print("\nRESULT: PASS")
 
 

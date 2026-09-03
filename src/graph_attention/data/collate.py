@@ -100,8 +100,7 @@ def partition_samples_by_budget(
             )
 
         exceeds_with_current = (
-            current_nodes + nodes > budget.max_nodes
-            or current_edges + edges > budget.max_edges
+            current_nodes + nodes > budget.max_nodes or current_edges + edges > budget.max_edges
         )
         if current and exceeds_with_current:
             groups.append(tuple(current))
@@ -260,8 +259,7 @@ def pack_samples(
     ptr[1:] = counts_tensor.cumsum(dim=0)
 
     fields = {
-        name: torch.cat([sample.fields[name] for sample in selected], dim=0)
-        for name in field_names
+        name: torch.cat([sample.fields[name] for sample in selected], dim=0) for name in field_names
     }
     node_weights = (
         torch.cat([sample.mesh.node_weights for sample in selected], dim=0)
@@ -295,9 +293,7 @@ def _require_node_field(sample: Sample, name: str) -> torch.Tensor:
     try:
         value = sample.fields[name]
     except KeyError as exc:
-        raise KeyError(
-            f"sample '{sample.sample_id}' does not contain node field '{name}'"
-        ) from exc
+        raise KeyError(f"sample '{sample.sample_id}' does not contain node field '{name}'") from exc
     if value.ndim == 0 or value.shape[0] != sample.mesh.num_nodes:
         raise ValueError(
             f"selected node field '{name}' in sample '{sample.sample_id}' must have leading "
