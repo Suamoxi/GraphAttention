@@ -52,9 +52,7 @@ class NodeLinearBaseline(nn.Module):
         if not inputs.is_floating_point():
             raise TypeError("inputs must use a floating-point dtype")
         if inputs.shape[1] != self.in_channels:
-            raise ValueError(
-                f"inputs have {inputs.shape[1]} channels, expected {self.in_channels}"
-            )
+            raise ValueError(f"inputs have {inputs.shape[1]} channels, expected {self.in_channels}")
         if inputs.dtype != self.linear.weight.dtype:
             raise TypeError(
                 f"inputs use dtype {inputs.dtype}, expected model dtype {self.linear.weight.dtype}"

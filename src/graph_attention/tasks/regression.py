@@ -178,9 +178,7 @@ class NodeRegressionTask:
             transformed = transform.nondimensionalize(graph_fields)
             for name in self.required_node_fields:
                 field_parts[name].append(transformed[name])
-            coord_parts.append(
-                transform.nondimensionalize_coordinates(packed.coords[start:stop])
-            )
+            coord_parts.append(transform.nondimensionalize_coordinates(packed.coords[start:stop]))
 
         return (
             {name: torch.cat(parts, dim=0) for name, parts in field_parts.items()},
@@ -284,8 +282,7 @@ def _build_conditioning(
                 parameter = parameters[name]
             except KeyError as exc:
                 raise KeyError(
-                    f"graph {graph_index} does not define requested conditioning "
-                    f"parameter '{name}'"
+                    f"graph {graph_index} does not define requested conditioning parameter '{name}'"
                 ) from exc
             if parameter.inference_available is not True:
                 raise ValueError(
