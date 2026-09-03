@@ -2,9 +2,9 @@
 
 ## Status
 
-The M3.3 scientific definition is frozen. The baseline reference metadata and forward/inverse convective field transformations were validated on Calypso with the 47-test suite on 2026-09-02. The subsequent explicit case-definition integration passed 55 tests, `ruff check .`, and configuration inspection on Calypso; its only reported issue was formatting, which is folded into the current change.
+The M3.3 scientific definition is frozen and the frozen baseline runtime scope is complete. The baseline reference metadata and forward/inverse convective field transformations were validated on Calypso with the 47-test suite on 2026-09-02. The subsequent explicit case-definition integration passed 55 tests and configuration inspection on Calypso. The final combined integration passed 62 tests on Calypso; the sole reported Ruff issue was a formatting-only line wrap and was fixed in merged PR #15.
 
-The remaining baseline M3.3 runtime scope is now implemented: canonical coordinate scaling by `L_ref` and typed persistence of declared dimensionless regime descriptors. Target-environment validation of this final integration is still required. Statistical train-set scaling remains intentionally outside M3.3 runtime completion because it requires the later task and train-split contracts.
+On 2026-09-03 the complete M3.3 preprocessing path was validated end to end on the real `HIT_LES_FORCED` AVBP snapshot/mesh pair using the committed authoritative case definition and `scripts/validate_m3_3_avbp.py`. The validation loaded 35,937 nodes and 32,768 hexahedral cells, produced unit dimensionless coordinate spans on all three axes, and passed float64 forward/inverse round trips within the configured `rtol=1e-12`, `atol=1e-12` tolerances. Statistical train-set scaling remains intentionally outside M3.3 runtime completion because it requires the later task and train-split contracts.
 
 ## 1. Purpose
 
@@ -414,7 +414,7 @@ M3.3 does not blur reference-state provenance with learned statistical-scaler pr
 
 ## 16. Implementation gate
 
-The baseline M3.3 runtime scope now includes:
+The baseline M3.3 runtime scope includes:
 
 - explicit named reference semantics, scope, inference availability, and provenance hooks;
 - authoritative explicit YAML reference values with non-evaluated derivation metadata;
@@ -428,7 +428,7 @@ The baseline M3.3 runtime scope now includes:
 - missing-reference, schema, case-association, and anti-leakage failure tests;
 - no dependence on sample node count, node numbering, or mesh topology.
 
-Baseline M3.3 implementation is complete when the merged code passes on the target environment:
+The target-environment software gate was exercised on Calypso with:
 
 ```text
 pytest
@@ -437,4 +437,33 @@ ruff format --check .
 python scripts/inspect_config.py
 ```
 
-A real case-definition file containing the actual physical reference values for a target simulation is still required before an end-to-end real-data nondimensionalization claim can be made. Statistical train-set scaling is a later task/split-dependent preprocessing stage and is not part of this M3.3 completion gate.
+The final integration test suite contained 62 passing tests. Configuration inspection passed. The only Ruff issue reported before closure was a formatting-only 101-character line, subsequently fixed in merged PR #15. The frozen baseline M3.3 scope is therefore complete; statistical train-set scaling remains a later task/split-dependent preprocessing stage and is not part of this gate.
+
+## 17. Real `HIT_LES_FORCED` target validation
+
+The end-to-end physical preprocessing path was run on Calypso on 2026-09-03 with:
+
+- `cases/HIT_LES_FORCED.yaml` as the authoritative case definition;
+- the real AVBP `solut_hit_00000770.h5` snapshot;
+- the corresponding `mesh.mesh.h5` mesh;
+- explicit one-based raw connectivity interpretation for this mesh file;
+- `scripts/validate_m3_3_avbp.py`;
+- float64 round-trip tolerances `rtol=1e-12`, `atol=1e-12`.
+
+The loaded sample contained 35,937 nodes and 32,768 hexahedral cells. The declared reference scheme was `hit_target_rms_box_reference`, with `rho_ref=1.17 kg/m^3`, `U_ref=17.360947554785138 m/s`, `L_ref=5.668079275737893e-4 m`, and `T_ref=300 K`. The attached regime descriptors were `Re_lambda_target=37` and `Ma_target=0.05`.
+
+Measured dimensionless ranges were:
+
+```text
+rho:   0.9516790833 to 1.0019128309
+rhou: -4.1263827901 to 3.7405736435
+rhov: -3.9626039328 to 3.2576783205
+rhow: -3.8717409878 to 4.2473477163
+rhoE: 680.3309121865 to 721.7338663227
+```
+
+The large `rhoE*` magnitude is consistent with the documented low-Mach convective-energy scaling behavior and is not treated as a preprocessing failure.
+
+Each coordinate axis had a dimensionless span of exactly `1.0` to printed precision. The small negative minimum on the second axis (`-9.56e-17`) is floating-point noise around zero, not a physical offset. The maximum reported scale-relative field round-trip error was approximately `1.9e-16`; the coordinate round-trip scale-relative error was approximately `9.6e-17`. The validation script returned `RESULT: PASS`.
+
+This result is `TARGET_VALIDATED` evidence for the frozen M3.3 baseline preprocessing scope on this real HIT LES case. It does not validate an observed LES `Re_lambda`, resolved RMS Mach number, SGS-aware turbulence statistic, AVBP viscosity semantics, periodic cross-boundary graph topology, or later statistical ML scaling.
