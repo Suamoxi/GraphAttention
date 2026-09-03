@@ -100,6 +100,7 @@ def main() -> None:
     ).to(device=device, dtype=dtype)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.0, weight_decay=0.0)
 
+    model.eval()
     scaled_batch = device_standardizers.transform(device_batch)
 
     def forward() -> None:
@@ -116,6 +117,8 @@ def main() -> None:
         warmup=args.warmup,
         repetitions=args.repetitions,
     )
+    del scaled_batch
+    model.train()
 
     def training_iteration() -> None:
         train_equal_sample_optimizer_step(
