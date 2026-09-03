@@ -63,7 +63,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--snapshot", type=Path, required=True, help="AVBP solution HDF5 file")
     parser.add_argument("--mesh", type=Path, required=True, help="AVBP mesh HDF5 file")
-    parser.add_argument("--case-file", type=Path, required=True, help="authoritative case YAML file")
+    parser.add_argument(
+        "--case-file",
+        type=Path,
+        required=True,
+        help="authoritative case YAML file",
+    )
     parser.add_argument("--case-id", default="HIT_LES_FORCED")
     parser.add_argument("--mesh-id", default="HIT_LES_FORCED")
     parser.add_argument("--sample-id", default="m3_3_real_validation")
@@ -154,10 +159,11 @@ def main() -> None:
     for axis in range(sample.mesh.spatial_dim):
         original = sample.mesh.coords[:, axis]
         dimensionless = dimensionless_coords[:, axis]
+        dimensionless_span = float(dimensionless.max() - dimensionless.min())
         print(f"  axis_{axis}")
         print(f"    dimensional:   {_format_stats(original)}")
         print(f"    dimensionless: {_format_stats(dimensionless)}")
-        print(f"    dimensionless_span: {float(dimensionless.max() - dimensionless.min()):.12e}")
+        print(f"    dimensionless_span: {dimensionless_span:.12e}")
 
     max_abs_error, scale_relative_error = _validate_round_trip(
         "coordinates",
