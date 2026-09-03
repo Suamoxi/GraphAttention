@@ -26,6 +26,11 @@ def test_split_manifest_accepts_sequence_inputs_but_freezes_tuples() -> None:
     assert manifest.validation_ids == ("sample-b",)
 
 
+def test_split_manifest_rejects_scalar_string_sequence() -> None:
+    with pytest.raises(TypeError, match="not one string"):
+        SplitManifest(train_ids="sample-a")  # type: ignore[arg-type]
+
+
 def test_split_manifest_rejects_duplicate_membership() -> None:
     with pytest.raises(ValueError, match="unique across"):
         SplitManifest(train_ids=("sample-a",), test_ids=("sample-a",))
