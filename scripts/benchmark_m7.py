@@ -71,6 +71,8 @@ def main() -> None:
     device = torch.device(args.device)
     dtype = _DTYPES[args.dtype]
     repo_root = Path(__file__).resolve().parents[1]
+    runtime_provenance = collect_runtime_provenance(repo_root)
+    _validate_evidence_request(args.evidence, device, runtime_provenance)
 
     setup_started = perf_counter()
     if args.workload == "synthetic":
@@ -180,14 +182,17 @@ def main() -> None:
                 nodes=device_batch.inputs.shape[0],
             ),
         },
-        "runtime_provenance": collect_runtime_provenance(repo_root),
+        "runtime_provenance": runtime_provenance,
         "scheduler_environment": _scheduler_environment(),
         "cuda_device": _cuda_device_metadata(device),
         "notes": [
             "Host HDF5 I/O and mesh-edge construction are excluded from repeated timings.",
             "The null baseline does not consume edge_index or coordinates in its forward pass.",
             "GPU timings synchronize before and after every measured call.",
-            "Training uses zero-learning-rate AdamW to exercise optimizer mechanics without parameter drift.",
+            (
+                "Training uses zero-learning-rate AdamW to exercise optimizer mechanics "
+                "without parameter drift."
+            ),
         ],
     }
 
@@ -257,6 +262,7 @@ def _avbp_workload(
         "mesh_id": args.mesh_id,
         "connectivity_indexing": args.connectivity_indexing,
         "physical_nondimensionalization": True,
+        "periodic_cross_boundary_edges": "not_augmented_m3_2_deferred",
         "benchmark_task": "five conservative state channels -> same five channels",
     }
     return (sample,), AVBP_FIELD_CATALOG, task, workload
@@ -316,6 +322,20 @@ def _items_per_second(items: int, milliseconds: float) -> float | None:
     if milliseconds <= 0.0:
         return None
     return items * 1000.0 / milliseconds
+
+
+def _validate_evidence_request(
+    evidence: str,
+    device: torch.device,
+    runtime_provenance: dict[str, Any],
+) -> None:
+    if evidence != "TARGET_VALIDATED":
+        return
+    if device.type != "cuda":
+        raise ValueError("M7 TARGET_VALIDATED execution requires a CUDA device")
+    dirty = runtime_provenance.get("git", {}).get("dirty")
+    if dirty is not False:
+        raise ValueError("TARGET_VALIDATED execution requires a clean git worktree")
 
 
 def _scheduler_environment() -> dict[str, str]:
