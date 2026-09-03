@@ -46,7 +46,7 @@ A new or unvalidated research idea. Record the hypothesis, intended mechanism, r
 
 An empirical result obtained from a specified experiment or benchmark. Record enough context to reproduce it.
 
-## 3. M0-M3.3 traceability table
+## 3. M0-M4 traceability table
 
 | Concept | Type | Specification | Implementation | Validation | Evidence status |
 |---|---|---|---|---|---|
@@ -65,8 +65,8 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Baseline coordinate nondimensionalization `x/L_ref` | Project scientific/numerical convention | `docs/SCIENTIFIC_SPEC.md` §8.1, `docs/NUMERICAL_CONVENTIONS.md` §13, `docs/M3_3_NONDIMENSIONALIZATION.md` §4, §13 | `ConvectiveNondimensionalizer.nondimensionalize_coordinates`, `dimensionalize_coordinates` | coordinate scale/failure/round-trip tests + real HIT validation | Target-validated 2026-09-03; real HIT dimensionless span = 1 on all three axes |
 | `Re`, `Ma`, and related quantities as regime descriptors, not primary normalization scales | Project scientific convention | `docs/M3_3_NONDIMENSIONALIZATION.md` §5, §10, `docs/SCIENTIFIC_SPEC.md` §10 | `RegimeParameter`, `RegimeParameters`, `CaseDefinition.regime_parameters`, `Sample.regime_parameters` | contract/case/AVBP tests + real HIT attachment | Persistence target-validated M3.3; model conditioning deferred |
 | `HIT_LES_FORCED` real nondimensionalization validation | Measured result | `docs/M3_3_NONDIMENSIONALIZATION.md` | `scripts/validate_m3_3_avbp.py`, `cases/HIT_LES_FORCED.yaml` | real AVBP snapshot + mesh on Calypso; 35,937 nodes, 32,768 hex cells; float64 round trips within `1e-12` tolerances | TARGET_VALIDATED 2026-09-03 for frozen M3.3 baseline preprocessing scope |
-| Packed disconnected variable-graph batching | Established graph batching pattern + project requirements | `docs/ARCHITECTURE.md` §5 | `src/.../data/collate.py` | variable-size packed-batch tests | Planned M4 |
-| Node/edge computational budgets | Project systems design | `docs/ARCHITECTURE.md` §6, `docs/NUMERICAL_CONVENTIONS.md` §4 | sampler/packer | boundary/oversize tests | Planned M4 |
+| Packed disconnected variable-graph batching | Established graph batching pattern + project requirements | `docs/ARCHITECTURE.md` §5, `docs/NUMERICAL_CONVENTIONS.md` §2-3, `docs/M4_PACKED_BATCHING.md` | `PackedBatch`, `pack_samples` | `tests/unit/test_packed_batching.py`: variable graph sizes, exact offsets/`ptr`/`batch_index`, no cross-sample edges, named field/metadata preservation | Implemented M4; target validation pending; performance evidence ANALYTICAL |
+| Node/edge computational budgets | Project systems design | `docs/ARCHITECTURE.md` §6-7, `docs/NUMERICAL_CONVENTIONS.md` §4, `docs/M4_PACKED_BATCHING.md` | `MicrobatchBudget`, `partition_samples_by_budget` | `tests/unit/test_packed_batching.py`: exact boundaries, node/edge limiting, invalid and oversized cases, order preservation | Implemented M4; target validation pending; concrete hardware limits remain run configuration |
 | Statistical batch independent of microbatch composition | Project numerical requirement | `docs/NUMERICAL_CONVENTIONS.md` §5 | trainer/task loss aggregation | gradient-equivalence tests | Planned M6 |
 | Physical quadrature-weighted per-sample loss | Established numerical integration principle | `docs/NUMERICAL_CONVENTIONS.md` §6 | task/loss code | reference integration tests | Planned M6; AVBP `VertexData/volume` semantics unresolved |
 | DDP global sample-weight consistency | Project distributed-training requirement | `docs/NUMERICAL_CONVENTIONS.md` §7 | trainer | multi-rank equivalence test | Planned M6 |
@@ -79,7 +79,7 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Explicit resolution descriptor | Project multiresolution requirement | `docs/SCIENTIFIC_SPEC.md` §12 | geometry/preprocessing | resolution metadata tests | Planned |
 | Node-renumbering equivariance | Fundamental graph-model property | `docs/SCIENTIFIC_SPEC.md` §13 | every graph model | permutation test | Mandatory when model exists |
 | Translation/rotation/etc. claims require explicit proof/test | Project scientific rule | `docs/SCIENTIFIC_SPEC.md` §14 | model-specific | property-specific tests | Per model |
-| Data/Geometry/Task/Model/Trainer ownership | Project software-science design | `docs/ARCHITECTURE.md` §3 | package architecture; native data, declared references/regimes, and geometry transforms remain separated | review/tests | Frozen M0 / instantiated M1-M3.3 |
+| Data/Geometry/Task/Model/Trainer ownership | Project software-science design | `docs/ARCHITECTURE.md` §3 | package architecture; native data, declared references/regimes, geometry transforms, and M4 computational packing remain separated | review/tests | Frozen M0 / instantiated M1-M4 |
 | Performance evidence levels | Project engineering rule | `docs/BENCHMARK_PROTOCOL.md` | benchmark tooling | benchmark schema checks | Planned M7 |
 
 ## 4. Future model traceability template

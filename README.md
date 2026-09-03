@@ -45,6 +45,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 - [`docs/M3_1_SYNTHETIC_DATA.md`](docs/M3_1_SYNTHETIC_DATA.md): deterministic non-physical variable-mesh data used to exercise the real data contracts.
 - [`docs/M3_2_AVBP_HDF5.md`](docs/M3_2_AVBP_HDF5.md): named-field AVBP/HDF5 reading and native hexahedral connectivity handling.
 - [`docs/M3_3_NONDIMENSIONALIZATION.md`](docs/M3_3_NONDIMENSIONALIZATION.md): M3.3 reference-state and physical nondimensionalization directive.
+- [`docs/M4_PACKED_BATCHING.md`](docs/M4_PACKED_BATCHING.md): budget-aware disconnected variable-graph batching contract and implementation scope.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): software boundaries, runtime representation, and dependency direction.
 - [`docs/SCIENTIFIC_SPEC.md`](docs/SCIENTIFIC_SPEC.md): scientific scope, graph assumptions, field semantics, and required invariances.
 - [`docs/NUMERICAL_CONVENTIONS.md`](docs/NUMERICAL_CONVENTIONS.md): nondimensionalization, normalization, loss weighting, precision, and batching conventions.
@@ -55,7 +56,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope: explicit per-case reference documents, field nondimensionalization, canonical coordinate scaling by `L_ref`, and typed dimensionless regime descriptors are implemented and target-validated on the real `HIT_LES_FORCED` AVBP case on Calypso. Statistical train-set scaling remains a later task/split-dependent preprocessing stage. Packed graph batching, tasks, and sparse attention remain later work.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 now implements budget-aware packed disconnected graphs with explicit `ptr`, `batch_index`, edge offsets, named node-field packing, and separate node/edge computational budgets; target-environment validation is pending. Statistical train-set scaling, task semantics, optimizer/DDP batching, and sparse attention remain later work.
 
 Current smoke checks:
 

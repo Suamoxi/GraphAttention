@@ -2,6 +2,7 @@
 
 from .avbp import AVBP_FIELD_CATALOG, AVBPHDF5Dataset, AVBPSampleSpec
 from .case_definition import CaseDefinition, load_case_definition, load_case_definitions
+from .collate import MicrobatchBudget, PackedBatch, pack_samples, partition_samples_by_budget
 from .contracts import (
     FieldCatalog,
     FieldRole,
@@ -29,6 +30,8 @@ __all__ = [
     "FieldSpec",
     "FieldSupport",
     "Mesh",
+    "MicrobatchBudget",
+    "PackedBatch",
     "ReferenceScale",
     "ReferenceScales",
     "ReferenceScope",
@@ -38,4 +41,6 @@ __all__ = [
     "SyntheticMeshDataset",
     "load_case_definition",
     "load_case_definitions",
+    "pack_samples",
+    "partition_samples_by_budget",
 ]
