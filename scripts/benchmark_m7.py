@@ -103,23 +103,13 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.0, weight_decay=0.0)
 
     model.eval()
-    scaled_batch = device_standardizers.transform(device_batch)
-
-    def forward() -> None:
-        with torch.inference_mode():
-            model(
-                scaled_batch.inputs,
-                batch_index=scaled_batch.batch_index,
-                conditioning=scaled_batch.conditioning,
-            )
-
-    forward_measurement = measure_callable(
-        forward,
+    forward_measurement = _measure_forward(
+        model,
+        device_standardizers.transform(device_batch),
         device=device,
         warmup=args.warmup,
         repetitions=args.repetitions,
     )
-    del scaled_batch
     model.train()
 
     def training_iteration() -> None:
@@ -200,6 +190,30 @@ def main() -> None:
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2))
     print(f"Wrote benchmark result to {args.output}")
+
+
+def _measure_forward(
+    model: NodeLinearBaseline,
+    batch: NodeRegressionBatch,
+    *,
+    device: torch.device,
+    warmup: int,
+    repetitions: int,
+) -> BenchmarkMeasurement:
+    def forward() -> None:
+        with torch.inference_mode():
+            model(
+                batch.inputs,
+                batch_index=batch.batch_index,
+                conditioning=batch.conditioning,
+            )
+
+    return measure_callable(
+        forward,
+        device=device,
+        warmup=warmup,
+        repetitions=repetitions,
+    )
 
 
 def _synthetic_workload(
