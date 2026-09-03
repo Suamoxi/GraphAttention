@@ -13,7 +13,6 @@ from graph_attention.data import (
 from graph_attention.tasks import NodeRegressionTask
 from graph_attention.training import fit_train_standardizers
 
-
 _CATALOG = FieldCatalog(
     (
         FieldSpec(
