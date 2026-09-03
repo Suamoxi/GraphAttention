@@ -22,7 +22,10 @@ class SplitManifest:
 
     def __post_init__(self) -> None:
         for attribute in ("train_ids", "validation_ids", "test_ids"):
-            values = tuple(getattr(self, attribute))
+            raw_values = getattr(self, attribute)
+            if isinstance(raw_values, str):
+                raise TypeError(f"{attribute} must be a sequence of sample IDs, not one string")
+            values = tuple(raw_values)
             if any(not isinstance(value, str) or not value.strip() for value in values):
                 raise ValueError(f"{attribute} must contain only non-empty sample IDs")
             object.__setattr__(self, attribute, values)
