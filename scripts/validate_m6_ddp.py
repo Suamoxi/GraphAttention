@@ -26,9 +26,7 @@ def main() -> None:
 
         torch.manual_seed(17)
         model = NodeLinearBaseline(in_channels=2, out_channels=1)
-        initial_state = {
-            name: value.detach().clone() for name, value in model.state_dict().items()
-        }
+        initial_state = {name: value.detach().clone() for name, value in model.state_dict().items()}
         ddp_model = DistributedDataParallel(model)
         optimizer = torch.optim.SGD(ddp_model.parameters(), lr=0.05)
 

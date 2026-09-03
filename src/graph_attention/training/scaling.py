@@ -11,7 +11,6 @@ import torch
 from graph_attention.data import FieldCatalog, Sample, SplitManifest
 from graph_attention.tasks import NodeRegressionBatch, NodeRegressionTask
 
-
 _DEFAULT_MINIMUM_STD = 1.0e-12
 
 
