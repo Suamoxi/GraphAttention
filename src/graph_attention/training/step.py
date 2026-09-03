@@ -148,11 +148,12 @@ def train_equal_sample_optimizer_step(
             assert following is not None
             current = following
 
-        if seen_samples != expected_local_count:
-            raise ValueError(
-                "local_sample_count does not match supplied microbatches: "
-                f"expected {expected_local_count}, observed {seen_samples}"
-            )
+        _validate_observed_sample_count(
+            observed=seen_samples,
+            expected=expected_local_count,
+            world_size=world_size,
+            device=device,
+        )
 
         if grad_scaler is None:
             optimizer.step()
@@ -193,6 +194,25 @@ def _distributed_counts(
     if int(has_batch) == 0:
         raise ValueError("every DDP rank must have at least one microbatch per optimizer step")
     return world_size, int(count)
+
+
+def _validate_observed_sample_count(
+    *,
+    observed: int,
+    expected: int,
+    world_size: int,
+    device: torch.device,
+) -> None:
+    mismatch = int(observed != expected)
+    if world_size > 1:
+        mismatch_tensor = torch.tensor(mismatch, dtype=torch.long, device=device)
+        dist.all_reduce(mismatch_tensor, op=dist.ReduceOp.MAX)
+        mismatch = int(mismatch_tensor)
+    if mismatch:
+        raise ValueError(
+            "local_sample_count does not match supplied microbatches: "
+            f"expected {expected}, observed {observed} on this rank"
+        )
 
 
 def _first_trainable_parameter(model: nn.Module) -> torch.nn.Parameter:
