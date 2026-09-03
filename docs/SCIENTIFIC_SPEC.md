@@ -389,3 +389,47 @@ The task constructs noisy states and the appropriate denoising/score/velocity ta
 The task constructs the interpolation path and target vector field according to an explicitly specified formulation.
 
 The same sparse geometric backbone may support several tasks, but task-specific mathematics must remain in the task layer.
+
+## 16. M5 deterministic node-regression baseline contract
+
+The first concrete task contract is deterministic node-to-node regression on a packed collection of CFD mesh nodes. The task selects ordered named input and target fields from the `FieldCatalog`; the resulting model-facing channel order is the declared field order followed by each field's declared component order.
+
+For a packed batch, the task representation is:
+
+$$
+X \in \mathbb{R}^{N_{\mathrm{total}}\times C_{\mathrm{in}}},
+\qquad
+Y \in \mathbb{R}^{N_{\mathrm{total}}\times C_{\mathrm{out}}}.
+$$
+
+When physical nondimensionalization is enabled, every graph is transformed with its own authoritative M3.3 reference state before task fields are concatenated. A packed microbatch therefore does not imply one shared numerical `rho_ref`, `U_ref`, `L_ref`, or `T_ref` across all constituent cases.
+
+Requested dimensionless regime conditioning is graph-level:
+
+$$
+c \in \mathbb{R}^{B\times C_{\mathrm{cond}}}.
+$$
+
+A conditioning quantity must be explicitly declared available at inference for every graph. The same conditioning name must also carry the same physical definition across graphs used together; identical names with different definitions are not treated as interchangeable quantities.
+
+The M5 null geometric baseline is a node-local affine map. Without global conditioning:
+
+$$
+\boxed{\hat y_i=W x_i+b}
+$$
+
+and, when graph-level conditioning is explicitly configured:
+
+$$
+\boxed{\hat y_i=W[x_i,c_{g(i)}]+b}.
+$$
+
+This baseline intentionally ignores coordinates and connectivity. Its purpose is to validate task semantics, global-conditioning plumbing, packed-versus-independent execution, and node-renumbering equivariance before graph-aware models are introduced. It is not a claim that local affine regression is an adequate CFD model.
+
+For the baseline, a consistent node permutation satisfies exactly up to floating-point arithmetic:
+
+$$
+f(PX)=P f(X).
+$$
+
+M5 does not define a training loss, variable-mesh statistical weighting, optimizer objective, or train-set statistical scaler. Those numerical/scientific choices must remain explicit and are introduced only after their weighting semantics are frozen.
