@@ -17,7 +17,10 @@ def test_split_manifest_records_explicit_membership() -> None:
 
 
 def test_split_manifest_accepts_sequence_inputs_but_freezes_tuples() -> None:
-    manifest = SplitManifest(train_ids=["sample-a"], validation_ids=["sample-b"])  # type: ignore[arg-type]
+    manifest = SplitManifest(  # type: ignore[arg-type]
+        train_ids=["sample-a"],
+        validation_ids=["sample-b"],
+    )
 
     assert manifest.train_ids == ("sample-a",)
     assert manifest.validation_ids == ("sample-b",)
