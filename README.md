@@ -56,7 +56,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 now implements budget-aware packed disconnected graphs with explicit `ptr`, `batch_index`, edge offsets, named node-field packing, and separate node/edge computational budgets; target-environment validation is pending. Statistical train-set scaling, task semantics, optimizer/DDP batching, and sparse attention remain later work.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso with 81 passing tests plus successful Ruff and configuration checks; it provides budget-aware packed disconnected graphs with explicit `ptr`, `batch_index`, edge offsets, named node-field packing, and separate node/edge computational budgets. Statistical train-set scaling, task semantics, optimizer/DDP batching, and sparse attention remain later work.
 
 Current smoke checks:
 
