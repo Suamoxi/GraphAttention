@@ -253,3 +253,29 @@ NaN/Inf handling must be explicit.
 Do not silently replace invalid physical values with zero unless that behavior is scientifically justified, documented, and tested.
 
 Dataset validation should fail early on unexpected invalid values in required fields.
+
+## 18. M6 sample-balanced scaling and optimizer reduction
+
+For M6, statistical scaling across variable-size meshes uses equal total weight per physical training sample. For channel `c`:
+
+$$
+\mu_c=\frac{1}{G}\sum_g\frac{1}{N_g}\sum_i q^*_{gic},
+$$
+
+$$
+\sigma_c^2=\frac{1}{G}\sum_g\frac{1}{N_g}\sum_i(q^*_{gic}-\mu_c)^2.
+$$
+
+A global node-wise estimator is not the default because it would give larger meshes more influence solely through node count. Fitting is train-only, uses float64 online moment accumulation, and fails when `sigma_c <= 1e-12` rather than silently clamping a constant channel.
+
+The M6 deterministic-regression pointwise loss is channel-mean squared error. Spatial reduction occurs independently within every physical sample, using `Mesh.node_weights` when supplied and an unweighted node mean otherwise. Physical samples then receive equal optimizer-level weight.
+
+For a global optimizer step containing `G_global` samples on `R` DDP ranks, each rank backpropagates its local **sum** of sample losses scaled by:
+
+$$
+\alpha=\frac{R}{G_{\mathrm{global}}}.
+$$
+
+This compensates for PyTorch DDP's gradient averaging and yields the gradient of the global equal-sample mean even when ranks contain different sample counts. Rank-local computational microbatches use `DDP.no_sync()` except for the last local backward so unequal microbatch counts do not redefine the objective.
+
+Under autocast, prediction and target dtypes are explicitly promoted for loss arithmetic. CUDA FP16 requires an explicit `GradScaler` in the M6 reference step. The default repository precision remains `32-true`; CUDA/NCCL AMP behavior is not yet a target-validated performance claim.

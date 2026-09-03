@@ -433,3 +433,35 @@ f(PX)=P f(X).
 $$
 
 M5 does not define a training loss, variable-mesh statistical weighting, optimizer objective, or train-set statistical scaler. Those numerical/scientific choices must remain explicit and are introduced only after their weighting semantics are frozen.
+
+## 17. M6 deterministic regression objective
+
+For the M6 baseline, statistical standardization is fitted from the training split with equal total influence per physical sample rather than equal influence per mesh node. This prevents mesh resolution alone from changing the statistical preprocessing objective.
+
+For standardized target channel $c$, the node-level regression loss is equal-channel MSE:
+
+$$
+\ell_{gi}=\frac{1}{C}\sum_{c=1}^{C}(\hat y_{gic}-\hat y^{\mathrm{target}}_{gic})^2.
+$$
+
+The loss is then reduced inside each physical sample before samples are combined. Without physical quadrature weights:
+
+$$
+L_g=\frac{1}{N_g}\sum_i\ell_{gi}.
+$$
+
+When scientifically justified non-negative node integration weights are supplied:
+
+$$
+L_g=\frac{\sum_i w_{gi}\ell_{gi}}{\sum_i w_{gi}}.
+$$
+
+The initial optimizer-level statistical objective assigns equal weight to each independent physical sample:
+
+$$
+\boxed{L_{\mathrm{opt}}=\frac{1}{G}\sum_{g=1}^{G}L_g}.
+$$
+
+Computational microbatch composition is not part of this scientific objective. Splitting the same selected physical samples into different node/edge-budget microbatches must preserve the optimizer gradient within numerical tolerance. The same global sample objective must also be preserved across DDP ranks with unequal sample counts.
+
+This equal-sample objective is the initial project convention, not a universal CFD loss prescription. Future tasks may require physical sample weights, uncertainty weighting, surface/volume-specific quadrature, or different channel metrics; each such change is a separate scientifically meaningful task definition.
