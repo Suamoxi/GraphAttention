@@ -4,7 +4,7 @@
 
 M6 implements the reference-correct training mechanics required before performance benchmarking or sparse-attention work. The implementation covers train-only statistical scaling, per-sample regression loss reduction, optimizer-step accumulation across variable computational microbatches, DDP global sample weighting, and an autocast-compatible loss path.
 
-Target validation on Calypso is required before M6 is marked complete.
+M6 is complete for this reference path and was target-validated on Calypso on 2026-09-03: 122 tests passed, the two-rank CPU/Gloo global-objective validation passed with unequal rank sample/microbatch counts, and the Ruff gates passed after the formatting-only follow-up. CUDA/NCCL performance remains explicitly unclaimed.
 
 ## 1. Scope
 
@@ -341,9 +341,9 @@ Finite-value and weight-validity checks can synchronize when tensors are already
 
 `DDP.no_sync()` reduces synchronization to one backward per optimizer step. The implementation is intended to establish the correct objective first; communication/throughput optimization remains benchmark-driven.
 
-## 16. Validation gate
+## 16. Validation evidence
 
-Before M6 is marked complete on Calypso, run:
+The completion gate was:
 
 ```bash
 pytest
@@ -353,4 +353,6 @@ python scripts/inspect_config.py
 torchrun --standalone --nproc_per_node=2 scripts/validate_m6_ddp.py
 ```
 
-Performance evidence remains `ANALYTICAL`. Passing this gate establishes numerical/software correctness for the M6 reference path, not GPU throughput or scaling claims.
+The reported Calypso validation produced 122 passing tests and a passing two-rank DDP global-update comparison. Formatting/import-order findings were corrected mechanically and the final Ruff gate was confirmed before proceeding to M7.
+
+Performance evidence remains `ANALYTICAL`. This validation establishes numerical/software correctness for the M6 reference path, not GPU throughput or scaling claims.
