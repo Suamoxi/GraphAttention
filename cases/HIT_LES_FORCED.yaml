@@ -12,7 +12,7 @@ references:
   U_ref:
     value: 17.360947554785138
     units: m/s
-    definition: prescribed_target_rms_velocity
+    definition: prescribed_target_one_component_rms_velocity
     provenance: HIT LES simulation setup
     inference_available: true
     derivation: Ma_target * sqrt(gamma * R * T_ref)
