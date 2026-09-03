@@ -117,7 +117,9 @@ def _load_reference_scales(
         if missing:
             raise ValueError(f"reference '{name}' in '{path}' is missing keys: {sorted(missing)}")
         if extra:
-            raise ValueError(f"reference '{name}' in '{path}' has unsupported keys: {sorted(extra)}")
+            raise ValueError(
+                f"reference '{name}' in '{path}' has unsupported keys: {sorted(extra)}"
+            )
 
         inference_available = raw_reference["inference_available"]
         if not isinstance(inference_available, bool):
