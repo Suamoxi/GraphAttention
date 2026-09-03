@@ -2,7 +2,9 @@
 
 ## Status
 
-M4 implements the frozen packed-graph and computational-budget contracts from `docs/ARCHITECTURE.md` and `docs/NUMERICAL_CONVENTIONS.md`. Target-environment validation on Calypso is required before M4 is marked complete.
+M4 is complete for its frozen packed-graph and computational-budget scope from `docs/ARCHITECTURE.md` and `docs/NUMERICAL_CONVENTIONS.md`.
+
+The merged implementation was target-validated on Calypso on 2026-09-03. The repository test suite reported 81 passing tests, `ruff check .` passed, `python scripts/inspect_config.py` passed, and the only initial `ruff format --check .` findings were formatter-only changes in three files. Those formatter changes were merged in PR #19, after which the final formatter check passed on Calypso.
 
 M4 is deliberately limited to computational representation and grouping. It does not define task channel order, training loss weighting, gradient accumulation, DDP behavior, or a model architecture.
 
@@ -216,13 +218,15 @@ This complexity statement is `ANALYTICAL`. M4 does not make a throughput, latenc
 
 ## 13. Completion gate
 
-After merging, run on Calypso:
+The M4 completion gate was exercised on Calypso on 2026-09-03:
 
-```bash
-pytest
-ruff check .
-ruff format --check .
-python scripts/inspect_config.py
+```text
+pytest                          -> 81 passed in 17.28 s
+ruff check .                    -> passed
+python scripts/inspect_config.py -> passed
+ruff format --check .           -> passed after merged formatter-only PR #19
 ```
 
-M4 may be marked complete when these checks pass with the M4 tests included. No performance claim is implied by this software/numerical validation.
+The validated repository used Python 3.11.13 and PyTorch 2.10.0+cu128. The checks were run from the Calypso login environment with no CUDA device visible; therefore this is target-environment software/numerical validation, not a GPU performance benchmark.
+
+M4 is complete for its frozen scope. This validation introduces no throughput, latency, or peak-memory performance claim; performance evidence remains `ANALYTICAL` until M7 benchmarking.
