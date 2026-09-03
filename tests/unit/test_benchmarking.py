@@ -1,3 +1,8 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -38,3 +43,43 @@ def test_measure_callable_rejects_invalid_counts(
 ) -> None:
     with pytest.raises(error):
         measure_callable(lambda: None, device="cpu", warmup=warmup, repetitions=repetitions)
+
+
+def test_m7_benchmark_script_writes_cpu_synthetic_result(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    output = tmp_path / "m7.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "benchmark_m7.py"),
+            "--device",
+            "cpu",
+            "--dtype",
+            "float32",
+            "--warmup",
+            "0",
+            "--repetitions",
+            "1",
+            "--output",
+            str(output),
+            "synthetic",
+            "--graphs",
+            "2",
+            "--nodes-per-graph",
+            "4",
+            "--spatial-dim",
+            "2",
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["benchmark"] == "M7_node_linear_baseline"
+    assert payload["evidence"] == "LOCAL_BENCHMARK"
+    assert payload["workload"]["num_graphs"] == 2
+    assert payload["workload"]["num_nodes"] == 8
+    assert payload["cuda_device"] is None
+    assert payload["measurements"]["training_iteration"]["timing"]["repetitions"] == 1
