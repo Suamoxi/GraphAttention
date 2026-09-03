@@ -256,11 +256,29 @@ def test_regression_task_rejects_non_node_or_nonfloating_fields() -> None:
 
     integer_sample = replace(
         sample,
-        fields={**sample.fields, "rho": torch.ones(sample.mesh.num_nodes, dtype=torch.long)},
+        fields={
+            **sample.fields,
+            "rho": torch.ones(sample.mesh.num_nodes, dtype=torch.long),
+        },
     )
     integer_task = NodeRegressionTask(input_fields=("rho",), target_fields=("rho",))
     with pytest.raises(TypeError, match="floating-point"):
         integer_task.pack_and_prepare([integer_sample], dataset.field_catalog)
+
+
+def test_regression_task_rejects_nonfinite_selected_fields() -> None:
+    dataset = SyntheticMeshDataset(num_samples=1)
+    sample = dataset[0]
+    invalid_rho = sample.fields["rho"].clone()
+    invalid_rho[0] = torch.nan
+    invalid_sample = replace(
+        sample,
+        fields={**sample.fields, "rho": invalid_rho},
+    )
+    task = NodeRegressionTask(input_fields=("rho",), target_fields=("rho",))
+
+    with pytest.raises(ValueError, match="NaN or Inf"):
+        task.pack_and_prepare([invalid_sample], dataset.field_catalog)
 
 
 @pytest.mark.parametrize(
