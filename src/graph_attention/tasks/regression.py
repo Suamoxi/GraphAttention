@@ -67,7 +67,11 @@ class NodeRegressionTask:
         conditioning_parameters: Iterable[str] = (),
         physical_nondimensionalization: bool = False,
     ) -> None:
-        self.input_fields = _validated_names(input_fields, "input_fields", require_nonempty=True)
+        self.input_fields = _validated_names(
+            input_fields,
+            "input_fields",
+            require_nonempty=True,
+        )
         self.target_fields = _validated_names(
             target_fields,
             "target_fields",
@@ -118,7 +122,8 @@ class NodeRegressionTask:
             raise ValueError("task inputs and targets must be on the same device")
         if inputs.dtype != targets.dtype:
             raise TypeError(
-                f"task inputs and targets must share one dtype, got {inputs.dtype} and {targets.dtype}"
+                "task inputs and targets must share one dtype, "
+                f"got {inputs.dtype} and {targets.dtype}"
             )
 
         conditioning = _build_conditioning(
@@ -246,7 +251,8 @@ def _as_channel_matrix(value: torch.Tensor, spec: FieldSpec) -> torch.Tensor:
     if value.ndim == 1:
         if components != 1:
             raise ValueError(
-                f"field '{spec.name}' declares {components} components but has shape {tuple(value.shape)}"
+                f"field '{spec.name}' declares {components} components but has shape "
+                f"{tuple(value.shape)}"
             )
         return value.unsqueeze(1)
     if value.ndim == 2 and value.shape[1] == components:
@@ -276,7 +282,8 @@ def _build_conditioning(
                 parameter = parameters[name]
             except KeyError as exc:
                 raise KeyError(
-                    f"graph {graph_index} does not define requested conditioning parameter '{name}'"
+                    f"graph {graph_index} does not define requested conditioning "
+                    f"parameter '{name}'"
                 ) from exc
             if parameter.inference_available is not True:
                 raise ValueError(
