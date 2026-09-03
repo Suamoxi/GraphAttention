@@ -48,7 +48,10 @@ def test_pack_samples_builds_disconnected_variable_graph_batch() -> None:
 
     offsets = (0, 4, 9)
     expected_edges = torch.cat(
-        [sample.mesh.edge_index + offset for sample, offset in zip(samples, offsets, strict=True)],
+        [
+            sample.mesh.edge_index + offset
+            for sample, offset in zip(samples, offsets, strict=True)
+        ],
         dim=1,
     )
     torch.testing.assert_close(batch.edge_index, expected_edges)
@@ -59,7 +62,10 @@ def test_pack_samples_builds_disconnected_variable_graph_batch() -> None:
     for graph_index in range(batch.num_graphs):
         start = int(batch.ptr[graph_index])
         stop = int(batch.ptr[graph_index + 1])
-        torch.testing.assert_close(batch.node_weights[start:stop].sum(), torch.tensor(1.0))
+        torch.testing.assert_close(
+            batch.node_weights[start:stop].sum(),
+            torch.tensor(1.0),
+        )
 
     for graph_index, sample in enumerate(samples):
         assert batch.reference_scales[graph_index] is sample.reference_scales
@@ -139,7 +145,8 @@ def test_microbatch_budget_rejects_invalid_limits(
 
 
 def test_partition_samples_by_budget_accepts_empty_selection() -> None:
-    assert partition_samples_by_budget([], MicrobatchBudget(max_nodes=10, max_edges=10)) == ()
+    budget = MicrobatchBudget(max_nodes=10, max_edges=10)
+    assert partition_samples_by_budget([], budget) == ()
 
 
 def test_pack_samples_rejects_unknown_or_duplicate_node_fields() -> None:
