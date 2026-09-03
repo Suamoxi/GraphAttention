@@ -48,6 +48,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 - [`docs/M4_PACKED_BATCHING.md`](docs/M4_PACKED_BATCHING.md): budget-aware disconnected variable-graph batching contract and implementation scope.
 - [`docs/M5_TASK_BASELINE.md`](docs/M5_TASK_BASELINE.md): explicit regression-task, split-manifest, conditioning, and node-linear baseline scope.
 - [`docs/M6_TRAINING_CORRECTNESS.md`](docs/M6_TRAINING_CORRECTNESS.md): sample-balanced train scaling, per-sample losses, optimizer accumulation, DDP weighting, and autocast correctness scope.
+- [`docs/M7_BENCHMARKS.md`](docs/M7_BENCHMARKS.md): reproducible framework/null-baseline performance measurements and target-validation gate.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): software boundaries, runtime representation, and dependency direction.
 - [`docs/SCIENTIFIC_SPEC.md`](docs/SCIENTIFIC_SPEC.md): scientific scope, graph assumptions, field semantics, and required invariances.
 - [`docs/NUMERICAL_CONVENTIONS.md`](docs/NUMERICAL_CONVENTIONS.md): nondimensionalization, normalization, loss weighting, precision, and batching conventions.
@@ -58,7 +59,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso. M5 is complete and target-validated on Calypso with 107 passing tests plus successful Ruff/configuration checks. M6 now implements the frozen sample-balanced statistical-scaling convention, per-sample MSE reduction, optimizer-step accumulation that is invariant to computational microbatch composition, DDP global sample weighting, and an autocast-compatible loss path; M6 target validation is pending.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso. M5 is complete and target-validated on Calypso. M6 is complete and target-validated on Calypso with 122 passing tests plus the two-rank CPU/Gloo global-objective validation. M7 now provides the benchmark evidence protocol and the first reproducible host-preparation, forward, training-iteration, throughput, and CUDA-memory benchmark for the null baseline; M7 target performance measurements are pending.
 
 Current smoke checks:
 
