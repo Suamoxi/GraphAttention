@@ -127,7 +127,9 @@ class TaskStandardizers:
 
     def __post_init__(self) -> None:
         train_ids = tuple(self.train_sample_ids)
-        if not train_ids or any(not isinstance(value, str) or not value.strip() for value in train_ids):
+        if not train_ids or any(
+            not isinstance(value, str) or not value.strip() for value in train_ids
+        ):
             raise ValueError("train_sample_ids must contain non-empty sample IDs")
         if len(set(train_ids)) != len(train_ids):
             raise ValueError("train_sample_ids must be unique")
