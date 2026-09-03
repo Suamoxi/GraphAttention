@@ -68,7 +68,7 @@ The optimizer uses `lr=0` and `weight_decay=0` during timing. AdamW state is ini
 The default benchmark uses:
 
 ```text
-warmup:      10 calls
+warmup:       10 calls
 measurements: 50 calls
 primary statistic: median latency
 ```
@@ -136,6 +136,8 @@ The benchmark:
 6. fits M6 sample-balanced statistics on the benchmark sample solely to exercise the frozen training path;
 7. benchmarks a five-channel-to-five-channel affine null model.
 
+The current hex-derived edge list does **not** add the deferred periodic cross-boundary graph connections. Its reported edge count therefore describes the present M3.2 connectivity representation, not a claim of complete periodic physical topology. This does not affect M7 null-model forward/training timing because the baseline does not consume edges.
+
 The mapping of the five state channels to themselves is a **benchmark workload only**. It is not proposed as a useful CFD learning task and no predictive-accuracy claim follows from it.
 
 Example on Calypso:
@@ -172,13 +174,20 @@ python scripts/benchmark_m7.py ...
 
 The benchmark records available Slurm variables and `CUDA_VISIBLE_DEVICES` in its JSON output.
 
+For `--evidence TARGET_VALIDATED`, the executable additionally requires:
+
+- a CUDA device;
+- a clean git working tree.
+
+Those checks prevent obvious evidence-label mistakes. The executable still cannot prove that the current cluster is the designated target environment merely from a hostname; that classification remains an operator responsibility.
+
 Multi-node NCCL scaling remains a separate future benchmark. The M6 two-process CPU/Gloo test validates distributed weighting correctness, not GPU communication performance.
 
 ## 7. Benchmark result artifact
 
 Each invocation writes one JSON file and prints the same content to stdout.
 
-Keep benchmark output outside the git working tree when possible so repository provenance remains clean. The result includes:
+Keep benchmark output outside the git working tree so repository provenance remains clean. The result includes:
 
 - exact git state;
 - Python/PyTorch/CUDA versions;
@@ -189,7 +198,7 @@ Keep benchmark output outside the git working tree when possible so repository p
 - timing/memory results;
 - evidence label.
 
-The evidence label is supplied explicitly by the person running the benchmark. The executable cannot prove that a machine is the designated target environment merely from its hostname.
+The evidence label is supplied explicitly by the person running the benchmark.
 
 ## 8. Assumptions
 
@@ -202,6 +211,7 @@ M7 introduces or inherits these assumptions:
 - float32 is the initial target benchmark precision;
 - model-facing task tensors, coordinates, sparse index tensors, and node weights are moved to the selected device, while redundant raw source fields remain host-resident;
 - the real HIT benchmark uses the established one-based raw connectivity interpretation;
+- periodic cross-boundary graph edges remain absent from the present real-HIT edge count;
 - the one-sample real-data scaler is a performance fixture, not a scientifically reusable training scaler.
 
 ## 9. Handled edge cases
@@ -215,7 +225,8 @@ The benchmark utilities explicitly handle:
 - output-directory creation;
 - optional Slurm metadata;
 - either float32 or float64 baseline execution;
-- real AVBP connectivity construction before packing.
+- real AVBP connectivity construction before packing;
+- rejection of `TARGET_VALIDATED` on CPU or a dirty/unknown git worktree.
 
 ## 10. Deferred or unsupported cases
 
@@ -239,6 +250,8 @@ These should be added only when a concrete implementation or performance questio
 The benchmark fails rather than silently adapting when:
 
 - CUDA is requested but unavailable;
+- `TARGET_VALIDATED` is requested on CPU;
+- `TARGET_VALIDATED` is requested from a dirty or unverifiable git worktree;
 - workload counts are invalid;
 - the AVBP case/mesh/snapshot contract fails;
 - physical nondimensionalization requirements are not satisfied;
