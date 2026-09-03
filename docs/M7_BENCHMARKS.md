@@ -140,7 +140,7 @@ The current hex-derived edge list does **not** add the deferred periodic cross-b
 
 The mapping of the five state channels to themselves is a **benchmark workload only**. It is not proposed as a useful CFD learning task and no predictive-accuracy claim follows from it.
 
-Example on Calypso:
+Example on Calypso outside a container:
 
 ```bash
 python scripts/benchmark_m7.py \
@@ -171,6 +171,67 @@ A Slurm allocation needs one GPU. For example, inside an allocated GPU shell:
 nvidia-smi
 python scripts/benchmark_m7.py ...
 ```
+
+### 6.1 Singularity path visibility
+
+The established Calypso job workflow launches Python through a Singularity image with bindings such as:
+
+```bash
+singularity exec --nv -B /home -B /scratch IMAGE PYTHON ...
+```
+
+Paths supplied to the benchmark must therefore be valid **inside the container**, not only on the login-node host filesystem. On the current setup, using the host-style `/gpfs-calypso/scratch/...` paths from inside that container can fail with `FileNotFoundError` because `/gpfs-calypso` is not bound into the image.
+
+When `/scratch` is bound, use the container-visible `/scratch/...` form for the repository, AVBP files, case file, and benchmark output. Alternatively, bind `/gpfs-calypso` explicitly, but the project baseline is to reuse the established `/scratch` binding and avoid introducing a second path convention inside the job.
+
+For example, the real HIT arguments inside the established container workflow are:
+
+```text
+snapshot:  /scratch/coop/theret/HIT_LES_FORCED/RUN/SOLUT/solut_hit_00000770.h5
+mesh:      /scratch/coop/theret/HIT_LES_FORCED/MESH/mesh.mesh.h5
+case-file: /scratch/coop/theret/GraphAttention/cases/HIT_LES_FORCED.yaml
+```
+
+A representative one-GPU Slurm wrapper is:
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=m7_benchmark
+#SBATCH --time=00:30:00
+#SBATCH --partition=grace
+#SBATCH --gres=gpu:1
+#SBATCH --output=/scratch/coop/theret/GraphAttention_benchmarks/%x_%j.out
+#SBATCH --error=/scratch/coop/theret/GraphAttention_benchmarks/%x_%j.err
+
+set -euo pipefail
+
+REPO=/scratch/coop/theret/GraphAttention
+RESULTS=/scratch/coop/theret/GraphAttention_benchmarks
+IMAGE=/softs/local_arm/singularity/images/pyg25.03.sif
+PYTHON=/scratch/coop/theret/<python-environment>/bin/python3
+
+mkdir -p "$RESULTS"
+cd "$REPO"
+
+singularity exec --nv -B /home -B /scratch \
+  "$IMAGE" \
+  "$PYTHON" -u "$REPO/scripts/benchmark_m7.py" \
+  --device cuda \
+  --dtype float32 \
+  --warmup 10 \
+  --repetitions 50 \
+  --evidence TARGET_VALIDATED \
+  --output "$RESULTS/m7_hit_${SLURM_JOB_ID}.json" \
+  avbp \
+  --snapshot /scratch/coop/theret/HIT_LES_FORCED/RUN/SOLUT/solut_hit_00000770.h5 \
+  --mesh /scratch/coop/theret/HIT_LES_FORCED/MESH/mesh.mesh.h5 \
+  --case-file "$REPO/cases/HIT_LES_FORCED.yaml" \
+  --case-id HIT_LES_FORCED \
+  --mesh-id HIT_LES_FORCED \
+  --connectivity-indexing one
+```
+
+`PYTHON` must point to the same validated Python environment used for the repository checks. It is left explicit rather than silently falling back to the container system Python.
 
 The benchmark records available Slurm variables and `CUDA_VISIBLE_DEVICES` in its JSON output.
 
@@ -212,6 +273,7 @@ M7 introduces or inherits these assumptions:
 - model-facing task tensors, coordinates, sparse index tensors, and node weights are moved to the selected device, while redundant raw source fields remain host-resident;
 - the real HIT benchmark uses the established one-based raw connectivity interpretation;
 - periodic cross-boundary graph edges remain absent from the present real-HIT edge count;
+- Singularity paths must resolve in the container namespace; the established Calypso wrapper binds `/scratch` and uses `/scratch/...` paths inside the image;
 - the one-sample real-data scaler is a performance fixture, not a scientifically reusable training scaler.
 
 ## 9. Handled edge cases
@@ -227,6 +289,8 @@ The benchmark utilities explicitly handle:
 - either float32 or float64 baseline execution;
 - real AVBP connectivity construction before packing;
 - rejection of `TARGET_VALIDATED` on CPU or a dirty/unknown git worktree.
+
+Container filesystem visibility itself is not auto-detected by the benchmark. Missing binds therefore surface as normal file-not-found errors before a result is produced.
 
 ## 10. Deferred or unsupported cases
 
@@ -254,6 +318,7 @@ The benchmark fails rather than silently adapting when:
 - `TARGET_VALIDATED` is requested from a dirty or unverifiable git worktree;
 - workload counts are invalid;
 - the AVBP case/mesh/snapshot contract fails;
+- a required host path is not visible inside the Singularity container;
 - physical nondimensionalization requirements are not satisfied;
 - a standardizer cannot be fitted;
 - the model/task dtype contract is violated;
@@ -268,6 +333,8 @@ Explicit synchronization makes latency measurement more reliable but prevents ov
 The current per-sample M6 loss and finite-value validation use transparent Python/reduction logic and may be slower than future fused implementations. M7 measures that cost rather than optimizing it before evidence exists.
 
 `NodeLinearBaseline` is intentionally compute-light. Consequently Python dispatch, standardization, loss reduction, and optimizer overhead can dominate its training latency. That result should not be extrapolated to a sparse transformer.
+
+Using the existing `/scratch` container binding avoids extra mount configuration and matches the established Calypso workflow, at the cost of container-visible path strings differing from the `/gpfs-calypso/scratch/...` paths commonly shown on the login node.
 
 ## 13. M7 completion gate
 
