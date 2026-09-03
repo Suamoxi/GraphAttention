@@ -227,6 +227,8 @@ def _concatenate_fields(
         matrix = _as_channel_matrix(value, spec)
         if not matrix.is_floating_point():
             raise TypeError(f"task {role} field '{name}' must use a floating-point dtype")
+        if not torch.isfinite(matrix).all():
+            raise ValueError(f"task {role} field '{name}' contains NaN or Inf values")
         if dtype is None:
             dtype = matrix.dtype
             device = matrix.device
