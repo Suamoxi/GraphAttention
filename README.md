@@ -46,6 +46,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 - [`docs/M3_2_AVBP_HDF5.md`](docs/M3_2_AVBP_HDF5.md): named-field AVBP/HDF5 reading and native hexahedral connectivity handling.
 - [`docs/M3_3_NONDIMENSIONALIZATION.md`](docs/M3_3_NONDIMENSIONALIZATION.md): M3.3 reference-state and physical nondimensionalization directive.
 - [`docs/M4_PACKED_BATCHING.md`](docs/M4_PACKED_BATCHING.md): budget-aware disconnected variable-graph batching contract and implementation scope.
+- [`docs/M5_TASK_BASELINE.md`](docs/M5_TASK_BASELINE.md): explicit regression-task, split-manifest, conditioning, and node-linear baseline scope.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): software boundaries, runtime representation, and dependency direction.
 - [`docs/SCIENTIFIC_SPEC.md`](docs/SCIENTIFIC_SPEC.md): scientific scope, graph assumptions, field semantics, and required invariances.
 - [`docs/NUMERICAL_CONVENTIONS.md`](docs/NUMERICAL_CONVENTIONS.md): nondimensionalization, normalization, loss weighting, precision, and batching conventions.
@@ -56,7 +57,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso with 81 passing tests plus successful Ruff and configuration checks; it provides budget-aware packed disconnected graphs with explicit `ptr`, `batch_index`, edge offsets, named node-field packing, and separate node/edge computational budgets. Statistical train-set scaling, task semantics, optimizer/DDP batching, and sparse attention remain later work.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso with 81 passing tests plus successful Ruff and configuration checks. M5 now implements explicit deterministic node-regression task semantics, per-graph physical preprocessing composition, inference-available regime conditioning, an explicit train/validation/test split manifest, and a node-local affine baseline; target-environment validation is pending. Train-only statistical scaling still requires an explicit variable-mesh weighting convention before meaningful M6 optimization work.
 
 Current smoke checks:
 

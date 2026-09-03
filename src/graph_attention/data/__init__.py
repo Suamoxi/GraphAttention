@@ -17,6 +17,7 @@ from .contracts import (
     Sample,
 )
 from .nondimensionalization import ConvectiveNondimensionalizer
+from .splits import SplitManifest, SplitName
 from .synthetic import SyntheticMeshDataset
 
 __all__ = [
@@ -38,6 +39,8 @@ __all__ = [
     "RegimeParameter",
     "RegimeParameters",
     "Sample",
+    "SplitManifest",
+    "SplitName",
     "SyntheticMeshDataset",
     "load_case_definition",
     "load_case_definitions",

@@ -1,2 +1,7 @@
-name: regression
-# The task interface is introduced in M4, not M1.
+_target_: graph_attention.tasks.NodeRegressionTask
+input_fields:
+  - momentum
+target_fields:
+  - rho
+conditioning_parameters: []
+physical_nondimensionalization: false
