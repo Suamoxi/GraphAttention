@@ -44,12 +44,26 @@ def test_node_linear_baseline_matches_packed_and_independent_execution() -> None
 
 def test_node_linear_baseline_is_node_renumbering_equivariant() -> None:
     torch.manual_seed(5)
-    model = NodeLinearBaseline(in_channels=2, out_channels=3)
+    model = NodeLinearBaseline(
+        in_channels=2,
+        out_channels=3,
+        conditioning_channels=1,
+    )
     inputs = torch.randn(6, 2)
+    batch_index = torch.tensor([0, 0, 1, 1, 1, 0], dtype=torch.long)
+    conditioning = torch.tensor([[0.1], [0.2]])
     permutation = torch.tensor([3, 0, 5, 1, 4, 2])
 
-    original = model(inputs)
-    permuted = model(inputs[permutation])
+    original = model(
+        inputs,
+        batch_index=batch_index,
+        conditioning=conditioning,
+    )
+    permuted = model(
+        inputs[permutation],
+        batch_index=batch_index[permutation],
+        conditioning=conditioning,
+    )
 
     torch.testing.assert_close(permuted, original[permutation])
 
