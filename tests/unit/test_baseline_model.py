@@ -102,7 +102,10 @@ def test_node_linear_baseline_rejects_incompatible_inputs_or_conditioning() -> N
     [
         ({"in_channels": 0, "out_channels": 1}, ValueError),
         ({"in_channels": 1, "out_channels": 0}, ValueError),
-        ({"in_channels": 1, "out_channels": 1, "conditioning_channels": -1}, ValueError),
+        (
+            {"in_channels": 1, "out_channels": 1, "conditioning_channels": -1},
+            ValueError,
+        ),
         ({"in_channels": True, "out_channels": 1}, TypeError),
     ],
 )
