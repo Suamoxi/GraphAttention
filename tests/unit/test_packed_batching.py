@@ -6,6 +6,10 @@ import torch
 from graph_attention.data import (
     Mesh,
     MicrobatchBudget,
+    ReferenceScale,
+    ReferenceScales,
+    RegimeParameter,
+    RegimeParameters,
     Sample,
     SyntheticMeshDataset,
     pack_samples,
@@ -88,6 +92,45 @@ def test_pack_samples_supports_explicit_geometry_only_batch() -> None:
     assert batch.ptr.tolist() == [0, 4, 9]
 
 
+def test_pack_samples_preserves_case_reference_and_regime_objects() -> None:
+    reference_scales = ReferenceScales(
+        (
+            ReferenceScale(
+                name="L_ref",
+                value=2.0,
+                definition="test_length",
+                units="m",
+                provenance="unit test",
+                inference_available=True,
+            ),
+        ),
+        scheme="test_reference",
+    )
+    regime_parameters = RegimeParameters(
+        (
+            RegimeParameter(
+                name="Re",
+                value=42.0,
+                definition="test_reynolds_number",
+                provenance="unit test",
+                inference_available=True,
+            ),
+        )
+    )
+    sample = replace(
+        SyntheticMeshDataset(num_samples=1)[0],
+        case_id="case-a",
+        reference_scales=reference_scales,
+        regime_parameters=regime_parameters,
+    )
+
+    batch = pack_samples([sample], node_field_names=("rho",))
+
+    assert batch.case_ids == ("case-a",)
+    assert batch.reference_scales[0] is reference_scales
+    assert batch.regime_parameters[0] is regime_parameters
+
+
 def test_pack_samples_supports_graph_with_zero_edges() -> None:
     sample = Sample(
         sample_id="isolated",
@@ -103,6 +146,7 @@ def test_pack_samples_supports_graph_with_zero_edges() -> None:
     assert batch.edge_index.shape == (2, 0)
     assert batch.ptr.tolist() == [0, 3]
     assert batch.batch_index.tolist() == [0, 0, 0]
+    assert batch.node_weights is None
 
 
 def test_partition_samples_by_budget_preserves_selection_order() -> None:
