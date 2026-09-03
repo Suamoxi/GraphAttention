@@ -55,6 +55,14 @@ class NodeLinearBaseline(nn.Module):
             raise ValueError(
                 f"inputs have {inputs.shape[1]} channels, expected {self.in_channels}"
             )
+        if inputs.dtype != self.linear.weight.dtype:
+            raise TypeError(
+                f"inputs use dtype {inputs.dtype}, expected model dtype {self.linear.weight.dtype}"
+            )
+        if inputs.device != self.linear.weight.device:
+            raise ValueError(
+                f"inputs are on {inputs.device}, expected model device {self.linear.weight.device}"
+            )
 
         if self.conditioning_channels == 0:
             if conditioning is not None:
