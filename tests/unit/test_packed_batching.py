@@ -36,7 +36,10 @@ def test_pack_samples_builds_disconnected_variable_graph_batch() -> None:
         batch.batch_index,
         torch.tensor([0] * 4 + [1] * 5 + [2] * 6),
     )
-    torch.testing.assert_close(batch.coords, torch.cat([sample.mesh.coords for sample in samples]))
+    torch.testing.assert_close(
+        batch.coords,
+        torch.cat([sample.mesh.coords for sample in samples]),
+    )
     torch.testing.assert_close(
         batch.fields["rho"],
         torch.cat([sample.fields["rho"] for sample in samples]),
@@ -83,6 +86,23 @@ def test_pack_samples_supports_explicit_geometry_only_batch() -> None:
     assert batch.fields == {}
     assert batch.num_nodes == 9
     assert batch.ptr.tolist() == [0, 4, 9]
+
+
+def test_pack_samples_supports_graph_with_zero_edges() -> None:
+    sample = Sample(
+        sample_id="isolated",
+        mesh=Mesh(
+            coords=torch.tensor([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+            edge_index=torch.empty((2, 0), dtype=torch.long),
+        ),
+        fields={"rho": torch.tensor([1.0, 1.1, 0.9])},
+    )
+
+    batch = pack_samples([sample], node_field_names=("rho",))
+
+    assert batch.edge_index.shape == (2, 0)
+    assert batch.ptr.tolist() == [0, 3]
+    assert batch.batch_index.tolist() == [0, 0, 0]
 
 
 def test_partition_samples_by_budget_preserves_selection_order() -> None:
@@ -149,13 +169,15 @@ def test_partition_samples_by_budget_accepts_empty_selection() -> None:
     assert partition_samples_by_budget([], budget) == ()
 
 
-def test_pack_samples_rejects_unknown_or_duplicate_node_fields() -> None:
+def test_pack_samples_rejects_unknown_duplicate_or_string_node_fields() -> None:
     sample = SyntheticMeshDataset(num_samples=1)[0]
 
     with pytest.raises(KeyError, match="temperature"):
         pack_samples([sample], node_field_names=("temperature",))
     with pytest.raises(ValueError, match="duplicates"):
         pack_samples([sample], node_field_names=("rho", "rho"))
+    with pytest.raises(TypeError, match="not one string"):
+        pack_samples([sample], node_field_names="rho")
 
 
 def test_pack_samples_rejects_inconsistent_node_field_shape() -> None:
@@ -180,7 +202,10 @@ def test_pack_samples_rejects_mixed_node_weight_availability() -> None:
     second = dataset[1]
     second = replace(second, mesh=replace(second.mesh, node_weights=None))
 
-    with pytest.raises(ValueError, match="cannot mix samples with and without node_weights"):
+    with pytest.raises(
+        ValueError,
+        match="cannot mix samples with and without node_weights",
+    ):
         pack_samples([first, second], node_field_names=("rho",))
 
 
