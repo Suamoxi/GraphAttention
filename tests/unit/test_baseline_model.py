@@ -95,6 +95,8 @@ def test_node_linear_baseline_rejects_incompatible_inputs_or_conditioning() -> N
     model = NodeLinearBaseline(in_channels=2, out_channels=1)
     with pytest.raises(ValueError, match="expected 2"):
         model(torch.randn(3, 1))
+    with pytest.raises(TypeError, match="expected model dtype"):
+        model(torch.randn(3, 2, dtype=torch.float64))
 
     conditioned = NodeLinearBaseline(
         in_channels=2,
