@@ -133,6 +133,8 @@ def pack_samples(
     selected = tuple(samples)
     if not selected:
         raise ValueError("cannot pack an empty sample collection")
+    if isinstance(node_field_names, str):
+        raise TypeError("node_field_names must be an iterable of names, not one string")
 
     field_names = tuple(node_field_names)
     if any(not isinstance(name, str) or not name.strip() for name in field_names):
@@ -175,17 +177,20 @@ def pack_samples(
         if mesh.spatial_dim != spatial_dim:
             raise ValueError(
                 "all packed samples must share one coordinate dimension; "
-                f"sample '{sample.sample_id}' has D={mesh.spatial_dim}, expected D={spatial_dim}"
+                f"sample '{sample.sample_id}' has D={mesh.spatial_dim}, "
+                f"expected D={spatial_dim}"
             )
         if mesh.coords.dtype != coords_dtype:
             raise TypeError(
                 "all packed coordinate tensors must share one dtype; "
-                f"sample '{sample.sample_id}' has {mesh.coords.dtype}, expected {coords_dtype}"
+                f"sample '{sample.sample_id}' has {mesh.coords.dtype}, "
+                f"expected {coords_dtype}"
             )
         if mesh.coords.device != device:
             raise ValueError(
                 "all packed tensors must share one device; "
-                f"sample '{sample.sample_id}' coords are on {mesh.coords.device}, expected {device}"
+                f"sample '{sample.sample_id}' coords are on {mesh.coords.device}, "
+                f"expected {device}"
             )
         if mesh.edge_index.device != device:
             raise ValueError(
@@ -221,7 +226,8 @@ def pack_samples(
             if value.dtype != field_dtypes[name]:
                 raise TypeError(
                     f"node field '{name}' must have one dtype across the packed batch; "
-                    f"sample '{sample.sample_id}' has {value.dtype}, expected {field_dtypes[name]}"
+                    f"sample '{sample.sample_id}' has {value.dtype}, "
+                    f"expected {field_dtypes[name]}"
                 )
             if value.device != device:
                 raise ValueError(
@@ -289,7 +295,9 @@ def _require_node_field(sample: Sample, name: str) -> torch.Tensor:
     try:
         value = sample.fields[name]
     except KeyError as exc:
-        raise KeyError(f"sample '{sample.sample_id}' does not contain node field '{name}'") from exc
+        raise KeyError(
+            f"sample '{sample.sample_id}' does not contain node field '{name}'"
+        ) from exc
     if value.ndim == 0 or value.shape[0] != sample.mesh.num_nodes:
         raise ValueError(
             f"selected node field '{name}' in sample '{sample.sample_id}' must have leading "
