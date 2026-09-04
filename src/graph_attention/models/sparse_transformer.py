@@ -25,9 +25,19 @@ class SparseMultiheadAttention(nn.Module):
         self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim, bias=False)
 
     def forward(self, inputs: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        _validate_hidden_inputs(inputs, expected_channels=self.hidden_dim)
+        _validate_hidden_inputs(
+            inputs,
+            expected_channels=self.hidden_dim,
+            parameter=self.qkv.weight,
+        )
         _validate_edge_index(edge_index, num_nodes=inputs.shape[0], device=inputs.device)
+        return self._forward_validated(inputs, edge_index)
 
+    def _forward_validated(
+        self,
+        inputs: torch.Tensor,
+        edge_index: torch.Tensor,
+    ) -> torch.Tensor:
         num_nodes = inputs.shape[0]
         if edge_index.shape[1] == 0:
             return torch.zeros_like(inputs)
@@ -97,7 +107,7 @@ class SparseGraphTransformerBlock(nn.Module):
         )
 
     def forward(self, inputs: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        hidden = inputs + self.attention(self.norm1(inputs), edge_index)
+        hidden = inputs + self.attention._forward_validated(self.norm1(inputs), edge_index)
         return hidden + self.mlp(self.norm2(hidden))
 
 
@@ -225,11 +235,20 @@ def _validate_model_inputs(
         raise ValueError(f"inputs are on {inputs.device}, expected model device {parameter.device}")
 
 
-def _validate_hidden_inputs(inputs: torch.Tensor, *, expected_channels: int) -> None:
+def _validate_hidden_inputs(
+    inputs: torch.Tensor,
+    *,
+    expected_channels: int,
+    parameter: torch.Tensor,
+) -> None:
     if inputs.ndim != 2 or inputs.shape[1] != expected_channels:
         raise ValueError(f"inputs must have shape [N, {expected_channels}]")
     if not inputs.is_floating_point():
         raise TypeError("inputs must use a floating-point dtype")
+    if inputs.dtype != parameter.dtype:
+        raise TypeError(f"inputs use dtype {inputs.dtype}, expected model dtype {parameter.dtype}")
+    if inputs.device != parameter.device:
+        raise ValueError(f"inputs are on {inputs.device}, expected model device {parameter.device}")
 
 
 def _validate_edge_index(
