@@ -10,7 +10,7 @@ M6 correctness is considered target-validated on Calypso from the reported gate:
 - Ruff checks passed after the formatter-only follow-up;
 - two-rank CPU/Gloo DDP validation matched the single-process global reference with rank sample counts 3 and 2 and unequal microbatch counts.
 
-M7 is **not complete** until the benchmark executable itself has passed the software gate and target single-GPU measurements have been collected on Calypso.
+M7 is **complete and target-validated** for its frozen single-GPU framework/null-baseline scope. On 2026-09-04 the software gate passed and both required `TARGET_VALIDATED` workloads were measured in Slurm job `400132` on one NVIDIA GH200 480GB GPU on Calypso. The exact reference measurements are recorded in §13.
 
 ## 1. Goal
 
@@ -294,7 +294,7 @@ Container filesystem visibility itself is not auto-detected by the benchmark. Mi
 
 ## 10. Deferred or unsupported cases
 
-M7 does not yet establish:
+M7 does not establish:
 
 - graph-attention or message-passing kernel performance;
 - independent edge-density scaling;
@@ -336,20 +336,103 @@ The current per-sample M6 loss and finite-value validation use transparent Pytho
 
 Using the existing `/scratch` container binding avoids extra mount configuration and matches the established Calypso workflow, at the cost of container-visible path strings differing from the `/gpfs-calypso/scratch/...` paths commonly shown on the login node.
 
-## 13. M7 completion gate
+## 13. Target-validated reference results
 
-Before M7 is considered complete:
+### 13.1 Environment and provenance
 
-```bash
-pytest
-ruff check .
-ruff format --check .
-python scripts/inspect_config.py
+The completed M7 target run used:
+
+```text
+date:                 2026-09-04
+Slurm job:            400132
+node:                 calypso-grace03
+GPU:                  NVIDIA GH200 480GB
+compute capability:   9.0
+PyTorch-visible VRAM: 102005473280 bytes
+Python:               3.12.3
+PyTorch:              2.7.0a0+7c8ec84dab.nv25.03
+CUDA:                 12.8
+dtype:                float32
+git SHA:              79b156e27842618a54a0be18a81ea76c994ac140
+git branch:           main
+git dirty:            false
+warmup:               10
+repetitions:          50
 ```
 
-must pass on Calypso, followed by at least:
+The same Slurm allocation and software environment were used for both required workloads. The repository test suite passed in this Singularity runtime, and `ruff check .` plus `ruff format --check .` passed for the validated source state.
 
-- one synthetic single-GPU `TARGET_VALIDATED` run;
-- one real HIT single-GPU `TARGET_VALIDATED` run.
+### 13.2 Synthetic S3 reference
 
-The persisted JSON outputs should then be reviewed before any baseline performance statement is added to traceability.
+The synthetic S3 workload contains four non-physical graphs of 8192 nodes each:
+
+```text
+physical graphs: 4
+nodes:           32768
+edges:           65530
+input channels:  momentum.x, momentum.y, momentum.z
+target channel:  rho.value
+model parameters: 4
+```
+
+Measured reference:
+
+| Region | Median latency | Mean ± population std | Node throughput | Incremental CUDA peak allocation |
+|---|---:|---:|---:|---:|
+| host pack + task prepare | 2.0803 ms | 2.0816 ± 0.0788 ms | 15.752 Mnodes/s | n/a |
+| forward | 0.0760 ms | 0.0766 ± 0.0056 ms | 431.160 Mnodes/s | 131072 B |
+| training iteration | 2.4206 ms | 2.4156 ± 0.0430 ms | 13.537 Mnodes/s | 1312256 B |
+
+### 13.3 Real `HIT_LES_FORCED` reference
+
+The real HIT workload uses the established snapshot/mesh pair and current hex-derived directed edge representation:
+
+```text
+physical graphs: 1
+nodes:           35937
+edges:           209088
+input channels:  rho.value, rhou.x, rhov.y, rhow.z, rhoE.value
+target channels: rho.value, rhou.x, rhov.y, rhow.z, rhoE.value
+model parameters: 30
+periodic cross-boundary edges: not augmented (M3.2 deferred scope)
+```
+
+Measured reference:
+
+| Region | Median latency | Mean ± population std | Node throughput | Incremental CUDA peak allocation |
+|---|---:|---:|---:|---:|
+| host pack + task prepare | 19.0759 ms | 19.0874 ± 0.2030 ms | 1.884 Mnodes/s | n/a |
+| forward | 0.0549 ms | 0.0558 ± 0.0039 ms | 654.828 Mnodes/s | 1767424 B |
+| training iteration | 1.5733 ms | 1.5766 ± 0.0215 ms | 22.841 Mnodes/s | 5752320 B |
+
+For the real HIT training measurement, PyTorch reported 72,617,984 B allocated before the measured region, 78,370,304 B peak allocated, and 100,663,296 B peak reserved.
+
+### 13.4 Interpretation boundary
+
+These values establish a reproducible framework/null-model reference on the GH200 target environment. They do **not** establish graph-attention throughput or edge-scaling behavior because `NodeLinearBaseline` consumes neither coordinates nor `edge_index`.
+
+The real HIT training iteration being faster than synthetic S3 must not be interpreted as HIT being intrinsically cheaper. The null model is too small to saturate the GPU, and the reference loss performs per-physical-graph reductions. S3 contains four graphs while the HIT benchmark contains one, so graph-count-dependent framework overhead is visible at this scale.
+
+Forward times are only tens of microseconds. CUDA synchronization, launch/dispatch overhead, and clock state are therefore a material part of the measurement; the difference between S3 and HIT forward latency is not an architecture-level result.
+
+The approximately 9.2x higher real-HIT host preparation latency reflects the complete measured host preparation path for a richer five-field physically nondimensionalized task and a larger packed topology. HDF5 reading and one-time hex-to-edge construction remain outside that repeated timing region.
+
+The small CUDA memory footprint is also a property of the affine null model. The real HIT edge tensor is present in the prepared batch but is not consumed by the model. M8 must establish its own memory evidence once sparse graph attention actually operates on edges.
+
+## 14. Completed M7 validation gate
+
+The M7 completion gate is satisfied:
+
+```text
+software gate:
+  pytest                       PASS
+  ruff check .                 PASS
+  ruff format --check .        PASS
+  python scripts/inspect_config.py  PASS
+
+target benchmark gate:
+  synthetic S3, single GH200   TARGET_VALIDATED
+  real HIT, single GH200       TARGET_VALIDATED
+```
+
+M7 is therefore complete for the frozen single-GPU null-baseline scope. M8 may use these measurements as the reference floor, but every graph-aware model must be benchmarked separately before receiving any measured performance claim.
