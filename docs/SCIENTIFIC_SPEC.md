@@ -465,3 +465,56 @@ $$
 Computational microbatch composition is not part of this scientific objective. Splitting the same selected physical samples into different node/edge-budget microbatches must preserve the optimizer gradient within numerical tolerance. The same global sample objective must also be preserved across DDP ranks with unequal sample counts.
 
 This equal-sample objective is the initial project convention, not a universal CFD loss prescription. Future tasks may require physical sample weights, uncertainty weighting, surface/volume-specific quadrature, or different channel metrics; each such change is a separate scientifically meaningful task definition.
+
+## 18. M8 sparse one-hop transformer attention
+
+M8 is a project adaptation of Transformer-style scaled dot-product attention to explicitly supplied sparse graph neighborhoods. The score mechanism follows Vaswani et al., *Attention Is All You Need* (NeurIPS 2017, arXiv:1706.03762). Neighborhood-restricted attention is consistent with established graph-attention practice; Veličković et al., *Graph Attention Networks* (ICLR 2018, arXiv:1710.10903) provides relevant graph-neighborhood context, although M8 uses scaled dot-product rather than additive GAT scoring.
+
+For a supplied directed edge `j -> i`, head `h` uses
+
+$$
+q_i^{(h)}=W_Q^{(h)}h_i,
+\qquad
+k_j^{(h)}=W_K^{(h)}h_j,
+\qquad
+v_j^{(h)}=W_V^{(h)}h_j,
+$$
+
+with score
+
+$$
+s_{ij}^{(h)}=
+\frac{q_i^{(h)\mathsf T}k_j^{(h)}}{\sqrt{d_h}}.
+$$
+
+Normalization is performed only over supplied incoming edges for target node `i`:
+
+$$
+\alpha_{ij}^{(h)}=
+\frac{\exp(s_{ij}^{(h)})}
+{\sum_{\ell:(\ell\rightarrow i)\in E}\exp(s_{i\ell}^{(h)})},
+$$
+
+and the head message is
+
+$$
+m_i^{(h)}=
+\sum_{j:(j\rightarrow i)\in E}
+\alpha_{ij}^{(h)}v_j^{(h)}.
+$$
+
+The block uses pre-normalization residual updates:
+
+$$
+\tilde h=h+\operatorname{SparseMHA}(\operatorname{LN}(h),E),
+$$
+
+$$
+h'=\tilde h+\operatorname{MLP}(\operatorname{LN}(\tilde h)).
+$$
+
+M8 consumes `edge_index` as supplied. It does not add self-loops, symmetrize edges, deduplicate edges, create cross-sample edges, or use coordinates/geometric edge features. A node with no incoming attention edges receives a zero sparse-attention message; its local state remains available through the residual path. Explicit self-loops, if supplied by a future geometry transform, are treated as ordinary edges.
+
+The absence of geometry in M8 is intentional. M8 establishes the scientific and computational effect of one-hop sparse attention in isolation. Relative position, distance, mesh scale, directional information, or other geometric attention terms are separate M9 scientific changes and must not be attributed to M8.
+
+The M8 model must remain equivariant to consistent node renumbering and numerically insensitive to pure edge-list reordering within the tolerance expected from sparse floating-point reductions. Packed disconnected execution must agree with independent-graph execution when the supplied topology contains no cross-sample edges.
