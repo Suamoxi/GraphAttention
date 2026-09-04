@@ -279,3 +279,29 @@ $$
 This compensates for PyTorch DDP's gradient averaging and yields the gradient of the global equal-sample mean even when ranks contain different sample counts. Rank-local computational microbatches use `DDP.no_sync()` except for the last local backward so unequal microbatch counts do not redefine the objective.
 
 Under autocast, prediction and target dtypes are explicitly promoted for loss arithmetic. CUDA FP16 requires an explicit `GradScaler` in the M6 reference step. The default repository precision remains `32-true`; CUDA/NCCL AMP behavior is not yet a target-validated performance claim.
+
+## 19. M8 sparse-attention numerical reductions
+
+M8 interprets `edge_index[0]` as source nodes and `edge_index[1]` as target nodes. Attention normalization is performed independently for every target node and head over the supplied incoming edges.
+
+The sparse softmax uses the standard stabilized form:
+
+$$
+\alpha_e=
+\frac{\exp(s_e-m_{t(e)})}
+{\sum_{e':t(e')=t(e)}\exp(s_{e'}-m_{t(e)})},
+$$
+
+where
+
+$$
+m_i=\max_{e:t(e)=i}s_e.
+$$
+
+For FP32/FP64 execution, score and normalization reductions use the active model dtype. For projected FP16 or BF16 query/key tensors, M8 promotes the edge score multiplication, score summation, exponentiation, max reduction, and denominator accumulation to FP32. Normalized weights are then cast to the value dtype before message multiplication and target accumulation.
+
+This policy reduces overflow/underflow risk in the softmax normalization but creates FP32 temporary score/normalizer storage under low-precision execution. CUDA BF16/FP16 accuracy, throughput, and memory remain unvalidated until target measurements are collected.
+
+Sparse target accumulation uses `scatter_add_` / `index_add_`. Mathematical output is independent of edge-list ordering, but floating-point summation order may differ across reordered edge lists or GPU atomic scheduling. Edge-order and node-renumbering tests therefore use strict numerical tolerances rather than requiring bitwise equality.
+
+Nodes with no incoming edges have a zero attention message before the residual branch. A globally empty edge list returns zero from the sparse attention sublayer without evaluating a softmax over an empty set.

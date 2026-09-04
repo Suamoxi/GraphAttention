@@ -49,6 +49,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 - [`docs/M5_TASK_BASELINE.md`](docs/M5_TASK_BASELINE.md): explicit regression-task, split-manifest, conditioning, and node-linear baseline scope.
 - [`docs/M6_TRAINING_CORRECTNESS.md`](docs/M6_TRAINING_CORRECTNESS.md): sample-balanced train scaling, per-sample losses, optimizer accumulation, DDP weighting, and autocast correctness scope.
 - [`docs/M7_BENCHMARKS.md`](docs/M7_BENCHMARKS.md): reproducible framework/null-baseline performance measurements and target-validation gate.
+- [`docs/M8_SPARSE_TRANSFORMER.md`](docs/M8_SPARSE_TRANSFORMER.md): first true sparse one-hop transformer, scientific equations, validation, and benchmark gate.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): software boundaries, runtime representation, and dependency direction.
 - [`docs/SCIENTIFIC_SPEC.md`](docs/SCIENTIFIC_SPEC.md): scientific scope, graph assumptions, field semantics, and required invariances.
 - [`docs/NUMERICAL_CONVENTIONS.md`](docs/NUMERICAL_CONVENTIONS.md): nondimensionalization, normalization, loss weighting, precision, and batching conventions.
@@ -59,7 +60,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso. M5 is complete and target-validated on Calypso. M6 is complete and target-validated on Calypso with 122 passing tests plus the two-rank CPU/Gloo global-objective validation. M7 is complete and target-validated on a single NVIDIA GH200 on Calypso using the synthetic S3 workload and the real `HIT_LES_FORCED` mesh; the recorded measurements establish framework/null-baseline reference evidence only, not sparse graph-attention performance.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso. M5 is complete and target-validated on Calypso. M6 is complete and target-validated on Calypso with 122 passing tests plus the two-rank CPU/Gloo global-objective validation. M7 is complete and target-validated on a single NVIDIA GH200 on Calypso using the synthetic S3 workload and the real `HIT_LES_FORCED` mesh. M8 now implements the first graph-aware sparse one-hop Transformer using the supplied directed `edge_index`; scientific/software validation and target performance measurements are pending, so M8 performance evidence remains `ANALYTICAL`.
 
 Current smoke checks:
 
