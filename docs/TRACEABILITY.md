@@ -46,7 +46,7 @@ A new or unvalidated research idea. Record the hypothesis, intended mechanism, r
 
 An empirical result obtained from a specified experiment or benchmark. Record enough context to reproduce it.
 
-## 3. M0-M7 traceability table
+## 3. M0-M8 traceability table
 
 | Concept | Type | Specification | Implementation | Validation | Evidence status |
 |---|---|---|---|---|---|
@@ -82,11 +82,14 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Physical nondimensionalization before statistical scaling | Project scientific/numerical convention | `docs/SCIENTIFIC_SPEC.md` §8-12, §17, `docs/NUMERICAL_CONVENTIONS.md` §8-10, §18, `docs/M3_3_NONDIMENSIONALIZATION.md`, `docs/M6_TRAINING_CORRECTNESS.md` | `ConvectiveNondimensionalizer`; `fit_train_standardizers` | M3.3 transform/real-HIT tests + M6 train-only scaling tests | Physical runtime and M6 train-only scaler target-validated on Calypso |
 | Inference-available reference/conditioning quantities only | Project anti-leakage rule | `docs/SCIENTIFIC_SPEC.md` §9-10, `docs/M3_3_NONDIMENSIONALIZATION.md`, `docs/M5_TASK_BASELINE.md` §5 | reference validation in `ConvectiveNondimensionalizer`; conditioning validation in `NodeRegressionTask` | unavailable/snapshot reference tests + M5 unavailable-conditioning test | Physical references target-validated M3.3; conditioning selection target-validated M5 |
 | Explicit resolution descriptor | Project multiresolution requirement | `docs/SCIENTIFIC_SPEC.md` §12 | geometry/preprocessing | resolution metadata tests | Planned |
-| Node-renumbering equivariance | Fundamental graph-model property | `docs/SCIENTIFIC_SPEC.md` §13, `docs/M5_TASK_BASELINE.md` §9 | `NodeLinearBaseline` for first model | `tests/unit/test_baseline_model.py` permutation test | TARGET_VALIDATED for M5 baseline; mandatory separately for every later graph model |
-| Translation/rotation/etc. claims require explicit proof/test | Project scientific rule | `docs/SCIENTIFIC_SPEC.md` §14 | model-specific | property-specific tests | Per model |
-| Data/Geometry/Task/Model/Trainer ownership | Project software-science design | `docs/ARCHITECTURE.md` §3 | data contracts/splits, geometry transforms, M4 packing, M5 task/model separation, M6 training primitives, M7 benchmark tooling | review/tests | Frozen M0 / instantiated M1-M7 |
-| Performance evidence levels | Project engineering rule | `docs/BENCHMARK_PROTOCOL.md` | `graph_attention.utils.benchmarking`, `scripts/benchmark_m7.py` | `tests/unit/test_benchmarking.py` + M7 target benchmark gate | TARGET_VALIDATED M7 protocol on single-GPU Calypso GH200 for the recorded synthetic and real-HIT workloads |
-| Framework/null-baseline performance reference | Measured result | `docs/BENCHMARK_PROTOCOL.md`, `docs/M7_BENCHMARKS.md` §13 | `scripts/benchmark_m7.py` | Slurm job `400132`, clean `main` SHA `79b156e27842618a54a0be18a81ea76c994ac140`, NVIDIA GH200 480GB, FP32; synthetic S3 and real HIT | TARGET_VALIDATED 2026-09-04: S3 median forward/training = 0.0760/2.4206 ms; real HIT = 0.0549/1.5733 ms; real-HIT training incremental PyTorch peak allocation = 5,752,320 B; null-model/framework evidence only, graph-attention performance still ANALYTICAL |
+| Node-renumbering equivariance | Fundamental graph-model property | `docs/SCIENTIFIC_SPEC.md` §13, §18, `docs/M5_TASK_BASELINE.md` §9, `docs/M8_SPARSE_TRANSFORMER.md` §9 | `NodeLinearBaseline`, `SparseGraphTransformer` | baseline permutation test + `tests/unit/test_sparse_transformer.py` consistent node/edge permutation test | TARGET_VALIDATED for M5 baseline; M8 implementation validation pending Calypso software gate; mandatory separately for every later graph model |
+| Translation/rotation/etc. claims require explicit proof/test | Project scientific rule | `docs/SCIENTIFIC_SPEC.md` §14 | model-specific | property-specific tests | Per model; M8 makes no geometry invariance claim because it does not consume coordinates |
+| Data/Geometry/Task/Model/Trainer ownership | Project software-science design | `docs/ARCHITECTURE.md` §3 | data contracts/splits, geometry transforms, M4 packing, M5 task/model separation, M6 training primitives, M7 benchmark tooling, M8 sparse model | review/tests | Frozen M0 / instantiated M1-M8 |
+| Performance evidence levels | Project engineering rule | `docs/BENCHMARK_PROTOCOL.md` | `graph_attention.utils.benchmarking`, `scripts/benchmark_m7.py`, `scripts/benchmark_m8.py` | benchmark utility/CLI tests + target benchmark gates | TARGET_VALIDATED M7 protocol; M8 graph-aware performance remains ANALYTICAL until its target runs |
+| Framework/null-baseline performance reference | Measured result | `docs/BENCHMARK_PROTOCOL.md`, `docs/M7_BENCHMARKS.md` §13 | `scripts/benchmark_m7.py` | Slurm job `400132`, clean `main` SHA `79b156e27842618a54a0be18a81ea76c994ac140`, NVIDIA GH200 480GB, FP32; synthetic S3 and real HIT | TARGET_VALIDATED 2026-09-04: S3 median forward/training = 0.0760/2.4206 ms; real HIT = 0.0549/1.5733 ms; real-HIT training incremental PyTorch peak allocation = 5,752,320 B; null-model/framework evidence only |
+| Sparse one-hop scaled dot-product attention on supplied mesh edges | Project adaptation of established scaled dot-product and graph-neighborhood attention | `docs/SCIENTIFIC_SPEC.md` §18, `docs/M8_SPARSE_TRANSFORMER.md` §2-5 | `SparseMultiheadAttention`, `SparseGraphTransformerBlock`, `SparseGraphTransformer` | explicit-neighbor reference, edge-order tolerance, packed-vs-independent, node-renumbering, empty-edge and training-path tests in `tests/unit/test_sparse_transformer.py` | Implemented M8; scientific/software target validation pending; performance evidence ANALYTICAL |
+| Stabilized sparse attention reduction with FP32 score/softmax under BF16/FP16 projections | Project numerical stability policy | `docs/NUMERICAL_CONVENTIONS.md` §19, `docs/M8_SPARSE_TRANSFORMER.md` §8 | `SparseMultiheadAttention` | explicit FP32 reference test + CPU BF16 autocast finite-output smoke in `tests/unit/test_sparse_transformer.py` | Implemented M8; CUDA BF16/FP16 target validation deferred |
+| Sparse-transformer performance reference | Measured-result framework | `docs/BENCHMARK_PROTOCOL.md`, `docs/M8_SPARSE_TRANSFORMER.md` §11 | `scripts/benchmark_m8.py` | CPU CLI smoke + required synthetic S3 and real-HIT single-GPU target runs | ANALYTICAL until M8 Calypso measurements; no target graph-attention latency/memory claim yet |
 
 ## 4. Future model traceability template
 
@@ -108,26 +111,39 @@ Benchmark evidence:
 Known limitations:
 ```
 
-## 5. Example: future sparse attention entry
-
-The following is a template, not yet an implemented claim.
+## 5. M8 sparse-attention genealogy
 
 ```text
-Concept: sparse graph self-attention on mesh edges
-Status: project adaptation / established sparse-attention mechanism
-Reference: TBD at implementation time
-Scientific definition:
-    attention is evaluated only for explicitly supplied sparse edges
+Concept:
+    sparse graph self-attention on supplied one-hop mesh edges
+Status:
+    project adaptation of established scaled dot-product attention and graph-neighborhood attention
+References:
+    Vaswani et al., Attention Is All You Need, NeurIPS 2017, arXiv:1706.03762
+    Veličković et al., Graph Attention Networks, ICLR 2018, arXiv:1710.10903
+Project-specific definition:
+    Transformer-style multi-head scaled dot-product scores are evaluated only on supplied directed edges;
+    this is not the additive GAT scoring equation.
+Repository modification:
+    no implicit self-loops, topology augmentation, or geometric attention terms are added in M8.
 Implementation path:
-    TBD
-Reference implementation:
-    dense masked attention on small graphs
+    src/graph_attention/models/sparse_transformer.py
+Configuration:
+    configs/model/sparse_transformer.yaml
 Scientific tests:
-    - sparse output matches dense masked reference
-    - node-renumbering equivariance
-    - packed-vs-independent graph equivalence
-Performance evidence:
-    ANALYTICAL until measured
+    sparse versus explicit-neighbor reference
+    edge-list reordering tolerance
+    node-renumbering equivariance
+    disconnected packed versus independent execution
+Numerical tests:
+    empty-edge finite behavior
+    CPU BF16 autocast smoke
+    invalid edge/configuration failure behavior
+Benchmark evidence:
+    ANALYTICAL until scripts/benchmark_m8.py is target-validated on Calypso
+Known limitations:
+    no coordinate/edge geometry, no periodic cross-boundary HIT augmentation, no fused sparse kernel,
+    no CUDA low-precision or multi-node performance evidence yet
 ```
 
 ## 6. Change procedure
