@@ -39,9 +39,6 @@ class SparseMultiheadAttention(nn.Module):
         edge_index: torch.Tensor,
     ) -> torch.Tensor:
         num_nodes = inputs.shape[0]
-        if edge_index.shape[1] == 0:
-            return torch.zeros_like(inputs)
-
         qkv = self.qkv(inputs).reshape(
             num_nodes,
             3,
@@ -49,6 +46,11 @@ class SparseMultiheadAttention(nn.Module):
             self.head_dim,
         )
         query, key, value = qkv.unbind(dim=1)
+
+        if edge_index.shape[1] == 0:
+            zero_message = query.reshape(num_nodes, self.hidden_dim) * 0.0
+            return self.out_proj(zero_message)
+
         source = edge_index[0]
         target = edge_index[1]
 
