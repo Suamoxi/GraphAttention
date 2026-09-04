@@ -44,6 +44,7 @@ class NodeLinearBaseline(nn.Module):
         self,
         inputs: torch.Tensor,
         *,
+        edge_index: torch.Tensor | None = None,
         batch_index: torch.Tensor | None = None,
         conditioning: torch.Tensor | None = None,
     ) -> torch.Tensor:
