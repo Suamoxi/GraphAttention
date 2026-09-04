@@ -81,6 +81,19 @@ def test_sparse_attention_is_invariant_to_edge_list_order() -> None:
     torch.testing.assert_close(reordered, reference, rtol=1e-5, atol=1e-6)
 
 
+def test_sparse_attention_supports_cpu_bfloat16_autocast() -> None:
+    torch.manual_seed(6)
+    attention = SparseMultiheadAttention(hidden_dim=16, num_heads=4)
+    inputs = torch.randn(8, 16)
+    edge_index = _directed_chain(8)
+
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        output = attention(inputs, edge_index)
+
+    assert output.shape == inputs.shape
+    assert torch.isfinite(output).all()
+
+
 def test_sparse_transformer_matches_packed_and_independent_execution() -> None:
     dataset = SyntheticMeshDataset(num_samples=3, spatial_dim=2, seed=31)
     task = NodeRegressionTask(input_fields=("momentum",), target_fields=("rho",))
