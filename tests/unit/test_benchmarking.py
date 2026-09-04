@@ -83,3 +83,54 @@ def test_m7_benchmark_script_writes_cpu_synthetic_result(tmp_path: Path) -> None
     assert payload["workload"]["num_nodes"] == 8
     assert payload["cuda_device"] is None
     assert payload["measurements"]["training_iteration"]["timing"]["repetitions"] == 1
+
+
+def test_m8_benchmark_script_writes_cpu_sparse_result(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    output = tmp_path / "m8.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "scripts" / "benchmark_m8.py"),
+            "--device",
+            "cpu",
+            "--dtype",
+            "float32",
+            "--warmup",
+            "0",
+            "--repetitions",
+            "1",
+            "--hidden-dim",
+            "16",
+            "--num-heads",
+            "4",
+            "--num-layers",
+            "1",
+            "--mlp-ratio",
+            "2",
+            "--output",
+            str(output),
+            "synthetic",
+            "--graphs",
+            "2",
+            "--nodes-per-graph",
+            "4",
+            "--spatial-dim",
+            "2",
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["benchmark"] == "M8_sparse_graph_transformer"
+    assert payload["evidence"] == "LOCAL_BENCHMARK"
+    assert payload["workload"]["num_graphs"] == 2
+    assert payload["workload"]["num_nodes"] == 8
+    assert payload["execution"]["hidden_dim"] == 16
+    assert payload["execution"]["uses_coordinates"] is False
+    assert payload["cuda_device"] is None
+    assert payload["measurements"]["forward"]["throughput"]["edges_per_second"] is not None
+    assert payload["measurements"]["training_iteration"]["timing"]["repetitions"] == 1
