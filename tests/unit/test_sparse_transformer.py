@@ -187,6 +187,8 @@ def test_sparse_transformer_handles_empty_edges_without_nan() -> None:
 
     assert output.shape == (5, 1)
     assert torch.isfinite(output).all()
+    output.square().mean().backward()
+    assert all(parameter.grad is not None for parameter in model.parameters())
 
 
 def test_sparse_transformer_supports_m6_training_step() -> None:
