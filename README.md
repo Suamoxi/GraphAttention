@@ -59,7 +59,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 
 ## Current status
 
-M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso. M5 is complete and target-validated on Calypso. M6 is complete and target-validated on Calypso with 122 passing tests plus the two-rank CPU/Gloo global-objective validation. M7 now provides the benchmark evidence protocol and the first reproducible host-preparation, forward, training-iteration, throughput, and CUDA-memory benchmark for the null baseline; M7 target performance measurements are pending.
+M0-M2 are complete. M3.1 provides deterministic synthetic variable-mesh samples. M3.2 is complete and has been validated against a real AVBP HIT snapshot/mesh pair on Calypso. M3.3 is complete for its frozen baseline scope and target-validated on the real `HIT_LES_FORCED` case. M4 is complete and target-validated on Calypso. M5 is complete and target-validated on Calypso. M6 is complete and target-validated on Calypso with 122 passing tests plus the two-rank CPU/Gloo global-objective validation. M7 is complete and target-validated on a single NVIDIA GH200 on Calypso using the synthetic S3 workload and the real `HIT_LES_FORCED` mesh; the recorded measurements establish framework/null-baseline reference evidence only, not sparse graph-attention performance.
 
 Current smoke checks:
 
