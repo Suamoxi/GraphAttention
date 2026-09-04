@@ -22,6 +22,7 @@ from benchmark_m7 import (
 )
 from graph_attention.data import SplitManifest
 from graph_attention.models import SparseGraphTransformer
+from graph_attention.tasks import NodeRegressionBatch
 from graph_attention.training import fit_train_standardizers, train_equal_sample_optimizer_step
 from graph_attention.utils.benchmarking import BenchmarkMeasurement, measure_callable
 from graph_attention.utils.provenance import collect_runtime_provenance
@@ -93,25 +94,14 @@ def main() -> None:
     ).to(device=device, dtype=dtype)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.0, weight_decay=0.0)
 
-    scaled_batch = device_standardizers.transform(device_batch)
     model.eval()
-
-    def forward() -> None:
-        with torch.inference_mode():
-            model(
-                scaled_batch.inputs,
-                edge_index=scaled_batch.edge_index,
-                batch_index=scaled_batch.batch_index,
-                conditioning=scaled_batch.conditioning,
-            )
-
-    forward_measurement = measure_callable(
-        forward,
+    forward_measurement = _measure_forward(
+        model,
+        device_standardizers.transform(device_batch),
         device=device,
         warmup=args.warmup,
         repetitions=args.repetitions,
     )
-    del scaled_batch
     model.train()
 
     def training_iteration() -> None:
@@ -195,6 +185,31 @@ def main() -> None:
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2))
     print(f"Wrote benchmark result to {args.output}")
+
+
+def _measure_forward(
+    model: SparseGraphTransformer,
+    batch: NodeRegressionBatch,
+    *,
+    device: torch.device,
+    warmup: int,
+    repetitions: int,
+) -> BenchmarkMeasurement:
+    def forward() -> None:
+        with torch.inference_mode():
+            model(
+                batch.inputs,
+                edge_index=batch.edge_index,
+                batch_index=batch.batch_index,
+                conditioning=batch.conditioning,
+            )
+
+    return measure_callable(
+        forward,
+        device=device,
+        warmup=warmup,
+        repetitions=repetitions,
+    )
 
 
 def _measurement_payload(
