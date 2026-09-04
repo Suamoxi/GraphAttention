@@ -4,7 +4,7 @@ from hydra import compose, initialize_config_dir
 from hydra.utils import instantiate
 
 from graph_attention.data import SyntheticMeshDataset
-from graph_attention.models import NodeLinearBaseline
+from graph_attention.models import NodeLinearBaseline, SparseGraphTransformer
 from graph_attention.tasks import NodeRegressionTask
 
 
@@ -49,6 +49,29 @@ def test_default_task_and_model_config_instantiate_and_connect() -> None:
     batch = task.pack_and_prepare([dataset[0], dataset[1]], dataset.field_catalog)
     output = model(
         batch.inputs,
+        edge_index=batch.edge_index,
+        batch_index=batch.batch_index,
+        conditioning=batch.conditioning,
+    )
+
+    assert output.shape == batch.targets.shape
+
+
+def test_sparse_transformer_config_instantiates_and_connects() -> None:
+    cfg = _config(["model=sparse_transformer"])
+    dataset = instantiate(cfg.data)
+    task = instantiate(cfg.task)
+    model = instantiate(cfg.model)
+
+    assert isinstance(model, SparseGraphTransformer)
+    assert model.hidden_dim == 64
+    assert model.num_heads == 4
+    assert model.num_layers == 2
+
+    batch = task.pack_and_prepare([dataset[0], dataset[1]], dataset.field_catalog)
+    output = model(
+        batch.inputs,
+        edge_index=batch.edge_index,
         batch_index=batch.batch_index,
         conditioning=batch.conditioning,
     )
