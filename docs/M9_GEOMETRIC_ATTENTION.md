@@ -4,7 +4,7 @@
 
 M9 introduces the first geometry-aware attention mechanism in the repository. It extends the frozen M8 sparse one-hop Transformer by adding a learned per-head attention-score bias derived only from relative edge displacement.
 
-Implementation and scientific-property tests are present. Target GPU performance evidence remains pending until the M9 benchmark is run on Calypso, so M9 performance evidence remains `ANALYTICAL` until then.
+The scientific/software gate is complete and the frozen FP32 reference is target-performance-validated on one NVIDIA GH200 480GB. Slurm job `403939` ran from clean SHA `83e160846badb151eef0a09c2f1e2234da22bc24` with Python 3.12.3, PyTorch `2.7.0a0+7c8ec84dab.nv25.03`, CUDA 12.8, 10 warmups, and 50 measured repetitions.
 
 ## 1. Scientific change from M8
 
@@ -205,6 +205,8 @@ M9 validation includes:
 8. the model integrates with the M6 equal-sample training step;
 9. invalid coordinate shapes, dtypes, indices, NaN, and Inf fail explicitly.
 
+The full repository software gate reached 165 passing tests before the final formatting-only cleanup, and the exact-runtime M9 benchmark test subset also passed inside job `403939`.
+
 ## 10. Configuration
 
 The synthetic smoke configuration is:
@@ -232,23 +234,33 @@ num_layers = 4
 mlp_ratio  = 4
 ```
 
-so the intended benchmark comparison isolates the added relative-displacement bias rather than changing the backbone width/depth.
+so the benchmark comparison isolates the added relative-displacement bias rather than changing the backbone width/depth.
 
-## 11. Benchmark gate
+## 11. Target-validated benchmark results
 
-`scripts/benchmark_m9.py` uses the same benchmark protocol and workload construction as M8.
+`scripts/benchmark_m9.py` uses the same benchmark protocol and workload construction as M8. Job `403939` collected both required `TARGET_VALIDATED` workloads on one NVIDIA GH200 480GB in FP32.
 
-Before any M9 performance claim, collect at least:
+Synthetic S3:
 
-- synthetic S3 single-GPU `TARGET_VALIDATED` result;
-- real `HIT_LES_FORCED` single-GPU `TARGET_VALIDATED` result;
-- exact parameter count;
-- forward and training latency;
-- node/edge throughput;
-- CUDA allocator peak memory;
-- the same GH200/runtime provenance used for the M8 reference where possible.
+- 4 graphs, 32,768 nodes, 65,530 directed edges;
+- 793,857 parameters;
+- forward median `3.413842 ms`;
+- training-iteration median `90.945784 ms`;
+- forward incremental CUDA allocation `229,376,000 B`;
+- training incremental CUDA allocation `1,586,070,016 B`.
 
-The primary systems comparison is M8 versus M9 under the same topology, model width/depth, precision, device, and workload.
+Real `HIT_LES_FORCED`:
+
+- 1 graph, 35,937 nodes, 209,088 directed edges;
+- 794,629 parameters;
+- forward median `5.798864 ms`;
+- training-iteration median `18.704375 ms`;
+- forward incremental CUDA allocation `553,855,488 B`;
+- training incremental CUDA allocation `2,978,613,248 B`.
+
+Against the frozen M8 real-HIT reference, the M9 relative-geometry path adds about 8.6% forward latency, 5.5% training-iteration latency, and 1.8% incremental training allocation. The four-layer reference adds only 384 parameters. The synthetic high-degree stress workload remains dominated by the inherited M8 scatter/reduction backward pathology; M9 does not introduce a new observed pathology.
+
+These measurements establish implementation cost only. They do not show that M9 improves predictive quality; that learning question is the purpose of the subsequent M10 ablation.
 
 ## 12. Assumptions
 
