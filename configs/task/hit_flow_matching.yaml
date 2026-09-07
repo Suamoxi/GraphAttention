@@ -1,0 +1,10 @@
+_target_: graph_attention.tasks.FlowMatchingTask
+state_fields:
+  - rho
+  - rhou
+  - rhov
+  - rhow
+  - rhoE
+conditioning_parameters: []
+physical_nondimensionalization: true
+validation_seed: 1234

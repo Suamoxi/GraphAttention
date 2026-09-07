@@ -46,7 +46,7 @@ A new or unvalidated research idea. Record the hypothesis, intended mechanism, r
 
 An empirical result obtained from a specified experiment or benchmark. Record enough context to reproduce it.
 
-## 3. M0-M10 traceability table
+## 3. M0-M11 traceability table
 
 | Concept | Type | Specification | Implementation | Validation | Evidence status |
 |---|---|---|---|---|---|
@@ -85,7 +85,7 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Node-renumbering equivariance | Fundamental graph-model property | `docs/SCIENTIFIC_SPEC.md` §13, §18-19, `docs/M5_TASK_BASELINE.md` §9, `docs/M8_SPARSE_TRANSFORMER.md` §9, `docs/M9_GEOMETRIC_ATTENTION.md` §9 | `NodeLinearBaseline`, `SparseGraphTransformer`, `GeometricSparseGraphTransformer` | baseline permutation test + M8 and M9 consistent node/edge/coordinate permutation tests | TARGET_VALIDATED for M5/M8/M9 software/scientific scope |
 | Translation-invariant relative edge displacement | Project geometry/scientific convention | `docs/SCIENTIFIC_SPEC.md` §14, §19, `docs/M9_GEOMETRIC_ATTENTION.md` §2-4 | `graph_attention.geometry.edge_relative_displacement` | `tests/unit/test_geometry_relative.py`, M9 model translation test | TARGET_VALIDATED M9 software/scientific scope; GH200 target benchmark job `403939` |
 | Translation/rotation/etc. claims require explicit proof/test | Project scientific rule | `docs/SCIENTIFIC_SPEC.md` §14 | model-specific | property-specific tests | M9 claims translation invariance only; no rotation/reflection/scale claim |
-| Data/Geometry/Task/Model/Trainer ownership | Project software-science design | `docs/ARCHITECTURE.md` §3 | data contracts/splits, geometry transforms, M4 packing, M5 task/model separation, M6 training primitives, M7 benchmark tooling, M8 sparse model, M9 relative geometry + geometric model, M10 slice adapter/topology/runner | review/tests | Frozen M0 / instantiated M1-M10 |
+| Data/Geometry/Task/Model/Trainer ownership | Project software-science design | `docs/ARCHITECTURE.md` §3 | data contracts/splits, geometry transforms, M4 packing, M5 task/model separation, M6 training primitives, M7 benchmark tooling, M8 sparse model, M9 relative geometry + geometric model, M10 slice adapter/topology/runner, M11 flow-matching task/runner | review/tests | Frozen M0 / instantiated M1-M11 |
 | Performance evidence levels | Project engineering rule | `docs/BENCHMARK_PROTOCOL.md` | `graph_attention.utils.benchmarking`, `scripts/benchmark_m7.py`, `scripts/benchmark_m8.py`, `scripts/benchmark_m9.py` | benchmark utility/CLI tests + target benchmark gates | TARGET_VALIDATED M7/M8/M9 reference paths |
 | Framework/null-baseline performance reference | Measured result | `docs/BENCHMARK_PROTOCOL.md`, `docs/M7_BENCHMARKS.md` §13 | `scripts/benchmark_m7.py` | Slurm job `400132`, clean SHA `79b156e27842618a54a0be18a81ea76c994ac140`, NVIDIA GH200 480GB, FP32 | TARGET_VALIDATED 2026-09-04: S3 forward/training 0.0760/2.4206 ms; real HIT 0.0549/1.5733 ms; null-model/framework evidence only |
 | Sparse one-hop scaled dot-product attention on supplied mesh edges | Project adaptation of established scaled dot-product and graph-neighborhood attention | `docs/SCIENTIFIC_SPEC.md` §18, `docs/M8_SPARSE_TRANSFORMER.md` §2-5 | `SparseMultiheadAttention`, `SparseGraphTransformerBlock`, `SparseGraphTransformer` | explicit-neighbor reference, edge-order tolerance, packed-vs-independent, node-renumbering, empty-edge and training-path tests | TARGET_VALIDATED M8 software/scientific scope; single-GH200 performance target-validated in job `400187` |
@@ -94,13 +94,20 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Relative-displacement geometric attention bias | Project adaptation | `docs/SCIENTIFIC_SPEC.md` §19, `docs/M9_GEOMETRIC_ATTENTION.md` §1-6 | `GeometricSparseMultiheadAttention`, `GeometricSparseGraphTransformerBlock`, `GeometricSparseGraphTransformer` | explicit geometric-attention reference, geometry sensitivity, translation, packed-vs-independent, node-renumbering, training integration tests | TARGET_VALIDATED M9 software/scientific and FP32 single-GH200 performance scope; job `403939` |
 | M9 geometry uses displacement only, no explicit distance | Project scientific/ablation decision | `docs/M9_GEOMETRIC_ATTENTION.md` §2, `docs/NUMERICAL_CONVENTIONS.md` §20 | `edge_relative_displacement`, `GeometricSparseMultiheadAttention.geometry_mlp` | relative-geometry tests + M9 explicit reference | TARGET_VALIDATED for frozen M9 reference; explicit-distance inductive bias remains a separate deferred ablation |
 | Geometric sparse-transformer performance reference | Measured result | `docs/M9_GEOMETRIC_ATTENTION.md` §10-11 | `scripts/benchmark_m9.py` | job `403939`, one NVIDIA GH200 480GB, FP32, clean SHA `83e160846badb151eef0a09c2f1e2234da22bc24` | TARGET_VALIDATED 2026-09-07: S3 forward/training 3.4138/90.9458 ms; real HIT 5.7989/18.7044 ms; modest overhead versus M8 and no new performance pathology observed |
-| diffusion4avbp fixed-slice artifact adapter | Project data/provenance adaptation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §2 | `PrecomputedSlicePTDataset` | `tests/unit/test_slice_pt.py` + required real-artifact smoke | Implemented M10; real-data validation pending |
-| Grouped split by source 3-D snapshot | Project anti-leakage convention reproduced from diffusion4avbp | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §3 | `make_grouped_split_manifest`, `PrecomputedSlicePTDataset.group_id` | `tests/unit/test_grouped_splits.py` + required real split-overlap check | Implemented M10; target data validation pending |
-| Shared canonical 2-D slice coordinates preserved as model geometry | Project geometry convention | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §4 | `PrecomputedSlicePTDataset` | exact shared-coordinate and x/y/z extraction-orientation independence tests in `tests/unit/test_slice_pt.py` | Implemented M10 correction; real-artifact training smoke pending |
+| diffusion4avbp fixed-slice artifact adapter | Project data/provenance adaptation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §2 | `PrecomputedSlicePTDataset` | `tests/unit/test_slice_pt.py` + real-artifact preflight | TARGET_VALIDATED M10 2026-09-07 on 1,488 real slices |
+| Grouped split by source 3-D snapshot | Project anti-leakage convention reproduced from diffusion4avbp | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §3 | `make_grouped_split_manifest`, `PrecomputedSlicePTDataset.group_id` | `tests/unit/test_grouped_splits.py` + real split-overlap check | TARGET_VALIDATED M10: 260/55/57 source groups with zero overlap |
+| Shared canonical 2-D slice coordinates preserved as model geometry | Project geometry convention | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §4 | `PrecomputedSlicePTDataset` | exact shared-coordinate and x/y/z extraction-orientation independence tests + real preflight | TARGET_VALIDATED M10: real coordinates `(1089,2)`, grid `33x33` |
 | Slice extraction orientation excluded from first model input | Project ablation-control decision | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §4 | slice metadata retained as provenance only | `tests/unit/test_slice_pt.py` verifies axis/slice-coordinate changes do not change `Mesh.coords` | Implemented M10 correction; explicit orientation conditioning deferred |
-| Non-periodic bidirectional Cartesian 4-neighbour slice topology | Project geometry hypothesis for first controlled ablation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §5 | `cartesian_4_neighbor_edge_index` | exact 2x3 reference and edge-case tests | Implemented M10; periodic wrap topology deliberately deferred |
-| HIT slice task `[rhou,rhov,rhow,rhoE] -> rho` | Project scientific ablation task | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §1, §6 | `configs/task/hit_density_regression.yaml`, `NodeRegressionTask` | config/task integration + full training smoke required | Implemented M10; learning evidence pending |
-| M8-vs-M9 held-out learning comparison | Project hypothesis | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §7-9 | `scripts/train_slice_ablation.py` | matched-run smoke, then frozen full runs; multiple seeds if difference is small | No learning claim yet; experiment pending |
+| Non-periodic bidirectional Cartesian 4-neighbour slice topology | Project geometry hypothesis for first controlled ablation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §5 | `cartesian_4_neighbor_edge_index` | exact 2x3 reference, edge-case tests, real preflight | TARGET_VALIDATED M10: 4,224 directed edges per 33x33 slice; periodic wrap deliberately deferred |
+| HIT slice task `[rhou,rhov,rhow,rhoE] -> rho` | Project scientific ablation task | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §1, §6 | `configs/task/hit_density_regression.yaml`, `NodeRegressionTask` | config/task integration + GH200 training smoke | Training path TARGET_VALIDATED in job `404059`; learning evidence pending |
+| M8-vs-M9 held-out learning comparison | Project hypothesis | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §7-9 | `scripts/train_slice_ablation.py` | matched one-epoch smoke, then frozen full runs; multiple seeds if difference is small | GH200 job `404059` passed; no learning-quality claim yet |
+| Full-state straight Gaussian flow matching | Project adaptation of established flow matching | `docs/SCIENTIFIC_SPEC.md` §21, `docs/M11_FLOW_MATCHING.md` §1-3 | `FlowMatchingTask` | `tests/unit/test_flow_matching_task.py` + real GPU smoke required | Implemented M11; software/target validation pending |
+| Gaussian source sampled after train-only standardization | Project numerical/scientific convention | `docs/SCIENTIFIC_SPEC.md` §21, `docs/M11_FLOW_MATCHING.md` §2 | `fit_train_standardizers` + `FlowMatchingTask.make_training_problem` | flow-path/scaling tests + target smoke required | Implemented M11; validation pending |
+| One raw scalar flow time per physical graph | Project minimal conditioning baseline | `docs/SCIENTIFIC_SPEC.md` §21, `docs/M11_FLOW_MATCHING.md` §4 | `FlowMatchingTask` + existing M8/M9 graph conditioning | exact graph-time/path unit test | Implemented M11; richer time embeddings deferred |
+| Deterministic sample-ID-keyed flow validation and generation source | Project reproducibility convention | `docs/M11_FLOW_MATCHING.md` §7-8 | `FlowMatchingTask` | batch-order invariance and sampler tests | Implemented M11; target validation pending |
+| Euler/Heun flow ODE sampling | Established explicit integration + project adaptation | `docs/SCIENTIFIC_SPEC.md` §21, `docs/M11_FLOW_MATCHING.md` §8 | `FlowMatchingTask.sample_standardized` | analytical Heun test + target generation smoke required | Implemented M11; adaptive solvers deferred |
+| HIT-slice flow-matching training/generation runner | Project experiment integration | `docs/M11_FLOW_MATCHING.md` §9-10 | `scripts/train_slice_flow_matching.py`, M11 configs | config tests + real GPU smoke required | Implemented M11; target evidence pending |
+| Per-channel flattened empirical Wasserstein-1 generation diagnostic | Project diagnostic | `docs/M11_FLOW_MATCHING.md` §10 | `_marginal_generation_metrics` | exact empirical W1 unit test | Implemented M11; explicitly not spatial/joint quality evidence |
 
 ## 4. Future model traceability template
 
@@ -236,7 +243,9 @@ Scientific tests:
     grouped split zero-overlap
     exact Cartesian topology reference
 Experiment evidence:
-    pending real-artifact smoke and matched M8/M9 Calypso training runs
+    real artifact preflight passed on 1,488 slices;
+    grouped split 260/55/57 source groups with zero overlap;
+    one-epoch matched M8/M9 GH200 training smoke passed in job 404059.
 Known limitations:
     canonical 2-D geometry is not a global 3-D directional frame;
     periodic wrap edges and explicit slice-orientation conditioning are deferred;
@@ -244,7 +253,51 @@ Known limitations:
     one seed is insufficient for a robustness claim if M8/M9 differences are small
 ```
 
-## 8. Change procedure
+## 8. M11 HIT-slice flow-matching genealogy
+
+```text
+Concept:
+    unconditional straight-path flow matching of the full five-channel HIT slice state
+Status:
+    project adaptation of established flow matching and straight-flow ideas
+References:
+    Lipman et al., Flow Matching for Generative Modeling, ICLR 2023, arXiv:2210.02747
+    Liu et al., Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow,
+    ICLR 2023, arXiv:2209.03003
+Project-specific definition:
+    physical nondimensionalization -> train-only sample-balanced standardization gives x1;
+    x0 ~ N(0,I), t_g ~ U(0,1);
+    x_t = (1-t_g)x0 + t_g*x1;
+    v* = x1 - x0;
+    raw scalar t_g is appended as one graph-level conditioning channel.
+Repository modification:
+    reuses NodeRegressionTask preparation, M6 scaling/loss/optimizer semantics,
+    M10 grouped split/topology, and frozen M8/M9 backbones;
+    adds flow-path construction, deterministic validation/sampling RNG,
+    Euler/Heun ODE sampling, generation artifacts, and a dedicated runner.
+Implementation path:
+    src/graph_attention/tasks/flow_matching.py
+    scripts/train_slice_flow_matching.py
+Configuration:
+    configs/task/hit_flow_matching.yaml
+    configs/generative/hit_slice_flow_matching.yaml
+Scientific tests:
+    exact straight interpolation/velocity target
+    one graph time broadcast to all its nodes
+    sample-ID deterministic validation independent of batch order
+    no clean-state leakage into deterministic sampling source
+Numerical tests:
+    analytical Heun integration for v=t
+    exact empirical marginal Wasserstein-1 diagnostic
+Experiment evidence:
+    pending full software gate and real M9 GPU smoke
+Known limitations:
+    raw scalar time only; no AdaLN/Fourier time embedding;
+    no nonlinear/OT coupling, diffusion task, periodic topology, DDP, low precision,
+    adaptive ODE solver, or spatial/spectral/joint generation-quality evidence yet
+```
+
+## 9. Change procedure
 
 When code changes a scientifically meaningful mechanism:
 
@@ -254,7 +307,7 @@ When code changes a scientifically meaningful mechanism:
 4. record the evidence status;
 5. do not mark a performance or scientific hypothesis as established merely because tests pass.
 
-## 9. Citation policy
+## 10. Citation policy
 
 When a mechanism comes from literature, preserve enough citation detail to identify the exact source and idea used.
 
