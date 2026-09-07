@@ -612,3 +612,51 @@ $$
 $$
 
 The M8-versus-M9 scientific hypothesis is that the M9 relative-displacement score bias can improve held-out prediction quality over topology-only M8 attention under otherwise matched conditions. The first run is a single-seed controlled ablation, not a robustness claim. If the measured difference is small, multiple independent seeds are required before attributing it to the architecture.
+
+## 21. M11 unconditional HIT-slice flow matching
+
+M11 introduces the first generative objective while keeping the M8/M9 sparse attention equations and the M10 slice geometry/topology unchanged. The generated state is the complete ordered conservative vector
+
+$$
+\boxed{x=[\rho,\rho u,\rho v,\rho w,\rho E].}
+$$
+
+The data endpoint is constructed by physical nondimensionalization followed by train-only sample-balanced statistical standardization. In that standardized state space, M11 samples
+
+$$
+x_0\sim\mathcal N(0,I),\qquad t_g\sim\mathcal U(0,1)
+$$
+
+independently for each physical graph `g`. The same time is broadcast to all nodes of one graph. The straight conditional path and its target velocity are
+
+$$
+\boxed{x_{t,gi}=(1-t_g)x_{0,gi}+t_gx_{1,gi}},
+$$
+
+$$
+\boxed{v^*_{gi}=x_{1,gi}-x_{0,gi}}.
+$$
+
+The model learns the vector field
+
+$$
+v_\theta(x_t,t,G,R).
+$$
+
+The first baseline supplies raw scalar `t` as one graph-level conditioning channel through the existing M8/M9 conditioning path. No sinusoidal/Fourier time embedding, learned time MLP, AdaLN, or per-layer time modulation is part of the frozen M11 baseline.
+
+The velocity objective reuses the M6 sample reduction. With five equal-weight state channels and no physical quadrature weights,
+
+$$
+\ell_{gi}=\frac{1}{5}\|v_\theta(x_{t,gi},t_g)-v^*_{gi}\|_2^2,
+$$
+
+$$
+L_g=\frac{1}{N_g}\sum_i\ell_{gi},
+\qquad
+\boxed{L=\frac{1}{B}\sum_g L_g}.
+$$
+
+Validation times and Gaussian sources are deterministic functions of `(validation_seed, sample_id)` so validation does not depend on batch order. Sampling starts from a deterministic sample-ID-keyed Gaussian source and integrates `dx/dt=v_theta` from `t=0` to `t=1` with either explicit Euler or Heun; the reference inference setting is Heun with 50 uniform steps.
+
+M11 does not define a diffusion beta schedule, discrete diffusion timestep, epsilon/score/x0 target, SNR weighting, DDPM sampler, or DDIM sampler. Those remain a separate later diffusion task so the first generative experiment changes only the task mathematics needed for straight-path flow matching.

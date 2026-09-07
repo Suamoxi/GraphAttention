@@ -1,0 +1,11 @@
+output_root: /scratch/coop/theret/GraphAttention_runs
+batch_size: 128
+num_workers: 4
+max_epochs: 1
+device: cuda
+train_ratio: 0.7
+validation_ratio: 0.15
+group_metadata_key: source_stem
+sample_steps: 50
+solver: heun
+sampling_seed: 5678

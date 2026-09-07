@@ -9,7 +9,7 @@ from graph_attention.models import (
     NodeLinearBaseline,
     SparseGraphTransformer,
 )
-from graph_attention.tasks import NodeRegressionTask
+from graph_attention.tasks import FlowMatchingTask, NodeRegressionTask
 
 
 def _config(overrides: list[str] | None = None):
@@ -138,3 +138,22 @@ def test_hit_slice_ablation_configs_compose() -> None:
     assert cfg.ablation.group_metadata_key == "source_stem"
     assert cfg.ablation.train_ratio == 0.7
     assert cfg.ablation.validation_ratio == 0.15
+
+
+def test_hit_slice_flow_matching_configs_compose() -> None:
+    cfg = _config(
+        [
+            "data=hit_slice_pt",
+            "task=hit_flow_matching",
+            "+generative=hit_slice_flow_matching",
+            "model=geometric_sparse_transformer",
+        ]
+    )
+    task = instantiate(cfg.task)
+
+    assert isinstance(task, FlowMatchingTask)
+    assert list(cfg.task.state_fields) == ["rho", "rhou", "rhov", "rhow", "rhoE"]
+    assert cfg.task.physical_nondimensionalization is True
+    assert cfg.generative.batch_size == 128
+    assert cfg.generative.sample_steps == 50
+    assert cfg.generative.solver == "heun"

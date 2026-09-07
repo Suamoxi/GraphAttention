@@ -331,3 +331,41 @@ The exact geometry computation is translation invariant in real arithmetic. Floa
 Coordinate tensors must be finite floating-point values with the configured spatial dimension and must share dtype/device with model inputs. Invalid geometry fails explicitly rather than being cast, centered, clipped, or repaired.
 
 The per-layer geometry MLP hidden width equals `num_heads`, so geometry-specific edge activations scale as `O(E * num_heads)`. The existing M8 value/message path remains `O(E * hidden_dim)` and is still expected to dominate sparse activation memory for typical `hidden_dim >> num_heads` configurations.
+
+## 21. M11 straight-path flow matching
+
+M11 constructs its Gaussian source only after physical nondimensionalization and train-only statistical standardization. The data endpoint `x_1` therefore has the frozen training-set standardized channel semantics and the source is sampled in that same coordinate system:
+
+$$
+x_0\sim\mathcal N(0,I).
+$$
+
+One floating-point time is sampled per physical graph,
+
+$$
+t_g\sim\mathcal U(0,1),
+$$
+
+then broadcast with `batch_index` to all nodes of graph `g`. The numerical path and target are
+
+$$
+x_t=(1-t)x_0+t x_1,
+\qquad
+v^*=x_1-x_0.
+$$
+
+The velocity target is not statistically transformed again after path construction. The existing sample-reduced equal-channel MSE is applied directly in the standardized state coordinate system.
+
+Training path randomness uses a generator separate from model initialization. Validation time/noise and sampling sources are seeded from stable hashes of the configured seed and `sample_id`; deterministic validation is therefore independent of validation batch order. The exact random-number stream is backend/runtime dependent, so cross-PyTorch-version or cross-device bitwise identity is not claimed.
+
+The first time representation is the raw scalar `t` appended to graph-level conditioning. It is not multiplied by an arbitrary diffusion timestep scale and no sinusoidal/Fourier transformation is applied in M11.
+
+Inference integrates
+
+$$
+\frac{dx}{dt}=v_\theta(x,t)
+$$
+
+from `t=0` to `t=1` on a uniform grid. Explicit Euler uses one model evaluation per step. Heun uses a predictor and endpoint correction and therefore uses two model evaluations per step. The reference configuration uses 50 Heun steps. Adaptive-step error control is not part of the M11 baseline.
+
+Generated standardized states are inverse-transformed with the frozen **input/state** training standardizer to the physically nondimensional state. No test-set statistics participate in this inverse transform.
