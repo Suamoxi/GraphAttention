@@ -37,6 +37,8 @@ class SparseMultiheadAttention(nn.Module):
         self,
         inputs: torch.Tensor,
         edge_index: torch.Tensor,
+        *,
+        score_bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
         num_nodes = inputs.shape[0]
         qkv = self.qkv(inputs).reshape(
@@ -60,6 +62,17 @@ class SparseMultiheadAttention(nn.Module):
             scores = (query_edge.float() * key_edge.float()).sum(dim=-1) * self.scale
         else:
             scores = (query_edge * key_edge).sum(dim=-1) * self.scale
+
+        if score_bias is not None:
+            if score_bias.shape != scores.shape:
+                raise ValueError(
+                    f"score_bias must have shape {tuple(scores.shape)}, got {tuple(score_bias.shape)}"
+                )
+            if not score_bias.is_floating_point():
+                raise TypeError("score_bias must use a floating-point dtype")
+            if score_bias.device != scores.device:
+                raise ValueError("score_bias and attention scores must be on the same device")
+            scores = scores + score_bias.to(dtype=scores.dtype)
 
         target_by_head = target[:, None].expand(-1, self.num_heads)
         max_per_target = torch.full(
@@ -160,6 +173,7 @@ class SparseGraphTransformer(nn.Module):
         inputs: torch.Tensor,
         *,
         edge_index: torch.Tensor,
+        coords: torch.Tensor | None = None,
         batch_index: torch.Tensor | None = None,
         conditioning: torch.Tensor | None = None,
     ) -> torch.Tensor:
