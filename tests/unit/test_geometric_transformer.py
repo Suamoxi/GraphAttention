@@ -63,7 +63,10 @@ def test_geometric_attention_matches_explicit_reference() -> None:
     inputs = torch.randn(6, 12)
     coords = torch.randn(6, 2)
     edge_index = torch.tensor(
-        [[0, 2, 1, 2, 4, 3, 5], [1, 1, 2, 3, 3, 4, 4]],
+        [
+            [0, 2, 1, 2, 4, 3, 5],
+            [1, 1, 2, 3, 3, 4, 4],
+        ],
         dtype=torch.long,
     )
     displacement = edge_relative_displacement(coords, edge_index)
@@ -72,6 +75,22 @@ def test_geometric_attention_matches_explicit_reference() -> None:
     reference = _explicit_reference(attention, inputs, edge_index, displacement)
 
     torch.testing.assert_close(sparse, reference, rtol=1e-5, atol=1e-6)
+
+
+def test_geometric_attention_empty_edges_keeps_geometry_parameters_in_autograd() -> None:
+    torch.manual_seed(4)
+    attention = GeometricSparseMultiheadAttention(hidden_dim=12, num_heads=3, spatial_dim=2)
+    inputs = torch.randn(5, 12)
+    edge_index = torch.empty((2, 0), dtype=torch.long)
+    displacement = torch.empty((0, 2))
+
+    output = attention(inputs, edge_index, displacement)
+    output.square().sum().backward()
+
+    geometry_parameters = tuple(attention.geometry_mlp.parameters())
+    assert geometry_parameters
+    assert all(parameter.grad is not None for parameter in geometry_parameters)
+    assert all(torch.count_nonzero(parameter.grad) == 0 for parameter in geometry_parameters)
 
 
 def test_geometric_transformer_is_translation_invariant() -> None:
