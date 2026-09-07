@@ -305,3 +305,29 @@ This policy reduces overflow/underflow risk in the softmax normalization but cre
 Sparse target accumulation uses `scatter_add_` / `index_add_`. Mathematical output is independent of edge-list ordering, but floating-point summation order may differ across reordered edge lists or GPU atomic scheduling. Edge-order and node-renumbering tests therefore use strict numerical tolerances rather than requiring bitwise equality.
 
 Nodes with no incoming edges have a zero attention message before the residual branch. A globally empty edge list returns zero from the sparse attention sublayer without evaluating a softmax over an empty set.
+
+## 20. M9 relative-displacement geometry and score bias
+
+M9 computes one relative displacement row per directed edge using the already task-prepared coordinates:
+
+$$
+\Delta r_{ij}=r_j-r_i
+$$
+
+for source `j` and target/query `i`. The displacement is computed once per model forward and reused across all geometric attention layers.
+
+When physical nondimensionalization is enabled, the coordinate tensor has already been scaled by the case length reference, so no additional geometric normalization is applied:
+
+$$
+\Delta r^*_{ij}=\frac{r_j-r_i}{L_{\mathrm{ref}}}.
+$$
+
+M9 does not statistically standardize coordinates or relative displacement. It also does not append an explicitly computed Euclidean norm. Any later explicit distance feature is a separate numerical/scientific convention and must be benchmarked/ablated independently.
+
+Each geometric attention layer maps displacement through a small MLP to one score bias per head. The geometric bias is added before the existing stabilized M8 target-wise softmax. Under FP16/BF16 projection/autocast, the geometric bias is converted to the same FP32 score dtype used by the M8 softmax before addition.
+
+The exact geometry computation is translation invariant in real arithmetic. Floating-point subtraction after a large common translation may exhibit roundoff/cancellation; translation-property tests therefore use strict numerical tolerances rather than bitwise equality.
+
+Coordinate tensors must be finite floating-point values with the configured spatial dimension and must share dtype/device with model inputs. Invalid geometry fails explicitly rather than being cast, centered, clipped, or repaired.
+
+The per-layer geometry MLP hidden width equals `num_heads`, so geometry-specific edge activations scale as `O(E * num_heads)`. The existing M8 value/message path remains `O(E * hidden_dim)` and is still expected to dominate sparse activation memory for typical `hidden_dim >> num_heads` configurations.
