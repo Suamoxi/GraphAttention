@@ -1,0 +1,10 @@
+_target_: graph_attention.tasks.NodeRegressionTask
+input_fields:
+  - rhou
+  - rhov
+  - rhow
+  - rhoE
+target_fields:
+  - rho
+conditioning_parameters: []
+physical_nondimensionalization: true

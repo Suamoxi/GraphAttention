@@ -46,7 +46,7 @@ A new or unvalidated research idea. Record the hypothesis, intended mechanism, r
 
 An empirical result obtained from a specified experiment or benchmark. Record enough context to reproduce it.
 
-## 3. M0-M9 traceability table
+## 3. M0-M10 traceability table
 
 | Concept | Type | Specification | Implementation | Validation | Evidence status |
 |---|---|---|---|---|---|
@@ -67,7 +67,7 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | `HIT_LES_FORCED` real nondimensionalization validation | Measured result | `docs/M3_3_NONDIMENSIONALIZATION.md` | `scripts/validate_m3_3_avbp.py`, `cases/HIT_LES_FORCED.yaml` | real AVBP snapshot + mesh on Calypso; 35,937 nodes, 32,768 hex cells; float64 round trips within `1e-12` tolerances | TARGET_VALIDATED 2026-09-03 for frozen M3.3 baseline preprocessing scope |
 | Packed disconnected variable-graph batching | Established graph batching pattern + project requirements | `docs/ARCHITECTURE.md` §5, `docs/NUMERICAL_CONVENTIONS.md` §2-3, `docs/M4_PACKED_BATCHING.md` | `PackedBatch`, `pack_samples` | `tests/unit/test_packed_batching.py` + full 81-test Calypso suite; exact offsets/`ptr`/`batch_index`, no cross-sample edges, named field/metadata preservation | TARGET_VALIDATED 2026-09-03 for M4 software/numerical scope; performance evidence ANALYTICAL |
 | Node/edge computational budgets | Project systems design | `docs/ARCHITECTURE.md` §6-7, `docs/NUMERICAL_CONVENTIONS.md` §4, `docs/M4_PACKED_BATCHING.md` | `MicrobatchBudget`, `partition_samples_by_budget` | `tests/unit/test_packed_batching.py` + full Calypso suite; exact boundaries, node/edge limiting, invalid/oversized cases, order preservation | TARGET_VALIDATED 2026-09-03; concrete hardware limits remain run configuration; performance evidence ANALYTICAL |
-| Explicit train/validation/test sample identity | Project anti-leakage/reproducibility contract | `docs/REPRODUCIBILITY.md` §3, §7, `docs/M5_TASK_BASELINE.md` §6 | `SplitManifest` | `tests/unit/test_data_splits.py` | TARGET_VALIDATED M5 2026-09-03; random split generation intentionally absent |
+| Explicit train/validation/test sample identity | Project anti-leakage/reproducibility contract | `docs/REPRODUCIBILITY.md` §3, §7, `docs/M5_TASK_BASELINE.md` §6 | `SplitManifest` | `tests/unit/test_data_splits.py` | TARGET_VALIDATED M5 2026-09-03; generic random split generation intentionally absent |
 | Task-specific named channel selection | Project scientific contract | `docs/SCIENTIFIC_SPEC.md` §6, §16, `docs/M5_TASK_BASELINE.md` §2-3 | `NodeRegressionTask`, `NodeRegressionBatch` | `tests/unit/test_task_regression.py`, config integration | TARGET_VALIDATED M5 2026-09-03 |
 | Per-graph physical preprocessing composed into task representation | Project scientific/numerical integration | `docs/M3_3_NONDIMENSIONALIZATION.md`, `docs/M5_TASK_BASELINE.md` §4 | `NodeRegressionTask._preprocess_physical` using `ConvectiveNondimensionalizer` | M5 two-case packed nondimensionalization test | TARGET_VALIDATED M5 2026-09-03; source batch remains dimensional |
 | Node-local affine baseline `y_i = W[x_i,c_g] + b` | Null geometric baseline | `docs/M5_TASK_BASELINE.md` §7-9, `docs/SCIENTIFIC_SPEC.md` §16 | `NodeLinearBaseline` | baseline shape, conditioning, packed-vs-independent, and permutation tests | TARGET_VALIDATED M5 2026-09-03; no CFD performance claim |
@@ -82,18 +82,24 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Physical nondimensionalization before statistical scaling | Project scientific/numerical convention | `docs/SCIENTIFIC_SPEC.md` §8-12, §17, `docs/NUMERICAL_CONVENTIONS.md` §8-10, §18 | `ConvectiveNondimensionalizer`; `fit_train_standardizers` | M3.3 transform/real-HIT tests + M6 train-only scaling tests | Physical runtime and M6 train-only scaler target-validated on Calypso |
 | Inference-available reference/conditioning quantities only | Project anti-leakage rule | `docs/SCIENTIFIC_SPEC.md` §9-10, `docs/M3_3_NONDIMENSIONALIZATION.md`, `docs/M5_TASK_BASELINE.md` §5 | reference validation in `ConvectiveNondimensionalizer`; conditioning validation in `NodeRegressionTask` | unavailable/snapshot reference tests + M5 unavailable-conditioning test | Physical references target-validated M3.3; conditioning selection target-validated M5 |
 | Explicit resolution descriptor | Project multiresolution requirement | `docs/SCIENTIFIC_SPEC.md` §12 | geometry/preprocessing | resolution metadata tests | Planned |
-| Node-renumbering equivariance | Fundamental graph-model property | `docs/SCIENTIFIC_SPEC.md` §13, §18-19, `docs/M5_TASK_BASELINE.md` §9, `docs/M8_SPARSE_TRANSFORMER.md` §9, `docs/M9_GEOMETRIC_ATTENTION.md` §9 | `NodeLinearBaseline`, `SparseGraphTransformer`, `GeometricSparseGraphTransformer` | baseline permutation test + M8 and M9 consistent node/edge/coordinate permutation tests | TARGET_VALIDATED for M5/M8; M9 implementation validation pending Calypso software gate |
-| Translation-invariant relative edge displacement | Project geometry/scientific convention | `docs/SCIENTIFIC_SPEC.md` §14, §19, `docs/M9_GEOMETRIC_ATTENTION.md` §2-4 | `graph_attention.geometry.edge_relative_displacement` | `tests/unit/test_geometry_relative.py`, M9 model translation test | Implemented M9; software/target validation pending |
+| Node-renumbering equivariance | Fundamental graph-model property | `docs/SCIENTIFIC_SPEC.md` §13, §18-19, `docs/M5_TASK_BASELINE.md` §9, `docs/M8_SPARSE_TRANSFORMER.md` §9, `docs/M9_GEOMETRIC_ATTENTION.md` §9 | `NodeLinearBaseline`, `SparseGraphTransformer`, `GeometricSparseGraphTransformer` | baseline permutation test + M8 and M9 consistent node/edge/coordinate permutation tests | TARGET_VALIDATED for M5/M8/M9 software/scientific scope |
+| Translation-invariant relative edge displacement | Project geometry/scientific convention | `docs/SCIENTIFIC_SPEC.md` §14, §19, `docs/M9_GEOMETRIC_ATTENTION.md` §2-4 | `graph_attention.geometry.edge_relative_displacement` | `tests/unit/test_geometry_relative.py`, M9 model translation test | TARGET_VALIDATED M9 software/scientific scope; GH200 target benchmark job `403939` |
 | Translation/rotation/etc. claims require explicit proof/test | Project scientific rule | `docs/SCIENTIFIC_SPEC.md` §14 | model-specific | property-specific tests | M9 claims translation invariance only; no rotation/reflection/scale claim |
-| Data/Geometry/Task/Model/Trainer ownership | Project software-science design | `docs/ARCHITECTURE.md` §3 | data contracts/splits, geometry transforms, M4 packing, M5 task/model separation, M6 training primitives, M7 benchmark tooling, M8 sparse model, M9 relative geometry + geometric model | review/tests | Frozen M0 / instantiated M1-M9 |
-| Performance evidence levels | Project engineering rule | `docs/BENCHMARK_PROTOCOL.md` | `graph_attention.utils.benchmarking`, `scripts/benchmark_m7.py`, `scripts/benchmark_m8.py`, `scripts/benchmark_m9.py` | benchmark utility/CLI tests + target benchmark gates | TARGET_VALIDATED M7/M8; M9 pending |
+| Data/Geometry/Task/Model/Trainer ownership | Project software-science design | `docs/ARCHITECTURE.md` §3 | data contracts/splits, geometry transforms, M4 packing, M5 task/model separation, M6 training primitives, M7 benchmark tooling, M8 sparse model, M9 relative geometry + geometric model, M10 slice adapter/topology/runner | review/tests | Frozen M0 / instantiated M1-M10 |
+| Performance evidence levels | Project engineering rule | `docs/BENCHMARK_PROTOCOL.md` | `graph_attention.utils.benchmarking`, `scripts/benchmark_m7.py`, `scripts/benchmark_m8.py`, `scripts/benchmark_m9.py` | benchmark utility/CLI tests + target benchmark gates | TARGET_VALIDATED M7/M8/M9 reference paths |
 | Framework/null-baseline performance reference | Measured result | `docs/BENCHMARK_PROTOCOL.md`, `docs/M7_BENCHMARKS.md` §13 | `scripts/benchmark_m7.py` | Slurm job `400132`, clean SHA `79b156e27842618a54a0be18a81ea76c994ac140`, NVIDIA GH200 480GB, FP32 | TARGET_VALIDATED 2026-09-04: S3 forward/training 0.0760/2.4206 ms; real HIT 0.0549/1.5733 ms; null-model/framework evidence only |
 | Sparse one-hop scaled dot-product attention on supplied mesh edges | Project adaptation of established scaled dot-product and graph-neighborhood attention | `docs/SCIENTIFIC_SPEC.md` §18, `docs/M8_SPARSE_TRANSFORMER.md` §2-5 | `SparseMultiheadAttention`, `SparseGraphTransformerBlock`, `SparseGraphTransformer` | explicit-neighbor reference, edge-order tolerance, packed-vs-independent, node-renumbering, empty-edge and training-path tests | TARGET_VALIDATED M8 software/scientific scope; single-GH200 performance target-validated in job `400187` |
 | Stabilized sparse attention reduction with FP32 score/softmax under BF16/FP16 projections | Project numerical stability policy | `docs/NUMERICAL_CONVENTIONS.md` §19, `docs/M8_SPARSE_TRANSFORMER.md` §8 | `SparseMultiheadAttention` | explicit FP32 reference test + CPU BF16 autocast finite-output smoke | FP32 target path validated M8; CUDA BF16/FP16 target validation deferred |
 | Sparse-transformer performance reference | Measured result | `docs/BENCHMARK_PROTOCOL.md`, `docs/M8_SPARSE_TRANSFORMER.md` §17 | `scripts/benchmark_m8.py` | jobs `400187` and `400194`, one NVIDIA GH200 480GB, FP32, clean SHA `dea85e8645d614992a34003b1998d4f1a7e58261` | TARGET_VALIDATED: S3 forward/training 3.0808/90.3210 ms; real HIT 5.3406/17.7296 ms; degree stress shows >10x training penalty when an extreme hub is introduced at nearly fixed N/E |
-| Relative-displacement geometric attention bias | Project adaptation | `docs/SCIENTIFIC_SPEC.md` §19, `docs/M9_GEOMETRIC_ATTENTION.md` §1-6 | `GeometricSparseMultiheadAttention`, `GeometricSparseGraphTransformerBlock`, `GeometricSparseGraphTransformer` | explicit geometric-attention reference, geometry sensitivity, translation, packed-vs-independent, node-renumbering, training integration tests | Implemented M9; target performance evidence ANALYTICAL pending Calypso run |
-| M9 geometry uses displacement only, no explicit distance | Project scientific/ablation decision | `docs/M9_GEOMETRIC_ATTENTION.md` §2, `docs/NUMERICAL_CONVENTIONS.md` §20 | `edge_relative_displacement`, `GeometricSparseMultiheadAttention.geometry_mlp` | relative-geometry tests + M9 explicit reference | Implemented M9; explicit-distance inductive bias deferred as separate ablation |
-| Geometric sparse-transformer performance reference | Measured-result framework | `docs/M9_GEOMETRIC_ATTENTION.md` §10-11 | `scripts/benchmark_m9.py` | CPU CLI smoke + required S3 and real-HIT single-GH200 target runs | ANALYTICAL until M9 Calypso measurements; intended comparison is M8 vs M9 at identical width/depth/topology/precision |
+| Relative-displacement geometric attention bias | Project adaptation | `docs/SCIENTIFIC_SPEC.md` §19, `docs/M9_GEOMETRIC_ATTENTION.md` §1-6 | `GeometricSparseMultiheadAttention`, `GeometricSparseGraphTransformerBlock`, `GeometricSparseGraphTransformer` | explicit geometric-attention reference, geometry sensitivity, translation, packed-vs-independent, node-renumbering, training integration tests | TARGET_VALIDATED M9 software/scientific and FP32 single-GH200 performance scope; job `403939` |
+| M9 geometry uses displacement only, no explicit distance | Project scientific/ablation decision | `docs/M9_GEOMETRIC_ATTENTION.md` §2, `docs/NUMERICAL_CONVENTIONS.md` §20 | `edge_relative_displacement`, `GeometricSparseMultiheadAttention.geometry_mlp` | relative-geometry tests + M9 explicit reference | TARGET_VALIDATED for frozen M9 reference; explicit-distance inductive bias remains a separate deferred ablation |
+| Geometric sparse-transformer performance reference | Measured result | `docs/M9_GEOMETRIC_ATTENTION.md` §10-11 | `scripts/benchmark_m9.py` | job `403939`, one NVIDIA GH200 480GB, FP32, clean SHA `83e160846badb151eef0a09c2f1e2234da22bc24` | TARGET_VALIDATED 2026-09-07: S3 forward/training 3.4138/90.9458 ms; real HIT 5.7989/18.7044 ms; modest overhead versus M8 and no new performance pathology observed |
+| diffusion4avbp fixed-slice artifact adapter | Project data/provenance adaptation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §2 | `PrecomputedSlicePTDataset` | `tests/unit/test_slice_pt.py` + required real-artifact smoke | Implemented on M10 work branch; software/real-data validation pending |
+| Grouped split by source 3-D snapshot | Project anti-leakage convention reproduced from diffusion4avbp | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §3 | `make_grouped_split_manifest`, `PrecomputedSlicePTDataset.group_id` | `tests/unit/test_grouped_splits.py` + required real split-overlap check | Implemented M10; target data validation pending |
+| Slice 2-D coordinates reconstructed in global 3-D frame | Project geometry convention | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §4 | `reconstruct_slice_coordinates` | x/y/z orientation tests in `tests/unit/test_slice_pt.py` | Implemented M10; real artifact orientation smoke pending |
+| Non-periodic bidirectional Cartesian 4-neighbour slice topology | Project geometry hypothesis for first controlled ablation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §5 | `cartesian_4_neighbor_edge_index` | exact 2x3 reference and edge-case tests | Implemented M10; periodic wrap topology deliberately deferred |
+| HIT slice task `[rhou,rhov,rhow,rhoE] -> rho` | Project scientific ablation task | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §1, §6 | `configs/task/hit_density_regression.yaml`, `NodeRegressionTask` | config/task integration + full training smoke required | Implemented M10; learning evidence pending |
+| M8-vs-M9 held-out learning comparison | Project hypothesis | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §7-9 | `scripts/train_slice_ablation.py` | matched-run smoke, then frozen full runs; multiple seeds if difference is small | No learning claim yet; experiment pending |
 
 ## 4. Future model traceability template
 
@@ -184,13 +190,55 @@ Numerical tests:
     invalid shape/dtype/index/non-finite coordinate failures
     inherited M8 stable sparse softmax
 Benchmark evidence:
-    ANALYTICAL until scripts/benchmark_m9.py is target-validated on Calypso
+    TARGET_VALIDATED on one NVIDIA GH200 in Slurm job 403939, FP32,
+    clean SHA 83e160846badb151eef0a09c2f1e2234da22bc24;
+    S3 forward/training medians 3.4138/90.9458 ms;
+    real HIT forward/training medians 5.7989/18.7044 ms.
 Known limitations:
     no rotation/reflection/scale equivariance claim, no periodic cross-boundary HIT augmentation,
     no explicit-distance ablation, no fused sparse-geometric kernel, no CUDA low-precision/multi-node evidence
 ```
 
-## 7. Change procedure
+## 7. M10 HIT-slice learning-ablation genealogy
+
+```text
+Concept:
+    controlled learning comparison of topology-only M8 versus relative-geometry M9
+Status:
+    project hypothesis
+Source artifact:
+    diffusion4avbp precomputed fixed Cartesian 2-D slice dataset
+Scientific definition:
+    task [rhou, rhov, rhow, rhoE] -> rho;
+    split groups are authoritative metadata.source_stem values;
+    source 2-D coordinates are reconstructed into the original global 3-D frame;
+    topology is non-periodic bidirectional Cartesian 4-neighbour connectivity.
+Repository modification:
+    adds only the data adapter, deterministic slice geometry, grouped split generation,
+    experiment configuration, and dedicated first-ablation training runner;
+    M8/M9 equations and M6 loss/scaling are reused unchanged.
+Implementation path:
+    src/graph_attention/data/slice_pt.py
+    src/graph_attention/data/splits.py
+    src/graph_attention/geometry/cartesian.py
+    scripts/train_slice_ablation.py
+Configuration:
+    configs/data/hit_slice_pt.yaml
+    configs/task/hit_density_regression.yaml
+    configs/ablation/hit_slice.yaml
+Scientific tests:
+    metadata-based grouping and orientation
+    global x/y/z coordinate reconstruction
+    grouped split zero-overlap
+    exact Cartesian topology reference
+Experiment evidence:
+    pending real-artifact smoke and matched M8/M9 Calypso training runs
+Known limitations:
+    periodic wrap edges deferred; first runner is single-process FP32;
+    one seed is insufficient for a robustness claim if M8/M9 differences are small
+```
+
+## 8. Change procedure
 
 When code changes a scientifically meaningful mechanism:
 
@@ -200,7 +248,7 @@ When code changes a scientifically meaningful mechanism:
 4. record the evidence status;
 5. do not mark a performance or scientific hypothesis as established merely because tests pass.
 
-## 8. Citation policy
+## 9. Citation policy
 
 When a mechanism comes from literature, preserve enough citation detail to identify the exact source and idea used.
 
