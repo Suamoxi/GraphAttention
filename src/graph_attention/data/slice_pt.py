@@ -15,16 +15,18 @@ from .contracts import FieldCatalog, FieldSupport, Mesh, Sample
 
 _DEFAULT_FIELDS = ("rho", "rhou", "rhov", "rhow", "rhoE")
 _AXIS_IDS = {"x": 0, "y": 1, "z": 2}
-_IN_PLANE_AXES = {"x": (1, 2), "y": (0, 2), "z": (0, 1)}
+_COORDINATE_POLICY = "shared_physical_reference_2d_mesh"
 
 
 class PrecomputedSlicePTDataset(Dataset[Sample]):
     """Load diffusion4avbp fixed 2-D slice ``.pt`` samples as GraphAttention samples.
 
-    The source artifacts store one shared 2-D coordinate mesh plus per-slice
-    conservative fields and metadata. Graph connectivity is intentionally left
-    empty here; the geometry layer constructs the canonical Cartesian
-    4-neighbour topology used by the ablation experiment.
+    The source artifacts store one shared canonical 2-D coordinate mesh plus
+    per-slice conservative fields and extraction metadata. The slicing axis and
+    slice coordinate are provenance only; they are not embedded into model
+    coordinates. Graph connectivity is intentionally left empty here; the
+    geometry layer constructs the canonical Cartesian 4-neighbour topology used
+    by the ablation experiment.
     """
 
     def __init__(
@@ -84,6 +86,7 @@ class PrecomputedSlicePTDataset(Dataset[Sample]):
 
         self._coords_2d, self._mesh_metadata = _load_shared_mesh(self.mesh_file)
         self.grid_shape_2d = _grid_shape(self._mesh_metadata, self._coords_2d.shape[0])
+        self.coordinate_policy = _coordinate_policy(self._mesh_metadata, self.mesh_file)
 
     def __len__(self) -> int:
         return len(self.files)
@@ -102,7 +105,10 @@ class PrecomputedSlicePTDataset(Dataset[Sample]):
             shared_coords=self._coords_2d,
             grid_shape=self.grid_shape_2d,
             metadata=metadata,
+            coordinate_policy=self.coordinate_policy,
         )
+        _validate_extraction_metadata(metadata, path)
+
         channel_names = _channel_names(metadata, path, x.shape[1])
         channel_to_index = {name: channel_index for channel_index, name in enumerate(channel_names)}
         missing = [name for name in self.field_names if name not in channel_to_index]
@@ -110,15 +116,10 @@ class PrecomputedSlicePTDataset(Dataset[Sample]):
             raise ValueError(f"slice '{path}' does not contain requested fields {missing}")
 
         fields = {name: x[:, channel_to_index[name]] for name in self.field_names}
-        coords = reconstruct_slice_coordinates(
-            self._coords_2d,
-            axis=_axis(metadata, path),
-            slice_coordinate=_slice_coordinate(metadata, path),
-        )
-        if coords.dtype != x.dtype:
+        if self._coords_2d.dtype != x.dtype:
             raise TypeError(
                 f"slice fields and shared coordinates must share one dtype, got {x.dtype} "
-                f"and {coords.dtype}"
+                f"and {self._coords_2d.dtype}"
             )
 
         source_stem = _required_text(metadata, "source_stem", path)
@@ -130,18 +131,22 @@ class PrecomputedSlicePTDataset(Dataset[Sample]):
                 "shared_mesh_file": str(self.mesh_file),
                 "case_definition_file": str(self.case_file),
                 "split_group": source_stem,
-                "coordinate_reconstruction": "global_3d_from_axis_and_slice_coordinate",
+                "model_coordinate_policy": self.coordinate_policy,
+                "model_coordinate_dim": 2,
+                "slice_orientation_is_model_input": False,
                 "periodic_cross_boundary_edges": "not_augmented",
             }
         )
         mesh = Mesh(
-            coords=coords,
+            coords=self._coords_2d,
             edge_index=torch.empty((2, 0), dtype=torch.long),
             mesh_id=f"{self.case_id}:fixed_slice_grid",
             metadata={
                 "format": "precomputed_slice_pt",
                 "grid_shape_2d": self.grid_shape_2d,
                 "shared_mesh_file": str(self.mesh_file),
+                "coordinate_policy": self.coordinate_policy,
+                "coord_dim": 2,
                 "topology": "pending_geometry_cartesian_4_neighbor",
                 "periodic_cross_boundary_edges": "not_augmented",
             },
@@ -168,37 +173,6 @@ class PrecomputedSlicePTDataset(Dataset[Sample]):
         return _required_text(metadata, metadata_key, path)
 
 
-def reconstruct_slice_coordinates(
-    coords_2d: torch.Tensor,
-    *,
-    axis: str,
-    slice_coordinate: float,
-) -> torch.Tensor:
-    """Embed shared in-plane coordinates in the original global 3-D frame."""
-
-    if coords_2d.ndim != 2 or coords_2d.shape[1] != 2:
-        raise ValueError("coords_2d must have shape [N, 2]")
-    if not coords_2d.is_floating_point():
-        raise TypeError("coords_2d must use a floating-point dtype")
-    if not torch.isfinite(coords_2d).all():
-        raise ValueError("coords_2d contains NaN or Inf")
-    if axis not in _AXIS_IDS:
-        raise ValueError("axis must be one of: x, y, z")
-    if not isinstance(slice_coordinate, (int, float)) or isinstance(slice_coordinate, bool):
-        raise TypeError("slice_coordinate must be a real scalar")
-    coordinate = float(slice_coordinate)
-    if not isfinite(coordinate):
-        raise ValueError("slice_coordinate must be finite")
-
-    result = torch.empty((coords_2d.shape[0], 3), dtype=coords_2d.dtype, device=coords_2d.device)
-    normal_axis = _AXIS_IDS[axis]
-    in_plane = _IN_PLANE_AXES[axis]
-    result[:, normal_axis] = coordinate
-    result[:, in_plane[0]] = coords_2d[:, 0]
-    result[:, in_plane[1]] = coords_2d[:, 1]
-    return result
-
-
 def _load_shared_mesh(path: Path) -> tuple[torch.Tensor, dict[str, object]]:
     payload = _load_dict(path)
     coords = _required_tensor(payload, "coords", path)
@@ -209,9 +183,21 @@ def _load_shared_mesh(path: Path) -> tuple[torch.Tensor, dict[str, object]]:
         raise TypeError(f"shared slice mesh coords in '{path}' must use a floating-point dtype")
     if not torch.isfinite(coords).all():
         raise ValueError(f"shared slice mesh coords in '{path}' contain NaN or Inf")
+    if metadata.get("coord_dim") != 2:
+        raise ValueError("shared slice mesh metadata must declare coord_dim=2")
     if metadata.get("all_samples_share_coords") is not True:
         raise ValueError("shared slice mesh metadata must declare all_samples_share_coords=true")
+    _coordinate_policy(metadata, path)
     return coords, metadata
+
+
+def _coordinate_policy(metadata: dict[str, object], path: Path) -> str:
+    value = metadata.get("coordinate_policy")
+    if value != _COORDINATE_POLICY:
+        raise ValueError(
+            f"slice coordinate policy in '{path}' must be '{_COORDINATE_POLICY}', got {value!r}"
+        )
+    return _COORDINATE_POLICY
 
 
 def _grid_shape(metadata: dict[str, object], num_nodes: int) -> tuple[int, int]:
@@ -236,6 +222,7 @@ def _validate_sample_tensors(
     shared_coords: torch.Tensor,
     grid_shape: tuple[int, int],
     metadata: dict[str, object],
+    coordinate_policy: str,
 ) -> None:
     if x.ndim != 2 or x.shape[0] != shared_coords.shape[0]:
         raise ValueError(
@@ -252,8 +239,26 @@ def _validate_sample_tensors(
     raw_grid = metadata.get("grid_shape_2d")
     if raw_grid is not None and tuple(raw_grid) != grid_shape:
         raise ValueError(f"slice grid_shape_2d in '{path}' does not match the shared mesh")
+    if metadata.get("coord_dim") != 2:
+        raise ValueError(f"slice metadata in '{path}' must declare coord_dim=2")
     if metadata.get("all_samples_share_coords") is not True:
         raise ValueError(f"slice metadata in '{path}' must declare all_samples_share_coords=true")
+    if metadata.get("coordinate_policy") != coordinate_policy:
+        raise ValueError(f"slice coordinate_policy in '{path}' does not match the shared mesh")
+
+
+def _validate_extraction_metadata(metadata: dict[str, object], path: Path) -> None:
+    axis = _required_text(metadata, "axis", path)
+    if axis not in _AXIS_IDS:
+        raise ValueError(f"slice axis in '{path}' must be one of x, y, z")
+    axis_id = metadata.get("axis_id")
+    if axis_id != _AXIS_IDS[axis]:
+        raise ValueError(f"slice axis and axis_id disagree in '{path}'")
+    coordinate = metadata.get("slice_coordinate")
+    if not isinstance(coordinate, (int, float)) or isinstance(coordinate, bool):
+        raise TypeError(f"slice_coordinate in '{path}' must be a real scalar")
+    if not isfinite(float(coordinate)):
+        raise ValueError(f"slice_coordinate in '{path}' must be finite")
 
 
 def _channel_names(metadata: dict[str, object], path: Path, num_channels: int) -> tuple[str, ...]:
@@ -270,26 +275,6 @@ def _channel_names(metadata: dict[str, object], path: Path, num_channels: int) -
     if len(set(names)) != len(names):
         raise ValueError(f"slice channel_names in '{path}' contains duplicates")
     return names
-
-
-def _axis(metadata: dict[str, object], path: Path) -> str:
-    value = _required_text(metadata, "axis", path)
-    if value not in _AXIS_IDS:
-        raise ValueError(f"slice axis in '{path}' must be one of x, y, z")
-    raw_axis_id = metadata.get("axis_id")
-    if raw_axis_id is not None and raw_axis_id != _AXIS_IDS[value]:
-        raise ValueError(f"slice axis and axis_id disagree in '{path}'")
-    return value
-
-
-def _slice_coordinate(metadata: dict[str, object], path: Path) -> float:
-    value = metadata.get("slice_coordinate")
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise TypeError(f"slice_coordinate in '{path}' must be a real scalar")
-    coordinate = float(value)
-    if not isfinite(coordinate):
-        raise ValueError(f"slice_coordinate in '{path}' must be finite")
-    return coordinate
 
 
 def _required_text(metadata: dict[str, object], key: str, path: Path) -> str:
