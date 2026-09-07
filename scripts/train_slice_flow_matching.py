@@ -19,6 +19,7 @@ from scripts.train_slice_ablation import (
     _task_batch_to_device,
     _write_dataset_artifacts,
 )
+from torch.utils.tensorboard import SummaryWriter
 
 from graph_attention.data import PrecomputedSlicePTDataset, make_grouped_split_manifest
 from graph_attention.geometry import cartesian_4_neighbor_edge_index
@@ -167,58 +168,76 @@ def run_slice_flow_matching(cfg: DictConfig) -> dict[str, Any]:
     best_epoch = -1
     best_path = output_dir / "best.pt"
     last_path = output_dir / "last.pt"
+    tensorboard_dir = output_dir / "tensorboard"
+    global_step = 0
 
-    for epoch in range(max_epochs):
-        model.train()
-        train_loss_sum = 0.0
-        train_samples = 0
-        for host_batch in train_loader:
-            batch = _task_batch_to_device(host_batch, device=device, dtype=torch.float32)
-            scaled = device_standardizers.transform(batch)
-            flow_batch = task.make_training_problem(scaled, generator=path_generator)
-            result = train_equal_sample_optimizer_step(
+    with SummaryWriter(log_dir=str(tensorboard_dir)) as tensorboard:
+        for epoch in range(max_epochs):
+            model.train()
+            train_loss_sum = 0.0
+            train_samples = 0
+            for host_batch in train_loader:
+                batch = _task_batch_to_device(host_batch, device=device, dtype=torch.float32)
+                scaled = device_standardizers.transform(batch)
+                flow_batch = task.make_training_problem(scaled, generator=path_generator)
+                result = train_equal_sample_optimizer_step(
+                    model,
+                    optimizer,
+                    [flow_batch],
+                    local_sample_count=flow_batch.num_graphs,
+                )
+                step_flow_mse = float(result.objective.cpu())
+                train_loss_sum += step_flow_mse * result.local_sample_count
+                train_samples += result.local_sample_count
+                tensorboard.add_scalar("flow_velocity_mse/train_step", step_flow_mse, global_step)
+                global_step += 1
+
+            validation_flow_mse = _evaluate_flow_matching(
+                model,
+                validation_loader,
+                task=task,
+                standardizers=device_standardizers,
+                device=device,
+            )
+            train_flow_mse = train_loss_sum / train_samples
+            history.append(
+                {
+                    "epoch": epoch,
+                    "train_flow_velocity_mse": train_flow_mse,
+                    "validation_flow_velocity_mse": validation_flow_mse,
+                }
+            )
+            tensorboard.add_scalar("flow_velocity_mse/train_epoch", train_flow_mse, epoch)
+            tensorboard.add_scalar(
+                "flow_velocity_mse/validation_epoch",
+                validation_flow_mse,
+                epoch,
+            )
+            tensorboard.add_scalar(
+                "optimizer/learning_rate",
+                float(optimizer.param_groups[0]["lr"]),
+                epoch,
+            )
+            tensorboard.flush()
+            print(
+                f"epoch={epoch:04d} train_flow_velocity_mse={train_flow_mse:.8e} "
+                f"validation_flow_velocity_mse={validation_flow_mse:.8e}"
+            )
+
+            checkpoint = _checkpoint_payload(
                 model,
                 optimizer,
-                [flow_batch],
-                local_sample_count=flow_batch.num_graphs,
+                epoch=epoch,
+                validation_flow_mse=validation_flow_mse,
+                runtime_provenance=runtime_provenance,
+                initialization=initialization,
+                path_seed=path_seed,
             )
-            train_loss_sum += float(result.objective.cpu()) * result.local_sample_count
-            train_samples += result.local_sample_count
-
-        validation_flow_mse = _evaluate_flow_matching(
-            model,
-            validation_loader,
-            task=task,
-            standardizers=device_standardizers,
-            device=device,
-        )
-        train_flow_mse = train_loss_sum / train_samples
-        history.append(
-            {
-                "epoch": epoch,
-                "train_flow_velocity_mse": train_flow_mse,
-                "validation_flow_velocity_mse": validation_flow_mse,
-            }
-        )
-        print(
-            f"epoch={epoch:04d} train_flow_velocity_mse={train_flow_mse:.8e} "
-            f"validation_flow_velocity_mse={validation_flow_mse:.8e}"
-        )
-
-        checkpoint = _checkpoint_payload(
-            model,
-            optimizer,
-            epoch=epoch,
-            validation_flow_mse=validation_flow_mse,
-            runtime_provenance=runtime_provenance,
-            initialization=initialization,
-            path_seed=path_seed,
-        )
-        torch.save(checkpoint, last_path)
-        if validation_flow_mse < best_validation:
-            best_validation = validation_flow_mse
-            best_epoch = epoch
-            torch.save(checkpoint, best_path)
+            torch.save(checkpoint, last_path)
+            if validation_flow_mse < best_validation:
+                best_validation = validation_flow_mse
+                best_epoch = epoch
+                torch.save(checkpoint, best_path)
 
     best = torch.load(best_path, map_location=device, weights_only=True)
     model.load_state_dict(best["model_state_dict"])
@@ -258,6 +277,7 @@ def run_slice_flow_matching(cfg: DictConfig) -> dict[str, Any]:
         "best_validation_flow_velocity_mse": best_validation,
         "test_flow_velocity_mse_at_best_validation": test_flow_mse,
         "generation": generation_metrics,
+        "tensorboard_log_dir": tensorboard_dir.name,
         "num_samples": len(dataset),
         "num_train_samples": len(train_indices),
         "num_validation_samples": len(validation_indices),
