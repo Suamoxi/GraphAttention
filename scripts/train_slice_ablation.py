@@ -30,6 +30,9 @@ from graph_attention.training import (
 )
 from graph_attention.utils.provenance import collect_runtime_provenance
 
+_M8_TARGET = "graph_attention.models.SparseGraphTransformer"
+_M9_TARGET = "graph_attention.models.GeometricSparseGraphTransformer"
+
 
 class _NodeRegressionCollator:
     """Attach frozen Cartesian topology and prepare one packed task batch."""
@@ -79,15 +82,9 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
     output_dir = Path(str(settings.output_root)).expanduser().resolve() / run_name
     if output_dir.exists():
         raise FileExistsError(f"ablation output directory already exists: {output_dir}")
-    output_dir.mkdir(parents=True)
 
     repo_root = Path(__file__).resolve().parents[1]
-    OmegaConf.save(cfg, output_dir / "resolved_config.yaml", resolve=True)
     runtime_provenance = collect_runtime_provenance(repo_root)
-
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
 
     dataset = instantiate(cfg.data)
     if not isinstance(dataset, PrecomputedSlicePTDataset):
@@ -121,10 +118,14 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
         dataset.field_catalog,
         split,
     )
+
+    output_dir.mkdir(parents=True, exist_ok=False)
+    OmegaConf.save(cfg, output_dir / "resolved_config.yaml", resolve=True)
     _write_dataset_artifacts(
         output_dir,
         dataset=dataset,
         group_ids=group_ids,
+        group_key=group_key,
         split=split,
         runtime_provenance=runtime_provenance,
         standardizers=standardizers,
@@ -140,7 +141,6 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
         collator=collator,
         shuffle=True,
         seed=seed,
-        pin_memory=bool(settings.pin_memory),
     )
     validation_loader = _loader(
         dataset,
@@ -150,7 +150,6 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
         collator=collator,
         shuffle=False,
         seed=seed,
-        pin_memory=bool(settings.pin_memory),
     )
     test_loader = _loader(
         dataset,
@@ -160,11 +159,11 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
         collator=collator,
         shuffle=False,
         seed=seed,
-        pin_memory=bool(settings.pin_memory),
     )
 
     probe = next(iter(validation_loader))
-    model = _instantiate_model(cfg.model, probe).to(device=device, dtype=torch.float32)
+    model, initialization = _instantiate_model(cfg.model, probe, seed=seed)
+    model = model.to(device=device, dtype=torch.float32)
     optimizer = instantiate(cfg.optimizer, params=model.parameters())
     device_standardizers = standardizers.to(device=device, dtype=torch.float32)
 
@@ -190,41 +189,44 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
             train_loss_sum += float(result.objective.cpu()) * result.local_sample_count
             train_samples += result.local_sample_count
 
-        validation_mse = _evaluate(
+        validation_standardized, validation_nondimensional = _evaluate(
             model,
             validation_loader,
             standardizers=device_standardizers,
             device=device,
         )
-        train_mse = train_loss_sum / train_samples
+        train_standardized = train_loss_sum / train_samples
         history.append(
             {
                 "epoch": epoch,
-                "train_optimizer_mse": train_mse,
-                "validation_mse": validation_mse,
+                "train_standardized_mse": train_standardized,
+                "validation_standardized_mse": validation_standardized,
+                "validation_nondimensional_mse": validation_nondimensional,
             }
         )
         print(
-            f"epoch={epoch:04d} train_optimizer_mse={train_mse:.8e} "
-            f"validation_mse={validation_mse:.8e}"
+            f"epoch={epoch:04d} train_standardized_mse={train_standardized:.8e} "
+            f"validation_standardized_mse={validation_standardized:.8e} "
+            f"validation_nondimensional_mse={validation_nondimensional:.8e}"
         )
 
         checkpoint = _checkpoint_payload(
             model,
             optimizer,
             epoch=epoch,
-            validation_mse=validation_mse,
+            validation_standardized_mse=validation_standardized,
             runtime_provenance=runtime_provenance,
+            initialization=initialization,
         )
         torch.save(checkpoint, last_path)
-        if validation_mse < best_validation:
-            best_validation = validation_mse
+        if validation_standardized < best_validation:
+            best_validation = validation_standardized
             best_epoch = epoch
             torch.save(checkpoint, best_path)
 
     best = torch.load(best_path, map_location=device, weights_only=True)
     model.load_state_dict(best["model_state_dict"])
-    test_mse = _evaluate(
+    test_standardized, test_nondimensional = _evaluate(
         model,
         test_loader,
         standardizers=device_standardizers,
@@ -232,18 +234,27 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
     )
     _write_history(output_dir / "history.csv", history)
 
+    group_by_sample = dict(zip(dataset.sample_ids, group_ids, strict=True))
     summary = {
         "run_name": run_name,
         "model": type(model).__name__,
         "model_parameters": sum(parameter.numel() for parameter in model.parameters()),
+        "initialization": initialization,
         "best_epoch": best_epoch,
-        "best_validation_mse": best_validation,
-        "test_mse_at_best_validation": test_mse,
+        "selection_metric": "validation_standardized_mse",
+        "best_validation_standardized_mse": best_validation,
+        "test_standardized_mse_at_best_validation": test_standardized,
+        "test_nondimensional_mse_at_best_validation": test_nondimensional,
         "num_samples": len(dataset),
         "num_train_samples": len(train_indices),
         "num_validation_samples": len(validation_indices),
         "num_test_samples": len(test_indices),
         "num_groups": len(set(group_ids)),
+        "num_train_groups": len({group_by_sample[value] for value in split.train_ids}),
+        "num_validation_groups": len(
+            {group_by_sample[value] for value in split.validation_ids}
+        ),
+        "num_test_groups": len({group_by_sample[value] for value in split.test_ids}),
         "grid_shape_2d": list(dataset.grid_shape_2d),
         "nodes_per_slice": dataset.grid_shape_2d[0] * dataset.grid_shape_2d[1],
         "directed_edges_per_slice": int(edge_index.shape[1]),
@@ -259,21 +270,60 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
     return summary
 
 
-def _instantiate_model(model_cfg: DictConfig, probe: NodeRegressionBatch) -> torch.nn.Module:
-    kwargs: dict[str, Any] = {
+def _instantiate_model(
+    model_cfg: DictConfig,
+    probe: NodeRegressionBatch,
+    *,
+    seed: int,
+) -> tuple[torch.nn.Module, dict[str, Any]]:
+    target = str(model_cfg.get("_target_", ""))
+    if target not in {_M8_TARGET, _M9_TARGET}:
+        raise TypeError("slice ablation compares only the frozen M8 and M9 model classes")
+
+    common = {
         "in_channels": probe.inputs.shape[1],
         "out_channels": probe.targets.shape[1],
+        "hidden_dim": int(model_cfg.hidden_dim),
+        "num_heads": int(model_cfg.num_heads),
+        "num_layers": int(model_cfg.num_layers),
+        "mlp_ratio": int(model_cfg.mlp_ratio),
         "conditioning_channels": probe.conditioning.shape[1],
     }
-    if "spatial_dim" in model_cfg:
-        kwargs["spatial_dim"] = probe.coords.shape[1]
-    model = instantiate(model_cfg, **kwargs)
-    if not isinstance(model, (SparseGraphTransformer, GeometricSparseGraphTransformer)):
-        raise TypeError(
-            "slice ablation compares SparseGraphTransformer and "
-            "GeometricSparseGraphTransformer"
+
+    torch.manual_seed(seed)
+    reference = SparseGraphTransformer(**common)
+    if target == _M8_TARGET:
+        return reference, {
+            "policy": "shared_m8_reference_initialization",
+            "shared_parameter_seed": seed,
+            "geometry_parameter_seed": None,
+        }
+
+    geometry_seed = seed + 1
+    torch.manual_seed(geometry_seed)
+    model = GeometricSparseGraphTransformer(
+        **common,
+        spatial_dim=probe.coords.shape[1],
+    )
+    incompatible = model.load_state_dict(reference.state_dict(), strict=False)
+    if incompatible.unexpected_keys:
+        raise RuntimeError(
+            f"unexpected keys while matching M8/M9 initialization: {incompatible.unexpected_keys}"
         )
-    return model
+    expected_geometry_keys = sorted(
+        name for name in model.state_dict() if ".geometry_mlp." in name
+    )
+    if sorted(incompatible.missing_keys) != expected_geometry_keys:
+        raise RuntimeError(
+            "M8/M9 shared-parameter initialization mismatch: "
+            f"missing={sorted(incompatible.missing_keys)}, expected={expected_geometry_keys}"
+        )
+    return model, {
+        "policy": "matched_m8_shared_parameters_plus_m9_geometry",
+        "shared_parameter_seed": seed,
+        "geometry_parameter_seed": geometry_seed,
+        "geometry_parameter_names": expected_geometry_keys,
+    }
 
 
 def _loader(
@@ -285,7 +335,6 @@ def _loader(
     collator: _NodeRegressionCollator,
     shuffle: bool,
     seed: int,
-    pin_memory: bool,
 ) -> DataLoader[NodeRegressionBatch]:
     generator = torch.Generator().manual_seed(seed)
     return DataLoader(
@@ -295,7 +344,7 @@ def _loader(
         num_workers=num_workers,
         collate_fn=collator,
         generator=generator,
-        pin_memory=pin_memory,
+        pin_memory=False,
         persistent_workers=num_workers > 0,
         drop_last=False,
     )
@@ -307,9 +356,10 @@ def _evaluate(
     *,
     standardizers: Any,
     device: torch.device,
-) -> float:
+) -> tuple[float, float]:
     model.eval()
-    total_loss = 0.0
+    standardized_loss_sum = 0.0
+    nondimensional_loss_sum = 0.0
     total_samples = 0
     with torch.inference_mode():
         for host_batch in loader:
@@ -322,17 +372,28 @@ def _evaluate(
                 batch_index=prepared.batch_index,
                 conditioning=prepared.conditioning,
             )
-            aggregate = sample_reduced_mse(
+            standardized = sample_reduced_mse(
                 predictions,
                 prepared.targets,
                 prepared.ptr,
                 node_weights=prepared.node_weights,
             )
-            total_loss += float(aggregate.loss_sum.cpu())
-            total_samples += aggregate.sample_count
+            nondimensional_predictions = standardizers.inverse_targets(
+                predictions,
+                prepared.target_channels,
+            )
+            nondimensional = sample_reduced_mse(
+                nondimensional_predictions,
+                batch.targets,
+                batch.ptr,
+                node_weights=batch.node_weights,
+            )
+            standardized_loss_sum += float(standardized.loss_sum.cpu())
+            nondimensional_loss_sum += float(nondimensional.loss_sum.cpu())
+            total_samples += standardized.sample_count
     if total_samples == 0:
         raise ValueError("evaluation loader contains no samples")
-    return total_loss / total_samples
+    return standardized_loss_sum / total_samples, nondimensional_loss_sum / total_samples
 
 
 def _task_batch_to_device(
@@ -345,10 +406,10 @@ def _task_batch_to_device(
     return replace(
         batch,
         source=source,
-        coords=batch.coords.to(device=device, dtype=dtype, non_blocking=True),
-        inputs=batch.inputs.to(device=device, dtype=dtype, non_blocking=True),
-        targets=batch.targets.to(device=device, dtype=dtype, non_blocking=True),
-        conditioning=batch.conditioning.to(device=device, dtype=dtype, non_blocking=True),
+        coords=batch.coords.to(device=device, dtype=dtype),
+        inputs=batch.inputs.to(device=device, dtype=dtype),
+        targets=batch.targets.to(device=device, dtype=dtype),
+        conditioning=batch.conditioning.to(device=device, dtype=dtype),
     )
 
 
@@ -360,12 +421,12 @@ def _packed_structure_to_device(
 ) -> PackedBatch:
     node_weights = packed.node_weights
     if node_weights is not None:
-        node_weights = node_weights.to(device=device, dtype=dtype, non_blocking=True)
+        node_weights = node_weights.to(device=device, dtype=dtype)
     return replace(
         packed,
-        edge_index=packed.edge_index.to(device=device, non_blocking=True),
-        batch_index=packed.batch_index.to(device=device, non_blocking=True),
-        ptr=packed.ptr.to(device=device, non_blocking=True),
+        edge_index=packed.edge_index.to(device=device),
+        batch_index=packed.batch_index.to(device=device),
+        ptr=packed.ptr.to(device=device),
         node_weights=node_weights,
     )
 
@@ -375,13 +436,14 @@ def _write_dataset_artifacts(
     *,
     dataset: PrecomputedSlicePTDataset,
     group_ids: tuple[str, ...],
+    group_key: str,
     split: Any,
     runtime_provenance: dict[str, Any],
     standardizers: Any,
 ) -> None:
     group_by_sample = dict(zip(dataset.sample_ids, group_ids, strict=True))
     payload = {
-        "seed_grouping_source": "metadata.source_stem",
+        "group_metadata_key": group_key,
         "sample_files": [str(path) for path in dataset.files],
         "shared_mesh_file": str(dataset.mesh_file),
         "case_definition_file": str(dataset.case_file),
@@ -421,16 +483,18 @@ def _checkpoint_payload(
     optimizer: torch.optim.Optimizer,
     *,
     epoch: int,
-    validation_mse: float,
+    validation_standardized_mse: float,
     runtime_provenance: dict[str, Any],
+    initialization: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "epoch": epoch,
-        "validation_mse": validation_mse,
+        "validation_standardized_mse": validation_standardized_mse,
         "model_class": type(model).__name__,
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "runtime_provenance": runtime_provenance,
+        "initialization": initialization,
     }
 
 
@@ -438,7 +502,12 @@ def _write_history(path: Path, rows: list[dict[str, float | int]]) -> None:
     with path.open("w", newline="") as stream:
         writer = csv.DictWriter(
             stream,
-            fieldnames=("epoch", "train_optimizer_mse", "validation_mse"),
+            fieldnames=(
+                "epoch",
+                "train_standardized_mse",
+                "validation_standardized_mse",
+                "validation_nondimensional_mse",
+            ),
         )
         writer.writeheader()
         writer.writerows(rows)
