@@ -38,7 +38,11 @@ def test_reverse_edges_have_opposite_relative_displacement() -> None:
     ("coords", "edge_index", "error"),
     [
         (torch.zeros(3), torch.empty((2, 0), dtype=torch.long), ValueError),
-        (torch.zeros((3, 2), dtype=torch.long), torch.empty((2, 0), dtype=torch.long), TypeError),
+        (
+            torch.zeros((3, 2), dtype=torch.long),
+            torch.empty((2, 0), dtype=torch.long),
+            TypeError,
+        ),
         (torch.zeros((3, 2)), torch.zeros((2, 1), dtype=torch.int32), TypeError),
         (torch.zeros((3, 2)), torch.tensor([[0], [3]], dtype=torch.long), ValueError),
     ],
