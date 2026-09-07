@@ -4,7 +4,7 @@
 
 M8 introduces the first graph-aware learnable model in the repository: a transformer whose attention is evaluated only on explicitly supplied directed one-hop mesh edges.
 
-Implementation and scientific-property validation are present. Target GPU performance evidence remains pending until the M8 benchmark is run on Calypso. Until then, M8 performance evidence is `ANALYTICAL` only.
+M8 is complete and target-validated for the frozen single-GPU reference scope. The scientific/software gate passed with 145 tests on Calypso, and job `400187` produced `TARGET_VALIDATED` synthetic S3 and real `HIT_LES_FORCED` measurements on one NVIDIA GH200 480GB. Job `400194` then isolated the synthetic high-degree backward-performance pathology at nearly fixed node/edge counts.
 
 ## 1. Scope
 
@@ -166,7 +166,7 @@ node hidden storage:          O(N * H)
 
 This is an analytical complexity statement, not a target-throughput claim.
 
-The current implementation materializes per-edge value messages before `index_add_`. That is simple and transparent but may not be the optimal memory/kernel strategy. M8 target benchmarking is required before deciding whether a specialized scatter/sparse backend is justified.
+The current implementation materializes per-edge value messages before `index_add_`. That is simple and transparent but may not be the optimal memory/kernel strategy.
 
 ## 8. Numerical softmax convention
 
@@ -222,13 +222,6 @@ Those values define a benchmark workload only; they are not claimed to be optima
 M8 adds `scripts/benchmark_m8.py`, using the M7 measurement protocol and the same synthetic S3 / real HIT workload classes.
 
 Unlike M7, M8 forward/training measurements legitimately report edge throughput because the model consumes `edge_index` in every transformer layer.
-
-Before any M8 target performance claim, collect at least:
-
-- synthetic S3 single-GPU `TARGET_VALIDATED` result;
-- real `HIT_LES_FORCED` single-GPU `TARGET_VALIDATED` result;
-- exact model hyperparameters and parameter count;
-- latency, node throughput, edge throughput, and CUDA allocator peaks.
 
 Comparison with M7 is valid only as a comparison with the null-model framework floor, not as an assertion that both models perform equivalent computation.
 
@@ -290,6 +283,75 @@ It does not silently add edges, alter topology, cast model/input dtypes, or chan
 
 The native-PyTorch implementation minimizes dependencies and gives a transparent scientific reference, but it materializes `O(E * hidden_dim)` messages. A fused/specialized backend may later reduce memory traffic or kernel-launch overhead.
 
-No backend replacement should be made on advertisement or asymptotic arguments alone. The M8 reference must first be target-benchmarked, after which a specialized implementation can be compared under identical scientific equations and workloads.
-
 The deliberate absence of geometry makes M8 scientifically incomplete as a final CFD attention model, but it isolates the effect of sparse one-hop attention. This follows the repository rule that scientifically meaningful architecture changes should normally be introduced and ablated one at a time.
+
+## 17. Target-validated reference results
+
+### 17.1 Environment
+
+The reference M8 target run was Slurm job `400187` on `calypso-grace01`:
+
+- one NVIDIA GH200 480GB;
+- Python 3.12.3;
+- PyTorch `2.7.0a0+7c8ec84dab.nv25.03`;
+- CUDA 12.8;
+- FP32;
+- clean git SHA `dea85e8645d614992a34003b1998d4f1a7e58261`;
+- 10 warmup iterations;
+- 50 measured repetitions.
+
+The exact-runtime sparse-transformer and benchmark tests passed before the target measurements.
+
+### 17.2 Synthetic S3
+
+Workload:
+
+- 4 graphs;
+- 32,768 nodes;
+- 65,530 directed attention edges;
+- 793,473 model parameters.
+
+Measured medians:
+
+- forward: `3.080824 ms`;
+- training iteration: `90.320989 ms`;
+- forward incremental CUDA allocation: `226,492,416 B`;
+- training incremental CUDA allocation: `1,568,512,512 B`.
+
+The S3 graph mixture includes a high-degree star and is therefore retained as a pathological degree-concentration stress workload rather than interpreted as a regular-mesh performance proxy.
+
+### 17.3 Real HIT
+
+Workload:
+
+- 1 graph;
+- 35,937 nodes;
+- 209,088 directed attention edges;
+- 794,245 model parameters;
+- five conservative state channels -> same five channels;
+- physical nondimensionalization enabled;
+- periodic cross-boundary edges still not augmented.
+
+Measured medians:
+
+- forward: `5.340633 ms`;
+- training iteration: `17.729627 ms`;
+- forward incremental CUDA allocation: `544,755,712 B`;
+- training incremental CUDA allocation: `2,925,629,952 B`.
+
+This is the primary M8 physical-target performance reference for subsequent M9 comparison.
+
+### 17.4 Degree-concentration diagnostic
+
+Slurm job `400194` kept approximately 32,768 nodes and 65,530 directed edges while changing the synthetic topology composition:
+
+| Case | Topology | Forward median | Training median |
+|---|---|---:|---:|
+| G1 | chain | 2.7497 ms | 11.0827 ms |
+| G2 | chain + cycle | 2.7376 ms | 11.3208 ms |
+| G3 | chain + cycle + star | 3.1741 ms | 116.9898 ms |
+| G4 | original S3 | 3.0740 ms | 90.0502 ms |
+
+The G2 -> G3 transition leaves node/edge counts almost unchanged but introduces one extreme-degree hub and increases training latency by more than 10x. This establishes that `N` and `E` alone are insufficient descriptors of sparse GPU training cost. The evidence is consistent with severe contention/inefficiency in the native scatter/reduction backward path, although isolating the exact CUDA kernel would require profiling.
+
+Memory remained essentially unchanged across these four cases, so the effect is a runtime-efficiency pathology rather than a capacity/OOM effect.
