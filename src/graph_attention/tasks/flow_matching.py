@@ -211,7 +211,7 @@ def _sample_generator(
 ) -> torch.Generator:
     if not sample_id:
         raise ValueError("deterministic flow matching requires non-empty sample IDs")
-    payload = f"{seed}\0{purpose}\0{sample_id}".encode("utf-8")
+    payload = f"{seed}\0{purpose}\0{sample_id}".encode()
     hashed = int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "little")
     manual_seed = hashed % (2**63 - 1)
     return torch.Generator(device=device).manual_seed(manual_seed)

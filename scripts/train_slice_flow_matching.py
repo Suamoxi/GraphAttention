@@ -12,9 +12,9 @@ import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from scripts.train_slice_ablation import (
-    _NodeRegressionCollator,
     _instantiate_model,
     _loader,
+    _NodeRegressionCollator,
     _positive_int,
     _task_batch_to_device,
     _write_dataset_artifacts,
@@ -365,8 +365,7 @@ def _generate_test_samples(
             target_nondimensional_parts.append(batch.inputs.cpu())
             sample_ids.extend(batch.source.sample_ids)
             node_counts.extend(
-                int(value)
-                for value in (batch.ptr[1:] - batch.ptr[:-1]).detach().cpu().tolist()
+                int(value) for value in (batch.ptr[1:] - batch.ptr[:-1]).detach().cpu().tolist()
             )
 
     if channel_names is None:
@@ -421,9 +420,7 @@ def _marginal_generation_metrics(
         generated_channel = generated64[:, index]
         target_channel = target64[:, index]
         wasserstein_1 = torch.mean(
-            torch.abs(
-                torch.sort(generated_channel).values - torch.sort(target_channel).values
-            )
+            torch.abs(torch.sort(generated_channel).values - torch.sort(target_channel).values)
         )
         result[name] = {
             "generated_mean": float(generated_channel.mean()),
