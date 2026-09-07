@@ -125,6 +125,7 @@ def train_equal_sample_optimizer_step(
                     predictions = model(
                         prepared.inputs,
                         edge_index=prepared.edge_index,
+                        coords=prepared.coords,
                         batch_index=prepared.batch_index,
                         conditioning=prepared.conditioning,
                     )
