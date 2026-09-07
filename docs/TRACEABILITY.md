@@ -73,7 +73,7 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Node-local affine baseline `y_i = W[x_i,c_g] + b` | Null geometric baseline | `docs/M5_TASK_BASELINE.md` §7-9, `docs/SCIENTIFIC_SPEC.md` §16 | `NodeLinearBaseline` | baseline shape, conditioning, packed-vs-independent, and permutation tests | TARGET_VALIDATED M5 2026-09-03; no CFD performance claim |
 | Sample-balanced train-only statistical scaling | Project numerical convention for variable meshes | `docs/NUMERICAL_CONVENTIONS.md` §18, `docs/M6_TRAINING_CORRECTNESS.md` §2-4 | `ChannelStandardizer`, `TaskStandardizers`, `fit_train_standardizers` | `tests/unit/test_training_scaling.py` + full 122-test Calypso gate | TARGET_VALIDATED M6 2026-09-03; performance evidence ANALYTICAL |
 | Statistical batch independent of microbatch composition | Project numerical requirement | `docs/NUMERICAL_CONVENTIONS.md` §5, §18, `docs/M6_TRAINING_CORRECTNESS.md` §6 | `train_equal_sample_optimizer_step` | `tests/unit/test_training_step.py` gradient/update partition-equivalence test | TARGET_VALIDATED M6 2026-09-03 |
-| Per-sample MSE with optional spatial weights | Project baseline regression objective + established weighted integration form | `docs/SCIENTIFIC_SPEC.md` §17, `docs/NUMERICAL_CONVENTIONS.md` §6, §18, `docs/M6_TRAINING_CORRECTNESS.md` §5 | `sample_reduced_mse` | `tests/unit/test_training_losses.py` + full M6 Calypso gate | TARGET_VALIDATED M6 2026-09-03; AVBP physical node-quadrature semantics remain unresolved |
+| Per-sample MSE with optional spatial weights | Project baseline regression objective + established weighted integration form | `docs/SCIENTIFIC_SPEC.md` §17, `docs/NUMERICAL_CONVENTIONS.md` §6, §18 | `sample_reduced_mse` | `tests/unit/test_training_losses.py` + full M6 Calypso gate | TARGET_VALIDATED M6 2026-09-03; AVBP physical node-quadrature semantics remain unresolved |
 | DDP global sample-weight consistency | Project distributed-training requirement | `docs/NUMERICAL_CONVENTIONS.md` §7, §18, `docs/M6_TRAINING_CORRECTNESS.md` §7-10 | `equal_sample_ddp_backward_scale`, `train_equal_sample_optimizer_step` | analytical unit test + `scripts/validate_m6_ddp.py` two-rank global-update comparison | TARGET_VALIDATED correctness on Calypso CPU/Gloo 2026-09-03; GPU/NCCL performance unclaimed |
 | Autocast-compatible regression loss | Project numerical training convention using native PyTorch autocast | `docs/NUMERICAL_CONVENTIONS.md` §14, §18, `docs/M6_TRAINING_CORRECTNESS.md` §9 | `sample_reduced_mse`, `train_equal_sample_optimizer_step` | CPU BF16 unit smoke test | TARGET_VALIDATED for tested CPU path in M6; CUDA BF16/FP16 target validation deferred |
 | Field catalogue with semantic roles | Project data contract | `docs/SCIENTIFIC_SPEC.md` §5-7, `docs/M2_DATA_CONTRACTS.md` | `FieldSpec`, `FieldCatalog`, `AVBP_FIELD_CATALOG` | field-contract and AVBP-reader tests | Implemented M2/M3.2 |
@@ -94,9 +94,10 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Relative-displacement geometric attention bias | Project adaptation | `docs/SCIENTIFIC_SPEC.md` §19, `docs/M9_GEOMETRIC_ATTENTION.md` §1-6 | `GeometricSparseMultiheadAttention`, `GeometricSparseGraphTransformerBlock`, `GeometricSparseGraphTransformer` | explicit geometric-attention reference, geometry sensitivity, translation, packed-vs-independent, node-renumbering, training integration tests | TARGET_VALIDATED M9 software/scientific and FP32 single-GH200 performance scope; job `403939` |
 | M9 geometry uses displacement only, no explicit distance | Project scientific/ablation decision | `docs/M9_GEOMETRIC_ATTENTION.md` §2, `docs/NUMERICAL_CONVENTIONS.md` §20 | `edge_relative_displacement`, `GeometricSparseMultiheadAttention.geometry_mlp` | relative-geometry tests + M9 explicit reference | TARGET_VALIDATED for frozen M9 reference; explicit-distance inductive bias remains a separate deferred ablation |
 | Geometric sparse-transformer performance reference | Measured result | `docs/M9_GEOMETRIC_ATTENTION.md` §10-11 | `scripts/benchmark_m9.py` | job `403939`, one NVIDIA GH200 480GB, FP32, clean SHA `83e160846badb151eef0a09c2f1e2234da22bc24` | TARGET_VALIDATED 2026-09-07: S3 forward/training 3.4138/90.9458 ms; real HIT 5.7989/18.7044 ms; modest overhead versus M8 and no new performance pathology observed |
-| diffusion4avbp fixed-slice artifact adapter | Project data/provenance adaptation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §2 | `PrecomputedSlicePTDataset` | `tests/unit/test_slice_pt.py` + required real-artifact smoke | Implemented on M10 work branch; software/real-data validation pending |
+| diffusion4avbp fixed-slice artifact adapter | Project data/provenance adaptation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §2 | `PrecomputedSlicePTDataset` | `tests/unit/test_slice_pt.py` + required real-artifact smoke | Implemented M10; real-data validation pending |
 | Grouped split by source 3-D snapshot | Project anti-leakage convention reproduced from diffusion4avbp | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §3 | `make_grouped_split_manifest`, `PrecomputedSlicePTDataset.group_id` | `tests/unit/test_grouped_splits.py` + required real split-overlap check | Implemented M10; target data validation pending |
-| Slice 2-D coordinates reconstructed in global 3-D frame | Project geometry convention | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §4 | `reconstruct_slice_coordinates` | x/y/z orientation tests in `tests/unit/test_slice_pt.py` | Implemented M10; real artifact orientation smoke pending |
+| Shared canonical 2-D slice coordinates preserved as model geometry | Project geometry convention | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §4 | `PrecomputedSlicePTDataset` | exact shared-coordinate and x/y/z extraction-orientation independence tests in `tests/unit/test_slice_pt.py` | Implemented M10 correction; real-artifact training smoke pending |
+| Slice extraction orientation excluded from first model input | Project ablation-control decision | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §4 | slice metadata retained as provenance only | `tests/unit/test_slice_pt.py` verifies axis/slice-coordinate changes do not change `Mesh.coords` | Implemented M10 correction; explicit orientation conditioning deferred |
 | Non-periodic bidirectional Cartesian 4-neighbour slice topology | Project geometry hypothesis for first controlled ablation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §5 | `cartesian_4_neighbor_edge_index` | exact 2x3 reference and edge-case tests | Implemented M10; periodic wrap topology deliberately deferred |
 | HIT slice task `[rhou,rhov,rhow,rhoE] -> rho` | Project scientific ablation task | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §1, §6 | `configs/task/hit_density_regression.yaml`, `NodeRegressionTask` | config/task integration + full training smoke required | Implemented M10; learning evidence pending |
 | M8-vs-M9 held-out learning comparison | Project hypothesis | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §7-9 | `scripts/train_slice_ablation.py` | matched-run smoke, then frozen full runs; multiple seeds if difference is small | No learning claim yet; experiment pending |
@@ -211,10 +212,12 @@ Source artifact:
 Scientific definition:
     task [rhou, rhov, rhow, rhoE] -> rho;
     split groups are authoritative metadata.source_stem values;
-    source 2-D coordinates are reconstructed into the original global 3-D frame;
+    stored shared 2-D coordinates are preserved directly as model geometry;
+    extraction axis/slice-coordinate metadata are provenance only, not model inputs;
+    M9 uses canonical 2-D relative displacement with spatial_dim=2;
     topology is non-periodic bidirectional Cartesian 4-neighbour connectivity.
 Repository modification:
-    adds only the data adapter, deterministic slice geometry, grouped split generation,
+    adds the data adapter, deterministic slice geometry, grouped split generation,
     experiment configuration, and dedicated first-ablation training runner;
     M8/M9 equations and M6 loss/scaling are reused unchanged.
 Implementation path:
@@ -227,14 +230,17 @@ Configuration:
     configs/task/hit_density_regression.yaml
     configs/ablation/hit_slice.yaml
 Scientific tests:
-    metadata-based grouping and orientation
-    global x/y/z coordinate reconstruction
+    metadata-based grouping
+    exact shared 2-D coordinate preservation
+    extraction-orientation independence of model coordinates
     grouped split zero-overlap
     exact Cartesian topology reference
 Experiment evidence:
     pending real-artifact smoke and matched M8/M9 Calypso training runs
 Known limitations:
-    periodic wrap edges deferred; first runner is single-process FP32;
+    canonical 2-D geometry is not a global 3-D directional frame;
+    periodic wrap edges and explicit slice-orientation conditioning are deferred;
+    first runner is single-process FP32;
     one seed is insufficient for a robustness claim if M8/M9 differences are small
 ```
 
