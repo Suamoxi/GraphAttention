@@ -17,7 +17,8 @@ from .contracts import (
     Sample,
 )
 from .nondimensionalization import ConvectiveNondimensionalizer
-from .splits import SplitManifest, SplitName
+from .slice_pt import PrecomputedSlicePTDataset, reconstruct_slice_coordinates
+from .splits import SplitManifest, SplitName, make_grouped_split_manifest
 from .synthetic import SyntheticMeshDataset
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "Mesh",
     "MicrobatchBudget",
     "PackedBatch",
+    "PrecomputedSlicePTDataset",
     "ReferenceScale",
     "ReferenceScales",
     "ReferenceScope",
@@ -44,6 +46,8 @@ __all__ = [
     "SyntheticMeshDataset",
     "load_case_definition",
     "load_case_definitions",
+    "make_grouped_split_manifest",
     "pack_samples",
     "partition_samples_by_budget",
+    "reconstruct_slice_coordinates",
 ]

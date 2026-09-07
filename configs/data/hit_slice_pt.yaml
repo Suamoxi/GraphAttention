@@ -1,0 +1,12 @@
+_target_: graph_attention.data.PrecomputedSlicePTDataset
+data_dir: /scratch/coop/theret/HIT_LES_FORCED_SLICED/samples
+mesh_file: /scratch/coop/theret/HIT_LES_FORCED_SLICED/meshes/slice_mesh.pt
+case_file: ${hydra:runtime.cwd}/cases/HIT_LES_FORCED.yaml
+case_id: HIT_LES_FORCED
+file_pattern: "*.pt"
+field_names:
+  - rho
+  - rhou
+  - rhov
+  - rhow
+  - rhoE

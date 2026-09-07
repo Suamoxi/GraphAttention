@@ -118,3 +118,23 @@ def test_avbp_hdf5_config_composes() -> None:
     assert list(cfg.data.field_names) == ["rho", "rhou", "rhov", "rhow", "rhoE"]
     assert cfg.data.connectivity_path == "Connectivity/hex->node"
     assert cfg.data.connectivity_indexing == "auto"
+
+
+def test_hit_slice_ablation_configs_compose() -> None:
+    cfg = _config(
+        [
+            "data=hit_slice_pt",
+            "task=hit_density_regression",
+            "+ablation=hit_slice",
+            "model=geometric_sparse_transformer",
+        ]
+    )
+
+    assert cfg.data._target_ == "graph_attention.data.PrecomputedSlicePTDataset"
+    assert cfg.data.mesh_file.endswith("/meshes/slice_mesh.pt")
+    assert list(cfg.task.input_fields) == ["rhou", "rhov", "rhow", "rhoE"]
+    assert list(cfg.task.target_fields) == ["rho"]
+    assert cfg.task.physical_nondimensionalization is True
+    assert cfg.ablation.group_metadata_key == "source_stem"
+    assert cfg.ablation.train_ratio == 0.7
+    assert cfg.ablation.validation_ratio == 0.15
