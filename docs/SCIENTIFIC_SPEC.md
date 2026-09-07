@@ -518,3 +518,43 @@ M8 consumes `edge_index` as supplied. It does not add self-loops, symmetrize edg
 The absence of geometry in M8 is intentional. M8 establishes the scientific and computational effect of one-hop sparse attention in isolation. Relative position, distance, mesh scale, directional information, or other geometric attention terms are separate M9 scientific changes and must not be attributed to M8.
 
 The M8 model must remain equivariant to consistent node renumbering and numerically insensitive to pure edge-list reordering within the tolerance expected from sparse floating-point reductions. Packed disconnected execution must agree with independent-graph execution when the supplied topology contains no cross-sample edges.
+
+## 19. M9 relative-displacement geometric attention
+
+M9 extends the M8 attention score with one learned geometric term and leaves the supplied topology and value aggregation unchanged.
+
+For directed edge `j -> i`, the geometry layer defines the target-to-source displacement
+
+$$
+\Delta r_{ij}=r_j-r_i.
+$$
+
+For physically nondimensionalized tasks this is evaluated from the already nondimensional coordinates, so
+
+$$
+\Delta r^*_{ij}=\frac{r_j-r_i}{L_{\mathrm{ref}}}.
+$$
+
+Each attention layer maps the displacement to one additive bias per attention head:
+
+$$
+b_{ij}=\phi_\theta(\Delta r_{ij})\in\mathbb R^{H_{\mathrm{heads}}},
+$$
+
+and uses
+
+$$
+\boxed{
+s_{ij}^{(h)}=
+\frac{q_i^{(h)\mathsf T}k_j^{(h)}}{\sqrt{d_h}}
++b_{ij}^{(h)}.
+}
+$$
+
+The geometry input is **relative displacement only**. Euclidean distance is not concatenated because it is mathematically derivable from the displacement vector; adding explicit distance later is a separate inductive-bias ablation. Absolute coordinates, normalized direction, local mesh scale, metric tensors, and geometry-conditioned value vectors are not part of the M9 baseline.
+
+Because a global translation cancels in `r_j-r_i`, the geometric contribution is translation invariant. M9 does not claim rotation, reflection, or scale invariance/equivariance: the Cartesian displacement components change under those transformations and the learned geometry map is an ordinary MLP.
+
+The geometry map is a per-layer MLP with hidden width equal to the attention head count. This keeps its edge activation `O(E * num_heads)` rather than introducing a second `O(E * hidden_dim)` geometric representation. The final geometry projection has no additive bias because a constant per-head score shift shared by all incoming edges cancels under softmax.
+
+M9 is a project adaptation combining Transformer scaled dot-product attention with explicit relative mesh geometry. Pfaff et al., *Learning Mesh-Based Simulation with Graph Networks* (ICLR 2021, arXiv:2010.03409) provides relevant precedent for using relative mesh-position information as learned graph-edge geometry. The exact additive per-head score-bias equation above is the repository's project-specific formulation.
