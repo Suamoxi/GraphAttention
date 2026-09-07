@@ -41,6 +41,12 @@ class SparseMultiheadAttention(nn.Module):
         score_bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
         num_nodes = inputs.shape[0]
+        _validate_score_bias(
+            score_bias,
+            num_edges=edge_index.shape[1],
+            num_heads=self.num_heads,
+            device=inputs.device,
+        )
         qkv = self.qkv(inputs).reshape(
             num_nodes,
             3,
@@ -51,6 +57,8 @@ class SparseMultiheadAttention(nn.Module):
 
         if edge_index.shape[1] == 0:
             zero_message = query.reshape(num_nodes, self.hidden_dim) * 0.0
+            if score_bias is not None:
+                zero_message = zero_message + score_bias.sum().to(zero_message.dtype) * 0.0
             return self.out_proj(zero_message)
 
         source = edge_index[0]
@@ -64,14 +72,6 @@ class SparseMultiheadAttention(nn.Module):
             scores = (query_edge * key_edge).sum(dim=-1) * self.scale
 
         if score_bias is not None:
-            if score_bias.shape != scores.shape:
-                raise ValueError(
-                    f"score_bias must have shape {tuple(scores.shape)}, got {tuple(score_bias.shape)}"
-                )
-            if not score_bias.is_floating_point():
-                raise TypeError("score_bias must use a floating-point dtype")
-            if score_bias.device != scores.device:
-                raise ValueError("score_bias and attention scores must be on the same device")
             scores = scores + score_bias.to(dtype=scores.dtype)
 
         target_by_head = target[:, None].expand(-1, self.num_heads)
@@ -283,6 +283,23 @@ def _validate_edge_index(
         return
     if int(edge_index.min()) < 0 or int(edge_index.max()) >= num_nodes:
         raise ValueError("edge_index contains an out-of-range node index")
+
+
+def _validate_score_bias(
+    score_bias: torch.Tensor | None,
+    *,
+    num_edges: int,
+    num_heads: int,
+    device: torch.device,
+) -> None:
+    if score_bias is None:
+        return
+    if score_bias.ndim != 2 or score_bias.shape != (num_edges, num_heads):
+        raise ValueError(f"score_bias must have shape [{num_edges}, {num_heads}]")
+    if not score_bias.is_floating_point():
+        raise TypeError("score_bias must use a floating-point dtype")
+    if score_bias.device != device:
+        raise ValueError("score_bias and attention inputs must be on the same device")
 
 
 def _positive_count(value: int, name: str) -> int:
