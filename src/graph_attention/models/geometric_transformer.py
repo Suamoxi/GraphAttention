@@ -207,7 +207,10 @@ def _validate_edge_displacement(
     dtype: torch.dtype,
     device: torch.device,
 ) -> None:
-    if edge_displacement.ndim != 2 or edge_displacement.shape != (num_edges, spatial_dim):
+    if (
+        edge_displacement.ndim != 2
+        or edge_displacement.shape != (num_edges, spatial_dim)
+    ):
         raise ValueError(f"edge_displacement must have shape [{num_edges}, {spatial_dim}]")
     if not edge_displacement.is_floating_point():
         raise TypeError("edge_displacement must use a floating-point dtype")
