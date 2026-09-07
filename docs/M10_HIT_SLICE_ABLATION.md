@@ -121,7 +121,7 @@ No diagonal edges, self-loops, k-hop edges, random edges, or periodic wrap edges
 
 Periodic wrap edges are scientifically plausible for the periodic HIT cube but are deliberately deferred so that the first M8-vs-M9 learning comparison changes no additional topology mechanism.
 
-## 6. Preprocessing and objective
+## 6. Preprocessing, objective, and reported metrics
 
 Every sample uses the existing `HIT_LES_FORCED` case definition.
 
@@ -150,9 +150,11 @@ and the target is:
 rho.value
 ```
 
-The loss is the existing M6 sample-reduced MSE. All slices have the same node count in this dataset, but the sample-balanced convention is retained rather than replaced with a fixed-grid special case.
+The optimizer objective is the existing M6 sample-reduced MSE in standardized target space. Validation and test reporting includes both that standardized MSE and the corresponding MSE after inverting only the statistical target scaling, i.e. in physically nondimensionalized `rho/rho_ref` space.
 
-## 7. Reference architecture comparison
+All slices have the same node count in this dataset, but the sample-balanced convention is retained rather than replaced with a fixed-grid special case.
+
+## 7. Reference architecture comparison and matched initialization
 
 The intended first comparison uses:
 
@@ -179,9 +181,13 @@ M8 and M9 use:
 - the same optimizer hyperparameters;
 - the same epoch budget.
 
-The only architectural scientific difference is the M9 additive relative-displacement score bias.
+A shared initialization is also enforced. For seed `s`, the runner first constructs the frozen M8 model with seed `s`. An M8 run uses that state directly. An M9 run constructs its additional geometry parameters with deterministic seed `s+1`, then copies every parameter shared with M8 from the M8 reference state. Therefore the common input projection, q/k/v projections, output projections, LayerNorms, Transformer MLPs, and final projection start identically in both architectures; only M9's additional geometry MLP parameters have no M8 counterpart.
 
-A single seed is an initial controlled ablation, not a robustness claim. Multiple seeds are required before attributing a small learning difference confidently to the architecture.
+This is stronger than merely calling `torch.manual_seed(s)` before both constructors, because the extra M9 modules would otherwise consume random numbers and shift initialization of later shared layers.
+
+The only architectural scientific difference is therefore the M9 additive relative-displacement score bias and its additional learned parameters.
+
+A single seed is an initial controlled ablation, not a robustness claim. CUDA sparse reductions are not bitwise deterministic, and multiple independent seeds are required before attributing a small learning difference confidently to the architecture.
 
 ## 8. Training runner and artifacts
 
@@ -191,7 +197,9 @@ The dedicated runner is:
 scripts/train_slice_ablation.py
 ```
 
-It intentionally reuses the M6 optimizer-step implementation rather than creating a second loss/gradient path.
+It intentionally reuses the M6 optimizer-step implementation rather than creating a second loss/gradient path. The first runner is deliberately single-process and FP32.
+
+The fixed slice dataset has one common node/edge count per sample, so `batch_size` is an exact proxy for the node/edge load in this dedicated experiment; the general variable-mesh budget machinery remains the repository convention outside this fixed-grid ablation.
 
 Every run writes:
 
@@ -203,7 +211,7 @@ Every run writes:
 - `last.pt`;
 - `summary.json`.
 
-The output directory must not already exist, preventing silent overwrite of experiment evidence.
+The output directory is created only after the dataset, grouped split, and train-only standardizers pass preflight validation. An existing output directory is never overwritten.
 
 ## 9. Reference commands
 
@@ -256,7 +264,8 @@ Introduced or inherited assumptions:
 - the five conservative columns are identified by explicit `channel_names` metadata;
 - the existing HIT case reference scales are valid for all slices;
 - the first topology is non-periodic 4-neighbour Cartesian connectivity;
-- the first runner is single-process/single-GPU and FP32.
+- the first runner is single-process/single-GPU and FP32;
+- shared M8/M9 parameters are initialized from one M8 reference state for each experiment seed.
 
 ## 11. Handled edge cases
 
@@ -271,7 +280,8 @@ The implementation handles:
 - sample/shared-mesh coordinate mismatch;
 - inconsistent axis and axis-id metadata;
 - duplicate sample IDs;
-- output-directory collision.
+- output-directory collision;
+- explicit verification that M9's unmatched initialization keys are geometry-MLP parameters only.
 
 ## 12. Deferred or unsupported
 
@@ -289,7 +299,7 @@ Deliberately deferred:
 
 ## 13. Failure behavior
 
-The adapter fails rather than guessing when:
+The adapter/runner fails rather than guessing when:
 
 - required files are missing;
 - shared mesh metadata is inconsistent;
@@ -299,6 +309,8 @@ The adapter fails rather than guessing when:
 - the case identifier does not match the case definition;
 - a grouped split produces no validation or test samples;
 - CUDA is requested but unavailable;
+- a model other than the frozen M8/M9 classes is requested;
+- the common M8/M9 state dictionaries do not match except for M9 geometry parameters;
 - an output run directory already exists.
 
 ## 14. Remaining validation gates
@@ -310,5 +322,5 @@ Before making a learning claim:
 3. confirm grouped split counts and zero `source_stem` overlap;
 4. run one-epoch M8 and M9 smoke trainings on Calypso;
 5. run the frozen full M8 and M9 training budget;
-6. compare validation and held-out test MSE;
+6. compare validation and held-out test standardized and nondimensional MSE;
 7. if the difference is small, repeat with multiple seeds before attribution.
