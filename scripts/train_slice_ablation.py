@@ -251,9 +251,7 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
         "num_test_samples": len(test_indices),
         "num_groups": len(set(group_ids)),
         "num_train_groups": len({group_by_sample[value] for value in split.train_ids}),
-        "num_validation_groups": len(
-            {group_by_sample[value] for value in split.validation_ids}
-        ),
+        "num_validation_groups": len({group_by_sample[value] for value in split.validation_ids}),
         "num_test_groups": len({group_by_sample[value] for value in split.test_ids}),
         "grid_shape_2d": list(dataset.grid_shape_2d),
         "nodes_per_slice": dataset.grid_shape_2d[0] * dataset.grid_shape_2d[1],
@@ -310,9 +308,7 @@ def _instantiate_model(
         raise RuntimeError(
             f"unexpected keys while matching M8/M9 initialization: {incompatible.unexpected_keys}"
         )
-    expected_geometry_keys = sorted(
-        name for name in model.state_dict() if ".geometry_mlp." in name
-    )
+    expected_geometry_keys = sorted(name for name in model.state_dict() if ".geometry_mlp." in name)
     if sorted(incompatible.missing_keys) != expected_geometry_keys:
         raise RuntimeError(
             "M8/M9 shared-parameter initialization mismatch: "

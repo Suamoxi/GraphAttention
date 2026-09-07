@@ -1,9 +1,9 @@
 import torch
 from omegaconf import OmegaConf
+from scripts.train_slice_ablation import _instantiate_model
 
 from graph_attention.data import SyntheticMeshDataset
 from graph_attention.tasks import NodeRegressionTask
-from scripts.train_slice_ablation import _instantiate_model
 
 
 def _probe_batch():
