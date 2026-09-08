@@ -1,0 +1,9 @@
+_target_: graph_attention.models.AlternatingDilatedGeometricSparseGraphTransformer
+in_channels: 2
+out_channels: 1
+hidden_dim: 64
+num_heads: 4
+num_layers: 4
+spatial_dim: 2
+mlp_ratio: 4
+conditioning_channels: 0
