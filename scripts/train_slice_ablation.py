@@ -21,7 +21,10 @@ from graph_attention.data import (
     Sample,
     make_grouped_split_manifest,
 )
-from graph_attention.geometry import cartesian_4_neighbor_edge_index, exact_two_hop_edge_index
+from graph_attention.geometry import (
+    build_attention_edge_indices,
+    cartesian_4_neighbor_edge_index,
+)
 from graph_attention.models import (
     AlternatingDilatedGeometricSparseGraphTransformer,
     GeometricSparseGraphTransformer,
@@ -158,8 +161,8 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
     )
 
     edge_index = cartesian_4_neighbor_edge_index(dataset.grid_shape_2d)
-    attention_edge_indices = _attention_topologies_for_model(
-        cfg.model,
+    attention_edge_indices = _attention_topologies_from_geometry(
+        cfg.geometry,
         edge_index=edge_index,
         num_nodes=dataset.grid_shape_2d[0] * dataset.grid_shape_2d[1],
     )
@@ -307,16 +310,14 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
     return summary
 
 
-def _attention_topologies_for_model(
-    model_cfg: DictConfig,
+def _attention_topologies_from_geometry(
+    geometry_cfg: DictConfig,
     *,
     edge_index: torch.Tensor,
     num_nodes: int,
 ) -> dict[str, torch.Tensor]:
-    target = str(model_cfg.get("_target_", ""))
-    if target != _M12_DILATED_TARGET:
-        return {}
-    return {"dilated": exact_two_hop_edge_index(edge_index, num_nodes)}
+    specifications = dict(geometry_cfg.get("attention_edge_indices", {}))
+    return build_attention_edge_indices(edge_index, num_nodes, specifications)
 
 
 def _pack_shared_attention_edge_index(
