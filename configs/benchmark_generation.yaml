@@ -1,0 +1,30 @@
+run_dir: ???
+output_root: /scratch/coop/theret/GraphAttention_runs/benchmark
+generated_tensor: generated_test.pt
+overwrite: false
+sample_space: nondimensional
+eps: 1.0e-30
+quantiles: [0.01, 0.05, 0.5, 0.95, 0.99]
+
+spectra:
+  enabled: true
+  num_k_bins: 24
+  subtract_mean: true
+  cartesian_tolerance: 1.0e-8
+  bands:
+    low: [0.0, 0.25]
+    mid: [0.25, 0.5]
+    high: [0.5, 1.0]
+
+physics:
+  enabled: true
+
+plots:
+  enabled: true
+  marginals: true
+  spectra: true
+  fields: true
+  marginal_bins: 128
+  num_field_examples: 2
+  max_field_channels: 5
+  dpi: 180
