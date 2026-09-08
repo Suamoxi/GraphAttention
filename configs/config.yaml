@@ -1,5 +1,6 @@
 defaults:
   - data: synthetic
+  - geometry: local
   - model: baseline
   - task: regression
   - optimizer: adamw
