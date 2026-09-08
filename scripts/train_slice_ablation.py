@@ -40,9 +40,7 @@ from graph_attention.utils.provenance import collect_runtime_provenance
 
 _M8_TARGET = "graph_attention.models.SparseGraphTransformer"
 _M9_TARGET = "graph_attention.models.GeometricSparseGraphTransformer"
-_M12_DILATED_TARGET = (
-    "graph_attention.models.AlternatingDilatedGeometricSparseGraphTransformer"
-)
+_M12_DILATED_TARGET = "graph_attention.models.AlternatingDilatedGeometricSparseGraphTransformer"
 
 
 class _NodeRegressionCollator:
