@@ -224,13 +224,15 @@ def _model_velocity(
     times: torch.Tensor,
 ) -> torch.Tensor:
     conditioning = _time_conditioning(batch, times)
-    velocity = model(
-        state,
-        edge_index=batch.edge_index,
-        coords=batch.coords,
-        batch_index=batch.batch_index,
-        conditioning=conditioning,
-    )
+    model_kwargs = {
+        "edge_index": batch.edge_index,
+        "coords": batch.coords,
+        "batch_index": batch.batch_index,
+        "conditioning": conditioning,
+    }
+    if batch.attention_edge_indices:
+        model_kwargs["attention_edge_indices"] = batch.attention_edge_indices
+    velocity = model(state, **model_kwargs)
     if velocity.shape != state.shape:
         raise ValueError(
             "flow-matching model output must match the state shape: "
