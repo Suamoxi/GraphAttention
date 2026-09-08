@@ -12,7 +12,7 @@ import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from scripts.train_slice_ablation import (
-    _attention_topologies_for_model,
+    _attention_topologies_from_geometry,
     _instantiate_model,
     _loader,
     _NodeRegressionCollator,
@@ -125,8 +125,8 @@ def run_slice_flow_matching(cfg: DictConfig) -> dict[str, Any]:
     )
 
     edge_index = cartesian_4_neighbor_edge_index(dataset.grid_shape_2d)
-    attention_edge_indices = _attention_topologies_for_model(
-        cfg.model,
+    attention_edge_indices = _attention_topologies_from_geometry(
+        cfg.geometry,
         edge_index=edge_index,
         num_nodes=dataset.grid_shape_2d[0] * dataset.grid_shape_2d[1],
     )
