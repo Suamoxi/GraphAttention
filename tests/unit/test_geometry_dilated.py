@@ -36,10 +36,7 @@ def test_exact_two_hop_preserves_disconnected_packed_components() -> None:
     dilated = exact_two_hop_edge_index(local, num_nodes=6)
 
     assert _edge_set(dilated) == {(0, 2), (2, 0), (3, 5), (5, 3)}
-    assert not any(
-        (source < 3) != (target < 3)
-        for source, target in _edge_set(dilated)
-    )
+    assert not any((source < 3) != (target < 3) for source, target in _edge_set(dilated))
 
 
 def test_exact_two_hop_is_invariant_to_duplicate_length_two_paths() -> None:
