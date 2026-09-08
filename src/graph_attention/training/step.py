@@ -122,13 +122,15 @@ def train_equal_sample_optimizer_step(
                     dtype=autocast_dtype,
                     enabled=autocast_dtype is not None,
                 ):
-                    predictions = model(
-                        prepared.inputs,
-                        edge_index=prepared.edge_index,
-                        coords=prepared.coords,
-                        batch_index=prepared.batch_index,
-                        conditioning=prepared.conditioning,
-                    )
+                    model_kwargs = {
+                        "edge_index": prepared.edge_index,
+                        "coords": prepared.coords,
+                        "batch_index": prepared.batch_index,
+                        "conditioning": prepared.conditioning,
+                    }
+                    if prepared.attention_edge_indices:
+                        model_kwargs["attention_edge_indices"] = prepared.attention_edge_indices
+                    predictions = model(prepared.inputs, **model_kwargs)
                     aggregate = sample_reduced_mse(
                         predictions,
                         prepared.targets,
