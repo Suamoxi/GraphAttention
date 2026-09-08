@@ -1,9 +1,10 @@
-"""Train the controlled M8-versus-M9 HIT 2-D slice regression ablation."""
+"""Train controlled HIT 2-D slice architecture ablations."""
 
 from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,12 @@ from graph_attention.data import (
     Sample,
     make_grouped_split_manifest,
 )
-from graph_attention.geometry import cartesian_4_neighbor_edge_index
-from graph_attention.models import GeometricSparseGraphTransformer, SparseGraphTransformer
+from graph_attention.geometry import cartesian_4_neighbor_edge_index, exact_two_hop_edge_index
+from graph_attention.models import (
+    AlternatingDilatedGeometricSparseGraphTransformer,
+    GeometricSparseGraphTransformer,
+    SparseGraphTransformer,
+)
 from graph_attention.tasks import NodeRegressionBatch, NodeRegressionTask
 from graph_attention.training import (
     fit_train_standardizers,
@@ -32,27 +37,48 @@ from graph_attention.utils.provenance import collect_runtime_provenance
 
 _M8_TARGET = "graph_attention.models.SparseGraphTransformer"
 _M9_TARGET = "graph_attention.models.GeometricSparseGraphTransformer"
+_M12_DILATED_TARGET = (
+    "graph_attention.models.AlternatingDilatedGeometricSparseGraphTransformer"
+)
 
 
 class _NodeRegressionCollator:
-    """Attach frozen Cartesian topology and prepare one packed task batch."""
+    """Attach frozen Cartesian topology and prepare one packed task batch.
+
+    Additional attention topologies are precomputed by the geometry layer for one
+    physical mesh and only packed/offset here. The collator does not decide how
+    those topologies are constructed or how a model uses them.
+    """
 
     def __init__(
         self,
         task: NodeRegressionTask,
         catalog: Any,
         edge_index: torch.Tensor,
+        attention_edge_indices: Mapping[str, torch.Tensor] | None = None,
     ) -> None:
         self.task = task
         self.catalog = catalog
         self.edge_index = edge_index
+        self.attention_edge_indices = dict(attention_edge_indices or {})
 
     def __call__(self, samples: list[Sample]) -> NodeRegressionBatch:
         with_edges = [
             replace(sample, mesh=replace(sample.mesh, edge_index=self.edge_index))
             for sample in samples
         ]
-        return self.task.pack_and_prepare(with_edges, self.catalog)
+        batch = self.task.pack_and_prepare(with_edges, self.catalog)
+        if not self.attention_edge_indices:
+            return batch
+
+        packed_attention = {
+            name: _pack_shared_attention_edge_index(
+                topology,
+                ptr=batch.ptr,
+            )
+            for name, topology in self.attention_edge_indices.items()
+        }
+        return replace(batch, attention_edge_indices=packed_attention)
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
@@ -132,7 +158,17 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
     )
 
     edge_index = cartesian_4_neighbor_edge_index(dataset.grid_shape_2d)
-    collator = _NodeRegressionCollator(task, dataset.field_catalog, edge_index)
+    attention_edge_indices = _attention_topologies_for_model(
+        cfg.model,
+        edge_index=edge_index,
+        num_nodes=dataset.grid_shape_2d[0] * dataset.grid_shape_2d[1],
+    )
+    collator = _NodeRegressionCollator(
+        task,
+        dataset.field_catalog,
+        edge_index,
+        attention_edge_indices=attention_edge_indices,
+    )
     train_loader = _loader(
         dataset,
         train_indices,
@@ -256,6 +292,9 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
         "grid_shape_2d": list(dataset.grid_shape_2d),
         "nodes_per_slice": dataset.grid_shape_2d[0] * dataset.grid_shape_2d[1],
         "directed_edges_per_slice": int(edge_index.shape[1]),
+        "attention_topologies": {
+            name: int(topology.shape[1]) for name, topology in attention_edge_indices.items()
+        },
         "split_group_metadata_key": group_key,
         "physical_nondimensionalization": task.physical_nondimensionalization,
         "periodic_cross_boundary_edges": "not_augmented",
@@ -268,6 +307,42 @@ def run_slice_ablation(cfg: DictConfig) -> dict[str, Any]:
     return summary
 
 
+def _attention_topologies_for_model(
+    model_cfg: DictConfig,
+    *,
+    edge_index: torch.Tensor,
+    num_nodes: int,
+) -> dict[str, torch.Tensor]:
+    target = str(model_cfg.get("_target_", ""))
+    if target != _M12_DILATED_TARGET:
+        return {}
+    return {"dilated": exact_two_hop_edge_index(edge_index, num_nodes)}
+
+
+def _pack_shared_attention_edge_index(
+    edge_index: torch.Tensor,
+    *,
+    ptr: torch.Tensor,
+) -> torch.Tensor:
+    """Offset one shared per-mesh topology over a fixed-mesh packed batch."""
+
+    if edge_index.ndim != 2 or edge_index.shape[0] != 2 or edge_index.dtype != torch.long:
+        raise ValueError("shared attention edge_index must have long shape [2, E]")
+    if ptr.ndim != 1 or ptr.numel() < 2 or ptr.dtype != torch.long:
+        raise ValueError("ptr must have long shape [B + 1]")
+
+    node_counts = ptr[1:] - ptr[:-1]
+    if not bool(torch.all(node_counts == node_counts[0])):
+        raise ValueError("shared attention topology requires equal node counts in this collator")
+    nodes_per_graph = int(node_counts[0])
+    if edge_index.numel() > 0:
+        if int(edge_index.min()) < 0 or int(edge_index.max()) >= nodes_per_graph:
+            raise ValueError("shared attention topology references a node outside one sample")
+
+    parts = [edge_index + int(offset) for offset in ptr[:-1]]
+    return torch.cat(parts, dim=1) if parts else edge_index.new_empty((2, 0))
+
+
 def _instantiate_model(
     model_cfg: DictConfig,
     probe: NodeRegressionBatch,
@@ -275,8 +350,8 @@ def _instantiate_model(
     seed: int,
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
     target = str(model_cfg.get("_target_", ""))
-    if target not in {_M8_TARGET, _M9_TARGET}:
-        raise TypeError("slice ablation compares only the frozen M8 and M9 model classes")
+    if target not in {_M8_TARGET, _M9_TARGET, _M12_DILATED_TARGET}:
+        raise TypeError("unsupported slice-ablation model class")
 
     common = {
         "in_channels": probe.inputs.shape[1],
@@ -299,26 +374,43 @@ def _instantiate_model(
 
     geometry_seed = seed + 1
     torch.manual_seed(geometry_seed)
-    model = GeometricSparseGraphTransformer(
+    geometric_reference = GeometricSparseGraphTransformer(
         **common,
         spatial_dim=probe.coords.shape[1],
     )
-    incompatible = model.load_state_dict(reference.state_dict(), strict=False)
+    incompatible = geometric_reference.load_state_dict(reference.state_dict(), strict=False)
     if incompatible.unexpected_keys:
         raise RuntimeError(
             f"unexpected keys while matching M8/M9 initialization: {incompatible.unexpected_keys}"
         )
-    expected_geometry_keys = sorted(name for name in model.state_dict() if ".geometry_mlp." in name)
+    expected_geometry_keys = sorted(
+        name for name in geometric_reference.state_dict() if ".geometry_mlp." in name
+    )
     if sorted(incompatible.missing_keys) != expected_geometry_keys:
         raise RuntimeError(
             "M8/M9 shared-parameter initialization mismatch: "
             f"missing={sorted(incompatible.missing_keys)}, expected={expected_geometry_keys}"
         )
+
+    if target == _M9_TARGET:
+        return geometric_reference, {
+            "policy": "matched_m8_shared_parameters_plus_m9_geometry",
+            "shared_parameter_seed": seed,
+            "geometry_parameter_seed": geometry_seed,
+            "geometry_parameter_names": expected_geometry_keys,
+        }
+
+    model = AlternatingDilatedGeometricSparseGraphTransformer(
+        **common,
+        spatial_dim=probe.coords.shape[1],
+    )
+    model.load_state_dict(geometric_reference.state_dict(), strict=True)
     return model, {
-        "policy": "matched_m8_shared_parameters_plus_m9_geometry",
+        "policy": "exact_m9_parameter_initialization_with_external_alternating_topology",
         "shared_parameter_seed": seed,
         "geometry_parameter_seed": geometry_seed,
         "geometry_parameter_names": expected_geometry_keys,
+        "layer_topology_schedule": "local_exact2hop_alternating_local_first",
     }
 
 
@@ -361,13 +453,15 @@ def _evaluate(
         for host_batch in loader:
             batch = _task_batch_to_device(host_batch, device=device, dtype=torch.float32)
             prepared = standardizers.transform(batch)
-            predictions = model(
-                prepared.inputs,
-                edge_index=prepared.edge_index,
-                coords=prepared.coords,
-                batch_index=prepared.batch_index,
-                conditioning=prepared.conditioning,
-            )
+            model_kwargs = {
+                "edge_index": prepared.edge_index,
+                "coords": prepared.coords,
+                "batch_index": prepared.batch_index,
+                "conditioning": prepared.conditioning,
+            }
+            if prepared.attention_edge_indices:
+                model_kwargs["attention_edge_indices"] = prepared.attention_edge_indices
+            predictions = model(prepared.inputs, **model_kwargs)
             standardized = sample_reduced_mse(
                 predictions,
                 prepared.targets,
@@ -399,6 +493,10 @@ def _task_batch_to_device(
     dtype: torch.dtype,
 ) -> NodeRegressionBatch:
     source = _packed_structure_to_device(batch.source, device=device, dtype=dtype)
+    attention_edge_indices = {
+        name: edge_index.to(device=device)
+        for name, edge_index in batch.attention_edge_indices.items()
+    }
     return replace(
         batch,
         source=source,
@@ -406,6 +504,7 @@ def _task_batch_to_device(
         inputs=batch.inputs.to(device=device, dtype=dtype),
         targets=batch.targets.to(device=device, dtype=dtype),
         conditioning=batch.conditioning.to(device=device, dtype=dtype),
+        attention_edge_indices=attention_edge_indices,
     )
 
 
