@@ -1,5 +1,6 @@
 """Geometry ownership layer: how spatial entities are related."""
 
+from .attention import build_attention_edge_indices
 from .cartesian import cartesian_4_neighbor_edge_index
 from .connectivity import (
     exact_two_hop_edge_index,
@@ -9,6 +10,7 @@ from .connectivity import (
 from .relative import edge_relative_displacement
 
 __all__ = [
+    "build_attention_edge_indices",
     "cartesian_4_neighbor_edge_index",
     "edge_relative_displacement",
     "exact_two_hop_edge_index",
