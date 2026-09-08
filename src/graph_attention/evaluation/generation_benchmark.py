@@ -383,9 +383,7 @@ def _nearest_neighbor_metrics(
     second = np.concatenate((field[1:, :].reshape(-1), field[:, 1:].reshape(-1)))
     centered_first = first - np.mean(first)
     centered_second = second - np.mean(second)
-    denominator = math.sqrt(
-        float(np.sum(centered_first**2)) * float(np.sum(centered_second**2))
-    )
+    denominator = math.sqrt(float(np.sum(centered_first**2)) * float(np.sum(centered_second**2)))
     correlation = (
         float(np.sum(centered_first * centered_second) / denominator)
         if denominator > 0.0
@@ -452,11 +450,15 @@ def _physical_metric_rows(
     *,
     eps: float,
 ) -> list[dict[str, float | str]]:
-    base_to_index = {name.split(".", maxsplit=1)[0]: index for index, name in enumerate(channel_names)}
+    base_to_index = {
+        name.split(".", maxsplit=1)[0]: index for index, name in enumerate(channel_names)
+    }
     required = ("rho", "rhou", "rhov", "rhow", "rhoE")
     missing = [name for name in required if name not in base_to_index]
     if missing:
-        raise ValueError(f"physics benchmark requires conservative channels {required}; missing {missing}")
+        raise ValueError(
+            f"physics benchmark requires conservative channels {required}; missing {missing}"
+        )
 
     generated_metrics = _physical_population_metrics(generated, base_to_index)
     target_metrics = _physical_population_metrics(target, base_to_index)
@@ -502,8 +504,7 @@ def _physical_population_metrics(
     kinetic_energy_density = 0.5 * rho * velocity_squared
     specific_internal_energy = np.full_like(rho, np.nan)
     specific_internal_energy[valid_density] = (
-        rhoe[valid_density] / rho[valid_density]
-        - 0.5 * velocity_squared[valid_density]
+        rhoe[valid_density] / rho[valid_density] - 0.5 * velocity_squared[valid_density]
     )
 
     metrics = {
