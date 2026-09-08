@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 
 import torch
 
@@ -30,6 +30,7 @@ class NodeRegressionBatch:
     input_channels: tuple[str, ...]
     target_channels: tuple[str, ...]
     conditioning_names: tuple[str, ...]
+    attention_edge_indices: Mapping[str, torch.Tensor] = field(default_factory=dict)
 
     @property
     def edge_index(self) -> torch.Tensor:
