@@ -12,6 +12,7 @@ import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from scripts.train_slice_ablation import (
+    _attention_topologies_for_model,
     _instantiate_model,
     _loader,
     _NodeRegressionCollator,
@@ -124,7 +125,17 @@ def run_slice_flow_matching(cfg: DictConfig) -> dict[str, Any]:
     )
 
     edge_index = cartesian_4_neighbor_edge_index(dataset.grid_shape_2d)
-    collator = _NodeRegressionCollator(task, dataset.field_catalog, edge_index)
+    attention_edge_indices = _attention_topologies_for_model(
+        cfg.model,
+        edge_index=edge_index,
+        num_nodes=dataset.grid_shape_2d[0] * dataset.grid_shape_2d[1],
+    )
+    collator = _NodeRegressionCollator(
+        task,
+        dataset.field_catalog,
+        edge_index,
+        attention_edge_indices=attention_edge_indices,
+    )
     train_loader = _loader(
         dataset,
         train_indices,
@@ -289,6 +300,9 @@ def run_slice_flow_matching(cfg: DictConfig) -> dict[str, Any]:
         "grid_shape_2d": list(dataset.grid_shape_2d),
         "nodes_per_slice": dataset.grid_shape_2d[0] * dataset.grid_shape_2d[1],
         "directed_edges_per_slice": int(edge_index.shape[1]),
+        "attention_topologies": {
+            name: int(topology.shape[1]) for name, topology in attention_edge_indices.items()
+        },
         "split_group_metadata_key": group_key,
         "physical_nondimensionalization": task.physical_nondimensionalization,
         "statistical_scaling": standardizers.weighting,
@@ -320,13 +334,15 @@ def _evaluate_flow_matching(
             batch = _task_batch_to_device(host_batch, device=device, dtype=torch.float32)
             scaled = standardizers.transform(batch)
             flow_batch = task.make_validation_problem(scaled)
-            predictions = model(
-                flow_batch.inputs,
-                edge_index=flow_batch.edge_index,
-                coords=flow_batch.coords,
-                batch_index=flow_batch.batch_index,
-                conditioning=flow_batch.conditioning,
-            )
+            model_kwargs = {
+                "edge_index": flow_batch.edge_index,
+                "coords": flow_batch.coords,
+                "batch_index": flow_batch.batch_index,
+                "conditioning": flow_batch.conditioning,
+            }
+            if flow_batch.attention_edge_indices:
+                model_kwargs["attention_edge_indices"] = flow_batch.attention_edge_indices
+            predictions = model(flow_batch.inputs, **model_kwargs)
             aggregate = sample_reduced_mse(
                 predictions,
                 flow_batch.targets,
