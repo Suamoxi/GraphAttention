@@ -40,7 +40,8 @@ def infer_cartesian_grid_2d(
         raise ValueError(f"Cartesian 2-D grid requires at least two points per axis, got {shape}")
     if shape[0] * shape[1] != arr.shape[0]:
         raise ValueError(
-            f"coordinates do not form a complete Cartesian product: shape={shape}, nodes={arr.shape[0]}"
+            "coordinates do not form a complete Cartesian product: "
+            f"shape={shape}, nodes={arr.shape[0]}"
         )
 
     spacing: list[float] = []
