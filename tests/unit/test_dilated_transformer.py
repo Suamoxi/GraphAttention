@@ -36,9 +36,7 @@ def test_alternating_dilated_transformer_uses_local_then_dilated_layers() -> Non
 
     seen: list[torch.Tensor] = []
     handles = [
-        block.register_forward_pre_hook(
-            lambda _module, args: seen.append(args[1].detach().clone())
-        )
+        block.register_forward_pre_hook(lambda _module, args: seen.append(args[1].detach().clone()))
         for block in model.blocks
     ]
     try:
