@@ -20,7 +20,6 @@ from scripts.train_slice_ablation import (
     _task_batch_to_device,
     _write_dataset_artifacts,
 )
-from scripts.train_slice_flow_matching import _marginal_generation_metrics
 from torch.utils.tensorboard import SummaryWriter
 
 from graph_attention.data import PrecomputedSlicePTDataset, make_grouped_split_manifest
@@ -40,7 +39,7 @@ def main(cfg: DictConfig) -> None:
 
 
 def run_slice_diffusion(cfg: DictConfig) -> dict[str, Any]:
-    """Run one single-GPU HIT-slice epsilon-prediction diffusion experiment."""
+    """Train one single-GPU HIT-slice epsilon-prediction diffusion model."""
 
     if "generative" not in cfg:
         raise ValueError("add a generative config, e.g. +generative=hit_slice_diffusion")
@@ -53,15 +52,6 @@ def run_slice_diffusion(cfg: DictConfig) -> dict[str, Any]:
         "generative.num_workers",
         allow_zero=True,
     )
-    sampling_steps = _positive_int(settings.sampling.steps, "generative.sampling.steps")
-    sampling_seed = _positive_int(
-        settings.sampling.seed,
-        "generative.sampling.seed",
-        allow_zero=True,
-    )
-    sampling_eta = float(settings.sampling.eta)
-    if not 0.0 <= sampling_eta <= 1.0:
-        raise ValueError("generative.sampling.eta must lie in [0, 1]")
 
     device = torch.device(str(settings.device))
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -85,10 +75,6 @@ def run_slice_diffusion(cfg: DictConfig) -> dict[str, Any]:
     task = instantiate(cfg.task)
     if not isinstance(task, DiffusionDenoisingTask):
         raise TypeError("HIT diffusion requires task=hit_diffusion")
-    if sampling_steps > task.timesteps:
-        raise ValueError(
-            f"sampling.steps must be <= task.timesteps ({task.timesteps})"
-        )
 
     group_key = str(settings.group_metadata_key)
     group_ids = tuple(dataset.group_id(index, group_key) for index in range(len(dataset)))
@@ -275,17 +261,6 @@ def run_slice_diffusion(cfg: DictConfig) -> dict[str, Any]:
         standardizers=device_standardizers,
         device=device,
     )
-    generation_metrics = _generate_test_samples(
-        model,
-        test_loader,
-        task=task,
-        standardizers=device_standardizers,
-        device=device,
-        sampling_steps=sampling_steps,
-        sampling_eta=sampling_eta,
-        sampling_seed=sampling_seed,
-        output_path=output_dir / "generated_test.pt",
-    )
     _write_history(output_dir / "history.csv", history)
 
     group_by_sample = dict(zip(dataset.sample_ids, group_ids, strict=True))
@@ -306,7 +281,7 @@ def run_slice_diffusion(cfg: DictConfig) -> dict[str, Any]:
         "selection_metric": "validation_epsilon_mse",
         "best_validation_epsilon_mse": best_validation,
         "test_epsilon_mse_at_best_validation": test_epsilon_mse,
-        "generation": generation_metrics,
+        "generation": "separate_script:scripts.generate_slice_diffusion",
         "tensorboard_log_dir": tensorboard_dir.name,
         "num_samples": len(dataset),
         "num_train_samples": len(train_indices),
@@ -327,7 +302,6 @@ def run_slice_diffusion(cfg: DictConfig) -> dict[str, Any]:
         "statistical_scaling": standardizers.weighting,
         "diffusion_noise_seed": diffusion_noise_seed,
         "validation_seed": task.validation_seed,
-        "sampling_seed": sampling_seed,
         "device": str(device),
         "dtype": "float32",
         "seed": seed,
@@ -379,110 +353,6 @@ def _evaluate_diffusion(
     if sample_count == 0:
         raise ValueError("diffusion evaluation loader contains no samples")
     return loss_sum / sample_count
-
-
-def _generate_test_samples(
-    model: torch.nn.Module,
-    loader: Any,
-    *,
-    task: DiffusionDenoisingTask,
-    standardizers: Any,
-    device: torch.device,
-    sampling_steps: int,
-    sampling_eta: float,
-    sampling_seed: int,
-    output_path: Path,
-) -> dict[str, Any]:
-    model.eval()
-    generated_standardized_parts: list[torch.Tensor] = []
-    generated_nondimensional_parts: list[torch.Tensor] = []
-    reference_nondimensional_parts: list[torch.Tensor] = []
-    generated_ids: list[str] = []
-    reference_ids: list[str] = []
-    node_counts: list[int] = []
-    channel_names: tuple[str, ...] | None = None
-    generated_count = 0
-
-    with torch.inference_mode():
-        for host_batch in loader:
-            batch = _task_batch_to_device(
-                host_batch,
-                device=device,
-                dtype=torch.float32,
-            )
-            scaled = standardizers.transform(batch)
-            batch_generated_ids = tuple(
-                f"gen_{generated_count + index:06d}" for index in range(scaled.num_graphs)
-            )
-            generated_count += scaled.num_graphs
-            generated_standardized = task.sample_standardized(
-                model,
-                scaled,
-                steps=sampling_steps,
-                eta=sampling_eta,
-                sampling_seed=sampling_seed,
-                sampling_keys=batch_generated_ids,
-            )
-            generated_nondimensional = standardizers.inputs.inverse(
-                generated_standardized,
-                scaled.input_channels,
-            )
-            if channel_names is None:
-                channel_names = scaled.input_channels
-            elif channel_names != scaled.input_channels:
-                raise ValueError("test batches produced inconsistent state-channel semantics")
-
-            generated_standardized_parts.append(generated_standardized.cpu())
-            generated_nondimensional_parts.append(generated_nondimensional.cpu())
-            reference_nondimensional_parts.append(batch.inputs.cpu())
-            generated_ids.extend(batch_generated_ids)
-            reference_ids.extend(batch.source.sample_ids)
-            node_counts.extend(
-                int(value)
-                for value in (batch.ptr[1:] - batch.ptr[:-1]).detach().cpu().tolist()
-            )
-
-    if channel_names is None:
-        raise ValueError("test generation loader contains no samples")
-
-    generated_standardized = torch.cat(generated_standardized_parts, dim=0)
-    generated_nondimensional = torch.cat(generated_nondimensional_parts, dim=0)
-    reference_nondimensional = torch.cat(reference_nondimensional_parts, dim=0)
-    metrics = _marginal_generation_metrics(
-        generated_nondimensional,
-        reference_nondimensional,
-        channel_names,
-    )
-    sampler = task.sampler_name(steps=sampling_steps, eta=sampling_eta)
-    torch.save(
-        {
-            "sample_ids": tuple(reference_ids),
-            "generated_ids": tuple(generated_ids),
-            "reference_ids": tuple(reference_ids),
-            "node_counts": tuple(node_counts),
-            "channel_names": channel_names,
-            "generated_standardized": generated_standardized,
-            "generated_nondimensional": generated_nondimensional,
-            "target_nondimensional": reference_nondimensional,
-            "sampling_steps": sampling_steps,
-            "sampling_eta": sampling_eta,
-            "sampler": sampler,
-            "sampling_seed": sampling_seed,
-            "marginal_metrics": metrics,
-        },
-        output_path,
-    )
-    return {
-        "sampling_steps": sampling_steps,
-        "sampling_eta": sampling_eta,
-        "sampler": sampler,
-        "sampling_seed": sampling_seed,
-        "model_evaluations": sampling_steps,
-        "artifact": output_path.name,
-        "generated_ids": "independent_gen_index_keys",
-        "reference_pairing": False,
-        **metrics,
-    }
 
 
 def _validate_diffusion_standardizers(standardizers: Any) -> None:
