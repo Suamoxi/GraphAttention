@@ -338,9 +338,7 @@ def _evaluate_diffusion(
                 "conditioning": diffusion_batch.conditioning,
             }
             if diffusion_batch.attention_edge_indices:
-                model_kwargs["attention_edge_indices"] = (
-                    diffusion_batch.attention_edge_indices
-                )
+                model_kwargs["attention_edge_indices"] = diffusion_batch.attention_edge_indices
             predictions = model(diffusion_batch.inputs, **model_kwargs)
             aggregate = sample_reduced_mse(
                 predictions,
