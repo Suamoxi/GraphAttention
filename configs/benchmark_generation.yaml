@@ -11,10 +11,17 @@ spectra:
   num_k_bins: 24
   subtract_mean: true
   cartesian_tolerance: 1.0e-8
+  # Bands use normalized k only so the same definitions transfer across grids.
+  # Raw physical k remains the primary spectrum coordinate.
   bands:
     low: [0.0, 0.25]
     mid: [0.25, 0.5]
     high: [0.5, 1.0]
+
+nearest_reference:
+  enabled: true
+  include_channel_correlations: true
+  normalization_eps: 1.0e-12
 
 physics:
   enabled: true
