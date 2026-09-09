@@ -289,9 +289,7 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             "radial_range": "0 < k <= k_nyquist_min",
             "subtract_mean_per_sample": bool(cfg.spectra.subtract_mean),
             "num_k_bins": int(cfg.spectra.num_k_bins),
-            "bands_in_k_over_k_nyquist": {
-                name: list(bounds) for name, bounds in bands.items()
-            },
+            "bands_in_k_over_k_nyquist": {name: list(bounds) for name, bounds in bands.items()},
         },
         "nearest_reference": nearest_summary,
         "channel_summary": _channel_summary(channel_rows, band_rows),
@@ -307,9 +305,7 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             "plots": "plots" if bool(cfg.plots.enabled) else None,
         },
     }
-    (output_dir / "summary.json").write_text(
-        json.dumps(summary, indent=2, allow_nan=False) + "\n"
-    )
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
     return summary
 
 
@@ -477,9 +473,7 @@ def _channel_metric_rows(
             ),
             "generated_std": generated_std,
             "reference_std": reference_std,
-            "std_ratio": (
-                generated_std / reference_std if reference_std > eps else float("nan")
-            ),
+            "std_ratio": (generated_std / reference_std if reference_std > eps else float("nan")),
             "wasserstein_1": empirical_wasserstein_1(generated_values, reference_values),
         }
         for quantile in quantiles:
@@ -570,9 +564,7 @@ def _spectrum_rows(
                     "generated_power": generated_value,
                     "reference_power": reference_value,
                     "generated_over_reference": (
-                        generated_value / reference_value
-                        if reference_value > eps
-                        else float("nan")
+                        generated_value / reference_value if reference_value > eps else float("nan")
                     ),
                 }
             )
@@ -733,9 +725,7 @@ def _physical_summary(rows: list[dict[str, float | str]]) -> dict[str, Any]:
             "reference": _finite_or_none(float(row["reference"])),
             "difference": _finite_or_none(float(row["difference"])),
             "normalized_difference": _finite_or_none(float(row["normalized_difference"])),
-            "generated_over_reference": _finite_or_none(
-                float(row["generated_over_reference"])
-            ),
+            "generated_over_reference": _finite_or_none(float(row["generated_over_reference"])),
         }
         for row in rows
     }
