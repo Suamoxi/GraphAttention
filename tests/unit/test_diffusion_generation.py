@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import torch
+from scripts.generate_slice_diffusion import _generation_name, _load_standardizers
 
 from graph_attention.training import ChannelStandardizer, TaskStandardizers
-from scripts.generate_slice_diffusion import _generation_name, _load_standardizers
 
 
 def test_diffusion_generation_name_distinguishes_sampler_settings() -> None:
