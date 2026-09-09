@@ -168,6 +168,7 @@ def run_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
 
     summary = {
         "run_name": generation_name,
+        "benchmark_run_name": f"{run_dir.name}__{generation_name}",
         "source_run_name": run_dir.name,
         "source_run_dir": str(run_dir),
         "source_checkpoint": checkpoint_path.name,
