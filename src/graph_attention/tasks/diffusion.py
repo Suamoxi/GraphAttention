@@ -144,9 +144,7 @@ class DiffusionDenoisingTask(NodeRegressionTask):
         if any(not isinstance(key, str) or not key for key in keys):
             raise ValueError("sampling_keys must contain non-empty strings")
 
-        generators = [
-            _sample_generator(batch.inputs.device, seed, "sampling", key) for key in keys
-        ]
+        generators = [_sample_generator(batch.inputs.device, seed, "sampling", key) for key in keys]
         state = _randn_by_graph(batch, generators)
         alpha_bar = self._alpha_bar_for(batch.inputs)
         sampling_times = _sampling_timesteps(
@@ -174,23 +172,17 @@ class DiffusionDenoisingTask(NodeRegressionTask):
 
             alpha_t = alpha_bar[int(t_scalar)]
             alpha_previous = alpha_bar[previous_scalar]
-            x0_hat = (
-                state - torch.sqrt(1.0 - alpha_t) * epsilon_hat
-            ) / torch.sqrt(alpha_t)
+            x0_hat = (state - torch.sqrt(1.0 - alpha_t) * epsilon_hat) / torch.sqrt(alpha_t)
 
             if previous_scalar == 0:
                 state = x0_hat
                 continue
 
             variance_factor = (
-                (1.0 - alpha_previous)
-                / (1.0 - alpha_t)
-                * (1.0 - alpha_t / alpha_previous)
+                (1.0 - alpha_previous) / (1.0 - alpha_t) * (1.0 - alpha_t / alpha_previous)
             )
             sigma = eta_value * torch.sqrt(torch.clamp(variance_factor, min=0.0))
-            direction_scale = torch.sqrt(
-                torch.clamp(1.0 - alpha_previous - sigma**2, min=0.0)
-            )
+            direction_scale = torch.sqrt(torch.clamp(1.0 - alpha_previous - sigma**2, min=0.0))
             state = torch.sqrt(alpha_previous) * x0_hat + direction_scale * epsilon_hat
             if eta_value > 0.0:
                 state = state + sigma * _randn_by_graph(batch, generators)
@@ -257,9 +249,7 @@ class DiffusionDenoisingTask(NodeRegressionTask):
 
 def _cosine_discrete_alpha_bar(timesteps: int, cosine_s: float) -> torch.Tensor:
     continuous_time = torch.linspace(0.0, 1.0, timesteps + 1, dtype=torch.float64)
-    raw = torch.cos(
-        (continuous_time + cosine_s) / (1.0 + cosine_s) * torch.pi / 2.0
-    ) ** 2
+    raw = torch.cos((continuous_time + cosine_s) / (1.0 + cosine_s) * torch.pi / 2.0) ** 2
     raw = raw / raw[0]
     betas = 1.0 - raw[1:] / raw[:-1]
     betas = betas.clamp(min=1.0e-8, max=0.999)
