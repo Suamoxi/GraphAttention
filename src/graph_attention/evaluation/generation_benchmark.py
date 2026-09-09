@@ -56,9 +56,9 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
     source_summary = json.loads(source_summary_path.read_text())
     source_cfg = OmegaConf.load(source_config_path)
     artifact = _load_generation_artifact(artifact_path)
-    generated, reference, sample_ids, channel_names = _fixed_mesh_samples(artifact)
-    generation_keys = sample_ids
-    reference_ids = sample_ids
+    generated, reference, generation_keys, reference_ids, channel_names = _fixed_mesh_samples(
+        artifact
+    )
     grid, mesh_file = _load_grid(source_cfg, source_summary, cfg)
     if generated.shape[1] != grid.shape[0] * grid.shape[1]:
         raise ValueError(
@@ -267,7 +267,11 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
         "source_runtime_provenance": source_runtime_provenance,
         "reference_population": "test",
         "comparison_mode": "unpaired_population",
-        "generated_ids_semantics": "deterministic_sampling_rng_keys_only",
+        "generated_ids_semantics": (
+            "explicit_generation_keys"
+            if "generated_ids" in artifact
+            else "legacy_sample_ids_used_as_sampling_keys"
+        ),
         "generated_reference_pairing": False,
         "sample_space": sample_space,
         "marginal_weighting": "node_pooled_equal_node_samples",
@@ -285,7 +289,9 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             "radial_range": "0 < k <= k_nyquist_min",
             "subtract_mean_per_sample": bool(cfg.spectra.subtract_mean),
             "num_k_bins": int(cfg.spectra.num_k_bins),
-            "bands_in_k_over_k_nyquist": {name: list(bounds) for name, bounds in bands.items()},
+            "bands_in_k_over_k_nyquist": {
+                name: list(bounds) for name, bounds in bands.items()
+            },
         },
         "nearest_reference": nearest_summary,
         "channel_summary": _channel_summary(channel_rows, band_rows),
@@ -301,7 +307,9 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             "plots": "plots" if bool(cfg.plots.enabled) else None,
         },
     }
-    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
+    (output_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2, allow_nan=False) + "\n"
+    )
     return summary
 
 
@@ -322,7 +330,6 @@ def _load_generation_artifact(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise TypeError(f"expected mapping payload in '{path}'")
     required = {
-        "sample_ids",
         "node_counts",
         "channel_names",
         "generated_nondimensional",
@@ -331,12 +338,30 @@ def _load_generation_artifact(path: Path) -> dict[str, Any]:
     missing = sorted(required.difference(payload))
     if missing:
         raise ValueError(f"generation artifact is missing required keys: {missing}")
+    has_explicit_ids = "generated_ids" in payload or "reference_ids" in payload
+    if has_explicit_ids and not {
+        "generated_ids",
+        "reference_ids",
+    }.issubset(payload):
+        raise ValueError(
+            "generation artifact must provide generated_ids and reference_ids together"
+        )
+    if not has_explicit_ids and "sample_ids" not in payload:
+        raise ValueError(
+            "generation artifact requires explicit generated_ids/reference_ids or legacy sample_ids"
+        )
     return payload
 
 
 def _fixed_mesh_samples(
     artifact: dict[str, Any],
-) -> tuple[np.ndarray, np.ndarray, tuple[str, ...], tuple[str, ...]]:
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+]:
     generated = artifact["generated_nondimensional"]
     reference = artifact["target_nondimensional"]
     if not isinstance(generated, torch.Tensor) or not isinstance(reference, torch.Tensor):
@@ -348,11 +373,13 @@ def _fixed_mesh_samples(
     if not torch.isfinite(generated).all() or not torch.isfinite(reference).all():
         raise ValueError("generated and reference fields must be finite")
 
-    sample_ids = tuple(artifact["sample_ids"])
+    generated_ids, reference_ids = _population_ids(artifact)
     node_counts = tuple(int(value) for value in artifact["node_counts"])
     channel_names = tuple(artifact["channel_names"])
-    if not sample_ids or len(sample_ids) != len(node_counts):
-        raise ValueError("sample_ids and node_counts must be non-empty and aligned")
+    if not node_counts:
+        raise ValueError("node_counts must be non-empty")
+    if len(generated_ids) != len(node_counts) or len(reference_ids) != len(node_counts):
+        raise ValueError("population IDs and node_counts must be aligned")
     if len(set(node_counts)) != 1:
         raise ValueError("benchmark v2 requires a shared fixed-size 2-D mesh")
     nodes_per_sample = node_counts[0]
@@ -363,13 +390,34 @@ def _fixed_mesh_samples(
     if any(not isinstance(name, str) or not name for name in channel_names):
         raise ValueError("channel_names must contain non-empty strings")
 
-    shape = (len(sample_ids), nodes_per_sample, generated.shape[1])
+    shape = (len(node_counts), nodes_per_sample, generated.shape[1])
     return (
         generated.to(torch.float64).numpy().reshape(shape),
         reference.to(torch.float64).numpy().reshape(shape),
-        sample_ids,
+        generated_ids,
+        reference_ids,
         channel_names,
     )
+
+
+def _population_ids(artifact: dict[str, Any]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    if "generated_ids" in artifact:
+        generated_ids = tuple(artifact["generated_ids"])
+        reference_ids = tuple(artifact["reference_ids"])
+    else:
+        legacy_ids = tuple(artifact["sample_ids"])
+        generated_ids = legacy_ids
+        reference_ids = legacy_ids
+
+    for label, values in (
+        ("generated_ids", generated_ids),
+        ("reference_ids", reference_ids),
+    ):
+        if not values or any(not isinstance(value, str) or not value for value in values):
+            raise ValueError(f"{label} must contain non-empty strings")
+        if len(set(values)) != len(values):
+            raise ValueError(f"{label} must contain unique values")
+    return generated_ids, reference_ids
 
 
 def _load_grid(
@@ -429,7 +477,9 @@ def _channel_metric_rows(
             ),
             "generated_std": generated_std,
             "reference_std": reference_std,
-            "std_ratio": (generated_std / reference_std if reference_std > eps else float("nan")),
+            "std_ratio": (
+                generated_std / reference_std if reference_std > eps else float("nan")
+            ),
             "wasserstein_1": empirical_wasserstein_1(generated_values, reference_values),
         }
         for quantile in quantiles:
@@ -520,7 +570,9 @@ def _spectrum_rows(
                     "generated_power": generated_value,
                     "reference_power": reference_value,
                     "generated_over_reference": (
-                        generated_value / reference_value if reference_value > eps else float("nan")
+                        generated_value / reference_value
+                        if reference_value > eps
+                        else float("nan")
                     ),
                 }
             )
@@ -681,7 +733,9 @@ def _physical_summary(rows: list[dict[str, float | str]]) -> dict[str, Any]:
             "reference": _finite_or_none(float(row["reference"])),
             "difference": _finite_or_none(float(row["difference"])),
             "normalized_difference": _finite_or_none(float(row["normalized_difference"])),
-            "generated_over_reference": _finite_or_none(float(row["generated_over_reference"])),
+            "generated_over_reference": _finite_or_none(
+                float(row["generated_over_reference"])
+            ),
         }
         for row in rows
     }
