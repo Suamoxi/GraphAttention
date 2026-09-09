@@ -46,7 +46,7 @@ A new or unvalidated research idea. Record the hypothesis, intended mechanism, r
 
 An empirical result obtained from a specified experiment or benchmark. Record enough context to reproduce it.
 
-## 3. M0-M11 traceability table
+## 3. M0-M13 traceability table
 
 | Concept | Type | Specification | Implementation | Validation | Evidence status |
 |---|---|---|---|---|---|
@@ -93,7 +93,7 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Sparse-transformer performance reference | Measured result | `docs/BENCHMARK_PROTOCOL.md`, `docs/M8_SPARSE_TRANSFORMER.md` §17 | `scripts/benchmark_m8.py` | jobs `400187` and `400194`, one NVIDIA GH200 480GB, FP32, clean SHA `dea85e8645d614992a34003b1998d4f1a7e58261` | TARGET_VALIDATED: S3 forward/training 3.0808/90.3210 ms; real HIT 5.3406/17.7296 ms; degree stress shows >10x training penalty when an extreme hub is introduced at nearly fixed N/E |
 | Relative-displacement geometric attention bias | Project adaptation | `docs/SCIENTIFIC_SPEC.md` §19, `docs/M9_GEOMETRIC_ATTENTION.md` §1-6 | `GeometricSparseMultiheadAttention`, `GeometricSparseGraphTransformerBlock`, `GeometricSparseGraphTransformer` | explicit geometric-attention reference, geometry sensitivity, translation, packed-vs-independent, node-renumbering, training integration tests | TARGET_VALIDATED M9 software/scientific and FP32 single-GH200 performance scope; job `403939` |
 | M9 geometry uses displacement only, no explicit distance | Project scientific/ablation decision | `docs/M9_GEOMETRIC_ATTENTION.md` §2, `docs/NUMERICAL_CONVENTIONS.md` §20 | `edge_relative_displacement`, `GeometricSparseMultiheadAttention.geometry_mlp` | relative-geometry tests + M9 explicit reference | TARGET_VALIDATED for frozen M9 reference; explicit-distance inductive bias remains a separate deferred ablation |
-| Geometric sparse-transformer performance reference | Measured result | `docs/M9_GEOMETRIC_ATTENTION.md` §10-11 | `scripts/benchmark_m9.py` | job `403939`, one NVIDIA GH200 480GB, FP32, clean SHA `83e160846badb151eef0a09c2f1e2234da22bc24` | TARGET_VALIDATED 2026-09-07: S3 forward/training 3.4138/90.9458 ms; real HIT 5.7989/18.7044 ms; modest overhead versus M8 and no new performance pathology observed |
+| Geometric sparse-transformer performance reference | Measured result | `docs/M9_GEOMETRIC_ATTENTION.md` §10-11 | `scripts/benchmark_m9.py` | job `403939`, one NVIDIA GH200 480GB, FP32, clean SHA `83e160846badb151eef0a09c2f1e2234da22bc24` | TARGET_VALIDATED 2026-09-07: S3 forward/training 3.4138/90.9458 ms; real HIT forward/training medians 5.7989/18.7044 ms; modest overhead versus M8 and no new performance pathology observed |
 | diffusion4avbp fixed-slice artifact adapter | Project data/provenance adaptation | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §2 | `PrecomputedSlicePTDataset` | `tests/unit/test_slice_pt.py` + real-artifact preflight | TARGET_VALIDATED M10 2026-09-07 on 1,488 real slices |
 | Grouped split by source 3-D snapshot | Project anti-leakage convention reproduced from diffusion4avbp | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §3 | `make_grouped_split_manifest`, `PrecomputedSlicePTDataset.group_id` | `tests/unit/test_grouped_splits.py` + real split-overlap check | TARGET_VALIDATED M10: 260/55/57 source groups with zero overlap |
 | Shared canonical 2-D slice coordinates preserved as model geometry | Project geometry convention | `docs/SCIENTIFIC_SPEC.md` §20, `docs/M10_HIT_SLICE_ABLATION.md` §4 | `PrecomputedSlicePTDataset` | exact shared-coordinate and x/y/z extraction-orientation independence tests + real preflight | TARGET_VALIDATED M10: real coordinates `(1089,2)`, grid `33x33` |
@@ -108,6 +108,11 @@ An empirical result obtained from a specified experiment or benchmark. Record en
 | Euler/Heun flow ODE sampling | Established explicit integration + project adaptation | `docs/SCIENTIFIC_SPEC.md` §21, `docs/M11_FLOW_MATCHING.md` §8 | `FlowMatchingTask.sample_standardized` | analytical Heun test + target generation smoke required | Implemented M11; adaptive solvers deferred |
 | HIT-slice flow-matching training/generation runner | Project experiment integration | `docs/M11_FLOW_MATCHING.md` §9-10 | `scripts/train_slice_flow_matching.py`, M11 configs | config tests + real GPU smoke required | Implemented M11; target evidence pending |
 | Per-channel flattened empirical Wasserstein-1 generation diagnostic | Project diagnostic | `docs/M11_FLOW_MATCHING.md` §10 | `_marginal_generation_metrics` | exact empirical W1 unit test | Implemented M11; explicitly not spatial/joint quality evidence |
+| Full-state discrete cosine diffusion with epsilon prediction | Project adaptation of DDPM + improved cosine schedule | `docs/SCIENTIFIC_SPEC.md` §22, `docs/M13_DIFFUSION.md` | `DiffusionDenoisingTask.make_training_problem` | `tests/unit/test_diffusion_task.py`; full software gate + GPU smoke required | Implemented M13; software/target validation pending |
+| One normalized discrete diffusion time per physical graph | Project controlled-comparison convention | `docs/SCIENTIFIC_SPEC.md` §22, `docs/NUMERICAL_CONVENTIONS.md` §22 | `DiffusionDenoisingTask` + existing graph conditioning path | exact forward-process/time-conditioning test | Implemented M13; richer time embeddings intentionally deferred |
+| Generalized DDIM eta with ancestral-DDPM full-grid limit | Project adaptation of DDIM | `docs/SCIENTIFIC_SPEC.md` §22, `docs/NUMERICAL_CONVENTIONS.md` §22 | `DiffusionDenoisingTask.sample_standardized`, `sampler_name` | sampler-label and clean-state-independence tests + GPU generation smoke required | Implemented M13; target validation pending |
+| Standalone diffusion training/generation split | Project reproducibility/experiment design | `docs/M13_DIFFUSION.md`, `docs/REPRODUCIBILITY.md` §12 | `scripts/train_slice_diffusion.py`, `scripts/generate_slice_diffusion.py` | saved-standardizer reload test + smoke required | Implemented M13; generation runtime pending target validation |
+| Explicit unpaired generated/reference identifiers | Project generative-evaluation contract | `docs/SCIENTIFIC_SPEC.md` §22, `docs/M13_DIFFUSION.md` | diffusion generation artifact + generation benchmark compatibility | diffusion-generation tests + legacy benchmark compatibility test | Implemented M13; old flow artifacts remain supported through legacy `sample_ids` |
 
 ## 4. Future model traceability template
 
@@ -297,7 +302,57 @@ Known limitations:
     adaptive ODE solver, or spatial/spectral/joint generation-quality evidence yet
 ```
 
-## 9. Change procedure
+## 9. M13 HIT-slice diffusion genealogy
+
+```text
+Concept:
+    unconditional discrete diffusion of the full five-channel HIT slice state
+Status:
+    project adaptation of established DDPM/DDIM methods
+References:
+    Ho et al., Denoising Diffusion Probabilistic Models, NeurIPS 2020, arXiv:2006.11239
+    Nichol and Dhariwal, Improved Denoising Diffusion Probabilistic Models,
+    ICML 2021, arXiv:2102.09672
+    Song et al., Denoising Diffusion Implicit Models, ICLR 2021, arXiv:2010.02502
+Project-specific definition:
+    physical nondimensionalization -> train-only sample-balanced standardization gives x0;
+    T=1000, cosine schedule with s=0.008;
+    one integer t_g in [1,T] per graph and epsilon ~ N(0,I);
+    x_t = sqrt(alpha_bar_t)*x0 + sqrt(1-alpha_bar_t)*epsilon;
+    epsilon prediction with equal-sample MSE;
+    normalized scalar tau=t/T is appended through the existing graph conditioning path.
+Repository modification:
+    adapts the diffusion process to packed disconnected graphs without modifying M9/M12;
+    adds deterministic sample-keyed validation noise, generalized DDIM eta sampling,
+    standalone train/generate workflows, saved-standardizer reload, exact test-split replay,
+    and explicit unpaired generated/reference IDs.
+Implementation path:
+    src/graph_attention/tasks/diffusion.py
+    scripts/train_slice_diffusion.py
+    scripts/generate_slice_diffusion.py
+    src/graph_attention/evaluation/generation_benchmark.py
+Configuration:
+    configs/task/hit_diffusion.yaml
+    configs/generative/hit_slice_diffusion.yaml
+    configs/generate_slice_diffusion.yaml
+Scientific tests:
+    exact forward noising equation and one normalized graph time
+    deterministic validation independent of batch order
+    generation independence from clean held-out state values
+    explicit generated/reference population-ID semantics
+Numerical tests:
+    eta/sampler-limit classification
+    persisted standardizer reload without refitting
+    legacy generation-benchmark artifact compatibility
+Experiment evidence:
+    software gate and Calypso/GH200 training/generation smoke pending
+Known limitations:
+    no SNR weighting, v/x0 prediction, learned variance, clipping/thresholding,
+    richer time embedding, DDP, low-precision target validation, or conditional generation yet;
+    no learning-quality claim before a controlled trained diffusion run is benchmarked
+```
+
+## 10. Change procedure
 
 When code changes a scientifically meaningful mechanism:
 
@@ -307,7 +362,7 @@ When code changes a scientifically meaningful mechanism:
 4. record the evidence status;
 5. do not mark a performance or scientific hypothesis as established merely because tests pass.
 
-## 10. Citation policy
+## 11. Citation policy
 
 When a mechanism comes from literature, preserve enough citation detail to identify the exact source and idea used.
 
