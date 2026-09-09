@@ -11,6 +11,7 @@ from graph_attention.evaluation import (
     infer_cartesian_grid_2d,
     run_generation_benchmark,
 )
+from graph_attention.evaluation.nearest_reference import nearest_reference_diagnostics
 from graph_attention.evaluation.spectra import scatter_to_grid
 
 
@@ -37,6 +38,37 @@ def test_cartesian_grid_inference_handles_permuted_node_order() -> None:
     np.testing.assert_array_equal(field, np.arange(12).reshape(3, 4))
 
 
+def test_nearest_reference_uses_unpaired_descriptor_distance() -> None:
+    reference = np.array(
+        [
+            [0.0, 0.0],
+            [2.0, 0.0],
+            [0.0, 2.0],
+        ]
+    )
+    generated = np.array(
+        [
+            [0.1, 0.1],
+            [1.9, 0.1],
+        ]
+    )
+
+    diagnostics = nearest_reference_diagnostics(
+        generated,
+        reference,
+        ("noise_a", "noise_b"),
+        ("test_0", "test_1", "test_2"),
+        ("feature_a", "feature_b"),
+        normalization_eps=1.0e-12,
+    )
+
+    np.testing.assert_array_equal(diagnostics.generated_to_reference_indices, [0, 1])
+    assert diagnostics.summary["generated_ids_are_sampling_keys_not_target_pairings"] is True
+    assert diagnostics.summary["test_to_test_leave_one_out"]["mean"] > 0.0
+    assert diagnostics.rows[0]["source_id_role"] == "sampling_key"
+    assert diagnostics.rows[0]["nearest_id_role"] == "test_sample_id"
+
+
 def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> None:
     run_dir = tmp_path / "m12_example"
     run_dir.mkdir()
@@ -55,7 +87,7 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
     num_samples = 3
     num_nodes = 16
     channel_names = ("rho.value", "rhou.x", "rhov.y", "rhow.z", "rhoE.value")
-    target_samples = []
+    reference_samples = []
     for sample_index in range(num_samples):
         xcoord = coords[:, 0]
         ycoord = coords[:, 1]
@@ -64,9 +96,9 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
         rhov = 0.1 * (ycoord - 1.5) - 0.01 * sample_index
         rhow = 0.05 * (xcoord + ycoord - 3.0)
         rhoe = 10.0 * rho + 0.02 * xcoord
-        target_samples.append(torch.stack((rho, rhou, rhov, rhow, rhoe), dim=1))
-    target = torch.stack(target_samples, dim=0)
-    generated = target.clone()
+        reference_samples.append(torch.stack((rho, rhou, rhov, rhow, rhoe), dim=1))
+    reference = torch.stack(reference_samples, dim=0)
+    generated = reference.roll(shifts=1, dims=0).clone()
     generated[..., 1] += 0.02
     generated[..., 4] *= 0.995
 
@@ -77,7 +109,7 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
             "channel_names": channel_names,
             "generated_standardized": generated.reshape(-1, len(channel_names)),
             "generated_nondimensional": generated.reshape(-1, len(channel_names)),
-            "target_nondimensional": target.reshape(-1, len(channel_names)),
+            "target_nondimensional": reference.reshape(-1, len(channel_names)),
             "sample_steps": 10,
             "solver": "heun",
             "sampling_seed": 1,
@@ -120,8 +152,13 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
                     "high": [0.5, 1.0],
                 },
             },
+            "nearest_reference": {
+                "enabled": True,
+                "include_channel_correlations": True,
+                "normalization_eps": 1.0e-12,
+            },
             "physics": {"enabled": True},
-            "plots": {"enabled": False},
+            "plots": {"enabled": False, "fields": False},
         }
     )
 
@@ -129,8 +166,11 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
     output_dir = output_root / run_dir.name
 
     assert summary["run_name"] == run_dir.name
-    assert summary["reference_population"] == "paired_test_target"
-    assert summary["num_samples"] == num_samples
+    assert summary["reference_population"] == "test"
+    assert summary["comparison_mode"] == "unpaired_population"
+    assert summary["generated_reference_pairing"] is False
+    assert summary["num_generated_samples"] == num_samples
+    assert summary["num_reference_samples"] == num_samples
     assert output_dir.is_dir()
     assert (output_dir / "summary.json").is_file()
     assert (output_dir / "benchmark_config.yaml").is_file()
@@ -139,8 +179,12 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
     assert (output_dir / "correlation_matrix.csv").stat().st_size > 0
     assert (output_dir / "spectra.csv").stat().st_size > 0
     assert (output_dir / "spectral_bands.csv").stat().st_size > 0
+    assert (output_dir / "nearest_reference.csv").stat().st_size > 0
     assert (output_dir / "physical_metrics.csv").stat().st_size > 0
     assert summary["channel_summary"]["rhou.x"]["wasserstein_1"] > 0.0
+    assert summary["nearest_reference"]["generated_to_test"]["mean"] >= 0.0
+    assert summary["physical_summary"]["u_mean"]["generated_over_reference"] is None
+    assert summary["physical_summary"]["u_mean"]["normalized_difference"] is not None
 
     with pytest.raises(FileExistsError, match="overwrite=true"):
         run_generation_benchmark(cfg)
