@@ -13,12 +13,20 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from .plotting import save_field_examples, save_marginal_plots, save_spectrum_plots
+from .nearest_reference import (
+    build_snapshot_descriptors,
+    nearest_neighbor_spatial_metrics,
+    nearest_reference_diagnostics,
+)
+from .plotting import (
+    save_marginal_plots,
+    save_nearest_reference_field_examples,
+    save_spectrum_plots,
+)
 from .spectra import (
     CartesianGrid2D,
     infer_cartesian_grid_2d,
-    population_radial_spectra,
-    scatter_to_grid,
+    sample_radial_spectra,
     spectral_band_rows,
 )
 
@@ -33,7 +41,7 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
     overwrite = bool(cfg.overwrite)
     sample_space = str(cfg.sample_space)
     if sample_space != "nondimensional":
-        raise ValueError("benchmark v1 supports sample_space=nondimensional only")
+        raise ValueError("benchmark v2 supports sample_space=nondimensional only")
 
     artifact_path = run_dir / str(cfg.generated_tensor)
     if not artifact_path.is_file():
@@ -48,13 +56,19 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
     source_summary = json.loads(source_summary_path.read_text())
     source_cfg = OmegaConf.load(source_config_path)
     artifact = _load_generation_artifact(artifact_path)
-    generated, target, sample_ids, channel_names = _fixed_mesh_samples(artifact)
+    generated, reference, sample_ids, channel_names = _fixed_mesh_samples(artifact)
+    generation_keys = sample_ids
+    reference_ids = sample_ids
     grid, mesh_file = _load_grid(source_cfg, source_summary, cfg)
     if generated.shape[1] != grid.shape[0] * grid.shape[1]:
         raise ValueError(
             "generated sample node count does not match the source Cartesian mesh: "
             f"samples={generated.shape[1]}, grid={grid.shape}"
         )
+
+    nearest_enabled = bool(cfg.nearest_reference.enabled)
+    if bool(cfg.plots.enabled) and bool(cfg.plots.fields) and not nearest_enabled:
+        raise ValueError("field comparison plots require nearest_reference.enabled=true")
 
     if output_dir.exists():
         if not overwrite:
@@ -70,69 +84,130 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
         raise ValueError("eps must be positive")
     quantiles = tuple(float(value) for value in cfg.quantiles)
     _validate_quantiles(quantiles)
+    bands = _spectral_bands(cfg.spectra.bands)
 
     channel_rows = _channel_metric_rows(
         generated,
-        target,
+        reference,
         channel_names,
         quantiles=quantiles,
         eps=eps,
     )
     sample_rows = _sample_statistic_rows(
         generated,
-        target,
-        sample_ids,
+        reference,
+        generation_keys,
+        reference_ids,
         channel_names,
         grid,
     )
-    correlation_rows = _correlation_rows(generated, target, channel_names)
+    correlation_rows = _correlation_rows(generated, reference, channel_names)
 
-    spectrum_rows: list[dict[str, float | str]] = []
-    band_rows: list[dict[str, float | str]] = []
+    spectra_enabled = bool(cfg.spectra.enabled)
+    need_sample_spectra = spectra_enabled or nearest_enabled
+    generated_sample_power: np.ndarray | None = None
+    reference_sample_power: np.ndarray | None = None
     generated_power: np.ndarray | None = None
-    target_power: np.ndarray | None = None
+    reference_power: np.ndarray | None = None
     k_centers: np.ndarray | None = None
-    if bool(cfg.spectra.enabled):
-        k_centers, generated_power = population_radial_spectra(
+    if need_sample_spectra:
+        k_centers, generated_sample_power = sample_radial_spectra(
             generated,
             grid,
             num_k_bins=int(cfg.spectra.num_k_bins),
             subtract_mean=bool(cfg.spectra.subtract_mean),
         )
-        target_centers, target_power = population_radial_spectra(
-            target,
+        reference_centers, reference_sample_power = sample_radial_spectra(
+            reference,
             grid,
             num_k_bins=int(cfg.spectra.num_k_bins),
             subtract_mean=bool(cfg.spectra.subtract_mean),
         )
-        np.testing.assert_allclose(k_centers, target_centers, rtol=0.0, atol=0.0)
+        np.testing.assert_allclose(k_centers, reference_centers, rtol=0.0, atol=0.0)
+        generated_power = np.mean(generated_sample_power, axis=0)
+        reference_power = np.mean(reference_sample_power, axis=0)
+
+    spectrum_rows: list[dict[str, float | str]] = []
+    band_rows: list[dict[str, float | str]] = []
+    if spectra_enabled:
+        assert k_centers is not None
+        assert generated_power is not None
+        assert reference_power is not None
         spectrum_rows = _spectrum_rows(
             k_centers,
             generated_power,
-            target_power,
+            reference_power,
             channel_names,
             k_nyquist=grid.k_nyquist_min,
             eps=eps,
         )
         band_rows = spectral_band_rows(
             generated_power,
-            target_power,
+            reference_power,
             k_centers,
             k_nyquist=grid.k_nyquist_min,
             channel_names=channel_names,
-            bands=_spectral_bands(cfg.spectra.bands),
+            bands=bands,
             eps=eps,
         )
 
+    nearest_rows: list[dict[str, Any]] = []
+    nearest_summary: dict[str, Any] | None = None
+    nearest_indices: np.ndarray | None = None
+    nearest_distances: np.ndarray | None = None
+    if nearest_enabled:
+        assert k_centers is not None
+        assert generated_sample_power is not None
+        assert reference_sample_power is not None
+        generated_feature_names, generated_features = build_snapshot_descriptors(
+            generated,
+            grid,
+            channel_names,
+            generated_sample_power,
+            k_centers,
+            k_nyquist=grid.k_nyquist_min,
+            bands=bands,
+            include_channel_correlations=bool(
+                cfg.nearest_reference.include_channel_correlations
+            ),
+        )
+        reference_feature_names, reference_features = build_snapshot_descriptors(
+            reference,
+            grid,
+            channel_names,
+            reference_sample_power,
+            k_centers,
+            k_nyquist=grid.k_nyquist_min,
+            bands=bands,
+            include_channel_correlations=bool(
+                cfg.nearest_reference.include_channel_correlations
+            ),
+        )
+        if generated_feature_names != reference_feature_names:
+            raise RuntimeError("generated/reference snapshot descriptor semantics differ")
+        diagnostics = nearest_reference_diagnostics(
+            generated_features,
+            reference_features,
+            generation_keys,
+            reference_ids,
+            generated_feature_names,
+            normalization_eps=float(cfg.nearest_reference.normalization_eps),
+        )
+        nearest_rows = list(diagnostics.rows)
+        nearest_summary = diagnostics.summary
+        nearest_indices = diagnostics.generated_to_reference_indices
+        nearest_distances = diagnostics.generated_to_reference_distances
+
     physical_rows: list[dict[str, float | str]] = []
     if bool(cfg.physics.enabled):
-        physical_rows = _physical_metric_rows(generated, target, channel_names, eps=eps)
+        physical_rows = _physical_metric_rows(generated, reference, channel_names, eps=eps)
 
     _write_csv(output_dir / "channel_metrics.csv", channel_rows)
     _write_csv(output_dir / "sample_statistics.csv", sample_rows)
     _write_csv(output_dir / "correlation_matrix.csv", correlation_rows)
     _write_csv(output_dir / "spectra.csv", spectrum_rows)
     _write_csv(output_dir / "spectral_bands.csv", band_rows)
+    _write_csv(output_dir / "nearest_reference.csv", nearest_rows)
     _write_csv(output_dir / "physical_metrics.csv", physical_rows)
 
     if bool(cfg.plots.enabled):
@@ -140,18 +215,20 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
         if bool(cfg.plots.marginals):
             save_marginal_plots(
                 generated,
-                target,
+                reference,
                 channel_names,
                 plot_root / "marginals",
                 bins=int(cfg.plots.marginal_bins),
                 dpi=int(cfg.plots.dpi),
             )
-        if bool(cfg.plots.spectra) and generated_power is not None and target_power is not None:
+        if bool(cfg.plots.spectra) and spectra_enabled:
             assert k_centers is not None
+            assert generated_power is not None
+            assert reference_power is not None
             save_spectrum_plots(
                 k_centers,
                 generated_power,
-                target_power,
+                reference_power,
                 channel_names,
                 plot_root / "spectra",
                 k_nyquist=grid.k_nyquist_min,
@@ -159,13 +236,18 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
                 dpi=int(cfg.plots.dpi),
             )
         if bool(cfg.plots.fields):
-            save_field_examples(
+            assert nearest_indices is not None
+            assert nearest_distances is not None
+            save_nearest_reference_field_examples(
                 generated,
-                target,
-                sample_ids,
+                reference,
+                generation_keys,
+                reference_ids,
+                nearest_indices,
+                nearest_distances,
                 channel_names,
                 grid,
-                plot_root / "fields",
+                plot_root / "nearest_reference_fields",
                 num_examples=int(cfg.plots.num_field_examples),
                 max_channels=int(cfg.plots.max_field_channels),
                 dpi=int(cfg.plots.dpi),
@@ -178,7 +260,7 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
         source_runtime_provenance = source_manifest.get("runtime_provenance")
 
     summary = {
-        "benchmark": "generation_distribution_v1",
+        "benchmark": "generation_distribution_v2",
         "run_name": run_name,
         "source_run_dir": str(run_dir),
         "source_generated_artifact": str(artifact_path),
@@ -187,23 +269,31 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
         "source_model_parameters": source_summary.get("model_parameters"),
         "source_best_epoch": source_summary.get("best_epoch"),
         "source_runtime_provenance": source_runtime_provenance,
-        "reference_population": "paired_test_target",
+        "reference_population": "test",
+        "comparison_mode": "unpaired_population",
+        "generated_ids_semantics": "deterministic_sampling_rng_keys_only",
+        "generated_reference_pairing": False,
         "sample_space": sample_space,
         "marginal_weighting": "node_pooled_equal_node_samples",
-        "num_samples": int(generated.shape[0]),
+        "num_generated_samples": int(generated.shape[0]),
+        "num_reference_samples": int(reference.shape[0]),
         "nodes_per_sample": int(generated.shape[1]),
         "channel_names": list(channel_names),
         "grid_shape_2d": list(grid.shape),
         "grid_spacing": list(grid.spacing),
         "k_nyquist_min": grid.k_nyquist_min,
         "spectra": {
-            "enabled": bool(cfg.spectra.enabled),
+            "enabled": spectra_enabled,
+            "primary_coordinate": "k",
+            "secondary_coordinate": "k_over_k_nyquist",
+            "radial_range": "0 < k <= k_nyquist_min",
             "subtract_mean_per_sample": bool(cfg.spectra.subtract_mean),
             "num_k_bins": int(cfg.spectra.num_k_bins),
             "bands_in_k_over_k_nyquist": {
-                name: list(bounds) for name, bounds in _spectral_bands(cfg.spectra.bands).items()
+                name: list(bounds) for name, bounds in bands.items()
             },
         },
+        "nearest_reference": nearest_summary,
         "channel_summary": _channel_summary(channel_rows, band_rows),
         "physical_summary": _physical_summary(physical_rows),
         "outputs": {
@@ -212,6 +302,7 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             "correlation_matrix": "correlation_matrix.csv",
             "spectra": "spectra.csv",
             "spectral_bands": "spectral_bands.csv",
+            "nearest_reference": "nearest_reference.csv",
             "physical_metrics": "physical_metrics.csv",
             "plots": "plots" if bool(cfg.plots.enabled) else None,
         },
@@ -253,13 +344,13 @@ def _fixed_mesh_samples(
     artifact: dict[str, Any],
 ) -> tuple[np.ndarray, np.ndarray, tuple[str, ...], tuple[str, ...]]:
     generated = artifact["generated_nondimensional"]
-    target = artifact["target_nondimensional"]
-    if not isinstance(generated, torch.Tensor) or not isinstance(target, torch.Tensor):
-        raise TypeError("generated and target nondimensional fields must be tensors")
-    if generated.shape != target.shape or generated.ndim != 2:
-        raise ValueError("generated and target fields must have identical shape [total_nodes, C]")
-    if not torch.isfinite(generated).all() or not torch.isfinite(target).all():
-        raise ValueError("generated and target fields must be finite")
+    reference = artifact["target_nondimensional"]
+    if not isinstance(generated, torch.Tensor) or not isinstance(reference, torch.Tensor):
+        raise TypeError("generated and reference nondimensional fields must be tensors")
+    if generated.shape != reference.shape or generated.ndim != 2:
+        raise ValueError("generated and reference fields must have identical shape [total_nodes, C]")
+    if not torch.isfinite(generated).all() or not torch.isfinite(reference).all():
+        raise ValueError("generated and reference fields must be finite")
 
     sample_ids = tuple(artifact["sample_ids"])
     node_counts = tuple(int(value) for value in artifact["node_counts"])
@@ -267,7 +358,7 @@ def _fixed_mesh_samples(
     if not sample_ids or len(sample_ids) != len(node_counts):
         raise ValueError("sample_ids and node_counts must be non-empty and aligned")
     if len(set(node_counts)) != 1:
-        raise ValueError("benchmark v1 requires a shared fixed-size 2-D mesh")
+        raise ValueError("benchmark v2 requires a shared fixed-size 2-D mesh")
     nodes_per_sample = node_counts[0]
     if nodes_per_sample <= 0 or sum(node_counts) != generated.shape[0]:
         raise ValueError("node_counts do not match the packed generation tensors")
@@ -279,7 +370,7 @@ def _fixed_mesh_samples(
     shape = (len(sample_ids), nodes_per_sample, generated.shape[1])
     return (
         generated.to(torch.float64).numpy().reshape(shape),
-        target.to(torch.float64).numpy().reshape(shape),
+        reference.to(torch.float64).numpy().reshape(shape),
         sample_ids,
         channel_names,
     )
@@ -317,7 +408,7 @@ def _load_grid(
 
 def _channel_metric_rows(
     generated: np.ndarray,
-    target: np.ndarray,
+    reference: np.ndarray,
     channel_names: tuple[str, ...],
     *,
     quantiles: tuple[float, ...],
@@ -326,43 +417,61 @@ def _channel_metric_rows(
     rows: list[dict[str, float | str]] = []
     for channel, name in enumerate(channel_names):
         generated_values = generated[..., channel].reshape(-1)
-        target_values = target[..., channel].reshape(-1)
+        reference_values = reference[..., channel].reshape(-1)
+        generated_mean = float(np.mean(generated_values))
+        reference_mean = float(np.mean(reference_values))
+        mean_bias = generated_mean - reference_mean
         generated_std = float(np.std(generated_values, ddof=0))
-        target_std = float(np.std(target_values, ddof=0))
+        reference_std = float(np.std(reference_values, ddof=0))
         row: dict[str, float | str] = {
             "channel": name,
-            "generated_mean": float(np.mean(generated_values)),
-            "target_mean": float(np.mean(target_values)),
-            "mean_bias": float(np.mean(generated_values) - np.mean(target_values)),
+            "generated_mean": generated_mean,
+            "reference_mean": reference_mean,
+            "mean_bias": mean_bias,
+            "normalized_mean_bias": (
+                mean_bias / reference_std if reference_std > eps else float("nan")
+            ),
             "generated_std": generated_std,
-            "target_std": target_std,
-            "std_ratio": generated_std / target_std if target_std > eps else float("nan"),
-            "wasserstein_1": empirical_wasserstein_1(generated_values, target_values),
+            "reference_std": reference_std,
+            "std_ratio": (
+                generated_std / reference_std if reference_std > eps else float("nan")
+            ),
+            "wasserstein_1": empirical_wasserstein_1(generated_values, reference_values),
         }
         for quantile in quantiles:
             label = _quantile_label(quantile)
             row[f"generated_{label}"] = float(np.quantile(generated_values, quantile))
-            row[f"target_{label}"] = float(np.quantile(target_values, quantile))
+            row[f"reference_{label}"] = float(np.quantile(reference_values, quantile))
         rows.append(row)
     return rows
 
 
 def _sample_statistic_rows(
     generated: np.ndarray,
-    target: np.ndarray,
-    sample_ids: tuple[str, ...],
+    reference: np.ndarray,
+    generation_keys: tuple[str, ...],
+    reference_ids: tuple[str, ...],
     channel_names: tuple[str, ...],
     grid: CartesianGrid2D,
 ) -> list[dict[str, float | str]]:
     rows: list[dict[str, float | str]] = []
-    for population, values in (("generated", generated), ("target", target)):
-        for sample_index, sample_id in enumerate(sample_ids):
+    populations = (
+        ("generated", generated, generation_keys, "sampling_key"),
+        ("test_reference", reference, reference_ids, "test_sample_id"),
+    )
+    for population, values, identifiers, identifier_role in populations:
+        for sample_index, identifier in enumerate(identifiers):
             for channel, name in enumerate(channel_names):
                 field = values[sample_index, :, channel]
-                neighbor_correlation, first_difference_rms = _nearest_neighbor_metrics(field, grid)
+                neighbor_correlation, first_difference_rms = nearest_neighbor_spatial_metrics(
+                    field,
+                    grid,
+                )
                 rows.append(
                     {
-                        "sample_id": sample_id,
+                        "sample_index": sample_index,
+                        "sample_id": identifier,
+                        "sample_id_role": identifier_role,
                         "population": population,
                         "channel": name,
                         "spatial_mean": float(np.mean(field)),
@@ -374,32 +483,13 @@ def _sample_statistic_rows(
     return rows
 
 
-def _nearest_neighbor_metrics(
-    values: np.ndarray,
-    grid: CartesianGrid2D,
-) -> tuple[float, float]:
-    field = scatter_to_grid(values, grid)
-    first = np.concatenate((field[:-1, :].reshape(-1), field[:, :-1].reshape(-1)))
-    second = np.concatenate((field[1:, :].reshape(-1), field[:, 1:].reshape(-1)))
-    centered_first = first - np.mean(first)
-    centered_second = second - np.mean(second)
-    denominator = math.sqrt(float(np.sum(centered_first**2)) * float(np.sum(centered_second**2)))
-    correlation = (
-        float(np.sum(centered_first * centered_second) / denominator)
-        if denominator > 0.0
-        else float("nan")
-    )
-    difference_rms = float(np.sqrt(np.mean((second - first) ** 2)))
-    return correlation, difference_rms
-
-
 def _correlation_rows(
     generated: np.ndarray,
-    target: np.ndarray,
+    reference: np.ndarray,
     channel_names: tuple[str, ...],
 ) -> list[dict[str, float | str]]:
     rows: list[dict[str, float | str]] = []
-    for population, values in (("generated", generated), ("target", target)):
+    for population, values in (("generated", generated), ("test_reference", reference)):
         matrix = np.atleast_2d(np.corrcoef(values.reshape(-1, values.shape[2]), rowvar=False))
         for row_index, row_name in enumerate(channel_names):
             for column_index, column_name in enumerate(channel_names):
@@ -417,7 +507,7 @@ def _correlation_rows(
 def _spectrum_rows(
     k_centers: np.ndarray,
     generated_power: np.ndarray,
-    target_power: np.ndarray,
+    reference_power: np.ndarray,
     channel_names: tuple[str, ...],
     *,
     k_nyquist: float,
@@ -426,7 +516,7 @@ def _spectrum_rows(
     rows: list[dict[str, float | str]] = []
     for channel, name in enumerate(channel_names):
         for index, k_value in enumerate(k_centers):
-            target_value = float(target_power[channel, index])
+            reference_value = float(reference_power[channel, index])
             generated_value = float(generated_power[channel, index])
             rows.append(
                 {
@@ -434,9 +524,11 @@ def _spectrum_rows(
                     "k": float(k_value),
                     "k_over_k_nyquist": float(k_value / k_nyquist),
                     "generated_power": generated_value,
-                    "target_power": target_value,
-                    "generated_over_target": (
-                        generated_value / target_value if target_value > eps else float("nan")
+                    "reference_power": reference_value,
+                    "generated_over_reference": (
+                        generated_value / reference_value
+                        if reference_value > eps
+                        else float("nan")
                     ),
                 }
             )
@@ -445,7 +537,7 @@ def _spectrum_rows(
 
 def _physical_metric_rows(
     generated: np.ndarray,
-    target: np.ndarray,
+    reference: np.ndarray,
     channel_names: tuple[str, ...],
     *,
     eps: float,
@@ -461,22 +553,46 @@ def _physical_metric_rows(
         )
 
     generated_metrics = _physical_population_metrics(generated, base_to_index)
-    target_metrics = _physical_population_metrics(target, base_to_index)
+    reference_metrics = _physical_population_metrics(reference, base_to_index)
+    near_zero_means = {
+        "u_mean": "u_std",
+        "v_mean": "v_std",
+        "w_mean": "w_std",
+    }
+    fraction_metrics = {
+        "rho_nonpositive_fraction",
+        "rhoE_nonpositive_fraction",
+        "specific_internal_energy_nonpositive_fraction",
+    }
     rows: list[dict[str, float | str]] = []
     for metric in generated_metrics:
         generated_value = generated_metrics[metric]
-        target_value = target_metrics[metric]
-        ratio = (
-            generated_value / target_value
-            if math.isfinite(target_value) and abs(target_value) > eps
-            else float("nan")
-        )
+        reference_value = reference_metrics[metric]
+        difference = generated_value - reference_value
+        normalized_difference = float("nan")
+        ratio = float("nan")
+        if metric in near_zero_means:
+            scale = reference_metrics[near_zero_means[metric]]
+            normalized_difference = difference / scale if scale > eps else float("nan")
+            comparison = "bias_over_reference_std"
+        elif metric in fraction_metrics:
+            comparison = "absolute_difference"
+        else:
+            ratio = (
+                generated_value / reference_value
+                if math.isfinite(reference_value) and abs(reference_value) > eps
+                else float("nan")
+            )
+            comparison = "generated_over_reference"
         rows.append(
             {
                 "metric": metric,
+                "comparison": comparison,
                 "generated": generated_value,
-                "target": target_value,
-                "generated_over_target": ratio,
+                "reference": reference_value,
+                "difference": difference,
+                "normalized_difference": normalized_difference,
+                "generated_over_reference": ratio,
             }
         )
     return rows
@@ -507,7 +623,7 @@ def _physical_population_metrics(
         rhoe[valid_density] / rho[valid_density] - 0.5 * velocity_squared[valid_density]
     )
 
-    metrics = {
+    return {
         "rho_nonpositive_fraction": float(np.mean(rho <= 0.0)),
         "rhoE_nonpositive_fraction": float(np.mean(rhoe <= 0.0)),
         "u_mean": _nanmean(u),
@@ -524,7 +640,6 @@ def _physical_population_metrics(
             np.mean((specific_internal_energy <= 0.0) | ~np.isfinite(specific_internal_energy))
         ),
     }
-    return metrics
 
 
 def _spectral_bands(config: DictConfig) -> dict[str, tuple[float, float]]:
@@ -550,7 +665,7 @@ def _channel_summary(
     for row in band_rows:
         channel = str(row["channel"])
         bands_by_channel.setdefault(channel, {})[str(row["band"])] = _finite_or_none(
-            float(row["generated_over_target"])
+            float(row["generated_over_reference"])
         )
 
     result: dict[str, Any] = {}
@@ -559,6 +674,7 @@ def _channel_summary(
         result[channel] = {
             "wasserstein_1": _finite_or_none(float(row["wasserstein_1"])),
             "mean_bias": _finite_or_none(float(row["mean_bias"])),
+            "normalized_mean_bias": _finite_or_none(float(row["normalized_mean_bias"])),
             "std_ratio": _finite_or_none(float(row["std_ratio"])),
             "spectral_band_ratios": bands_by_channel.get(channel, {}),
         }
@@ -568,9 +684,14 @@ def _channel_summary(
 def _physical_summary(rows: list[dict[str, float | str]]) -> dict[str, Any]:
     return {
         str(row["metric"]): {
+            "comparison": str(row["comparison"]),
             "generated": _finite_or_none(float(row["generated"])),
-            "target": _finite_or_none(float(row["target"])),
-            "generated_over_target": _finite_or_none(float(row["generated_over_target"])),
+            "reference": _finite_or_none(float(row["reference"])),
+            "difference": _finite_or_none(float(row["difference"])),
+            "normalized_difference": _finite_or_none(float(row["normalized_difference"])),
+            "generated_over_reference": _finite_or_none(
+                float(row["generated_over_reference"])
+            ),
         }
         for row in rows
     }
