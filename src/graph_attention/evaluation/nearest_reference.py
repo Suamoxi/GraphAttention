@@ -134,7 +134,10 @@ def nearest_reference_diagnostics(
     reference = np.asarray(reference_features, dtype=np.float64)
     if generated.ndim != 2 or reference.ndim != 2:
         raise ValueError("nearest-reference features must be two-dimensional")
-    if generated.shape[1] != reference.shape[1] or generated.shape[1] != len(feature_names):
+    if (
+        generated.shape[1] != reference.shape[1]
+        or generated.shape[1] != len(feature_names)
+    ):
         raise ValueError("generated/reference feature dimensions must match feature names")
     if generated.shape[0] != len(generated_ids):
         raise ValueError("generated feature rows must match generated identifiers")
@@ -146,10 +149,12 @@ def nearest_reference_diagnostics(
     if eps <= 0.0:
         raise ValueError("normalization_eps must be positive")
 
-    reference_mean = np.nanmean(reference, axis=0)
-    reference_std = np.nanstd(reference, axis=0, ddof=0)
     finite_reference = np.all(np.isfinite(reference), axis=0)
-    active = finite_reference & np.isfinite(reference_mean) & (reference_std > eps)
+    reference_mean = np.full(reference.shape[1], np.nan, dtype=np.float64)
+    reference_std = np.full(reference.shape[1], np.nan, dtype=np.float64)
+    reference_mean[finite_reference] = np.mean(reference[:, finite_reference], axis=0)
+    reference_std[finite_reference] = np.std(reference[:, finite_reference], axis=0, ddof=0)
+    active = finite_reference & (reference_std > eps)
     if not np.any(active):
         raise ValueError("nearest-reference descriptor has no varying finite test features")
     if not np.all(np.isfinite(generated[:, active])):
@@ -230,7 +235,9 @@ def nearest_reference_diagnostics(
         "feature_normalization": "test_population_mean_and_std",
         "num_features_total": len(feature_names),
         "num_features_active": int(np.sum(active)),
-        "active_features": [name for name, keep in zip(feature_names, active, strict=True) if keep],
+        "active_features": [
+            name for name, keep in zip(feature_names, active, strict=True) if keep
+        ],
         "omitted_nonvarying_or_nonfinite_test_features": [
             name for name, keep in zip(feature_names, active, strict=True) if not keep
         ],
@@ -262,7 +269,9 @@ def _spectral_band_masks(
     masks: dict[str, np.ndarray] = {}
     for name, (lower, upper) in bands.items():
         if lower < 0.0 or upper <= lower or upper > 1.0:
-            raise ValueError(f"invalid normalized spectral band '{name}': ({lower}, {upper})")
+            raise ValueError(
+                f"invalid normalized spectral band '{name}': ({lower}, {upper})"
+            )
         mask = (fraction >= lower) & (fraction < upper)
         if upper == 1.0:
             mask = (fraction >= lower) & (fraction <= upper)
