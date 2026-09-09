@@ -253,8 +253,7 @@ def _generate_test_population(
             generated_ids.extend(batch_generated_ids)
             reference_ids.extend(batch.source.sample_ids)
             node_counts.extend(
-                int(value)
-                for value in (batch.ptr[1:] - batch.ptr[:-1]).detach().cpu().tolist()
+                int(value) for value in (batch.ptr[1:] - batch.ptr[:-1]).detach().cpu().tolist()
             )
 
     if channel_names is None:
@@ -312,9 +311,7 @@ def _load_standardizers(path: Path) -> TaskStandardizers:
                 scale=targets["scale"],
             ),
             train_sample_ids=tuple(payload["train_sample_ids"]),
-            physical_nondimensionalization=bool(
-                payload["physical_nondimensionalization"]
-            ),
+            physical_nondimensionalization=bool(payload["physical_nondimensionalization"]),
             weighting=str(payload["weighting"]),
         )
     except (KeyError, TypeError) as exc:
