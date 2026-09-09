@@ -6,8 +6,3 @@ device: cuda
 train_ratio: 0.7
 validation_ratio: 0.15
 group_metadata_key: source_stem
-
-sampling:
-  steps: 100
-  eta: 0.0
-  seed: 5678
