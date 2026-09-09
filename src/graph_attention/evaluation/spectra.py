@@ -107,14 +107,14 @@ def scatter_to_grid(values: np.ndarray, grid: CartesianGrid2D) -> np.ndarray:
     return result.reshape(grid.shape, order="C")
 
 
-def population_radial_spectra(
+def sample_radial_spectra(
     samples: np.ndarray,
     grid: CartesianGrid2D,
     *,
     num_k_bins: int,
     subtract_mean: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return mean radial shell power for samples shaped [S, N, C]."""
+    """Return radial shell power for every sample as ``[S, C, K]``."""
 
     values = np.asarray(samples, dtype=np.float64)
     if values.ndim != 3:
@@ -126,38 +126,44 @@ def population_radial_spectra(
     if bins < 1:
         raise ValueError("num_k_bins must be positive")
 
-    nx, ny = grid.shape
-    dx, dy = grid.spacing
-    kx = 2.0 * np.pi * np.fft.fftfreq(nx, d=dx)
-    ky = 2.0 * np.pi * np.fft.fftfreq(ny, d=dy)
-    kmag = np.sqrt(kx[:, None] ** 2 + ky[None, :] ** 2)
-    edges = np.linspace(0.0, grid.k_nyquist_min, bins + 1)
-    centers = 0.5 * (edges[:-1] + edges[1:])
-
-    valid = (kmag > 0.0) & (kmag <= grid.k_nyquist_min)
-    raw_bin = np.searchsorted(edges, kmag[valid], side="right") - 1
-    bin_index = np.clip(raw_bin, 0, bins - 1)
-
-    accumulated = np.zeros((values.shape[2], bins), dtype=np.float64)
-    for sample in values:
+    centers, valid, bin_index = _radial_bins(grid, bins)
+    power = np.zeros((values.shape[0], values.shape[2], bins), dtype=np.float64)
+    for sample_index, sample in enumerate(values):
         for channel in range(values.shape[2]):
             field = scatter_to_grid(sample[:, channel], grid)
             if subtract_mean:
                 field = field - float(np.mean(field))
             transformed = np.fft.fft2(field, norm="ortho")
             mode_power = np.abs(transformed) ** 2
-            accumulated[channel] += np.bincount(
+            power[sample_index, channel] = np.bincount(
                 bin_index,
                 weights=mode_power[valid],
                 minlength=bins,
             )[:bins]
+    return centers, power
 
-    return centers, accumulated / values.shape[0]
+
+def population_radial_spectra(
+    samples: np.ndarray,
+    grid: CartesianGrid2D,
+    *,
+    num_k_bins: int,
+    subtract_mean: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return mean radial shell power for samples shaped [S, N, C]."""
+
+    centers, sample_power = sample_radial_spectra(
+        samples,
+        grid,
+        num_k_bins=num_k_bins,
+        subtract_mean=subtract_mean,
+    )
+    return centers, np.mean(sample_power, axis=0)
 
 
 def spectral_band_rows(
     generated_power: np.ndarray,
-    target_power: np.ndarray,
+    reference_power: np.ndarray,
     k_centers: np.ndarray,
     *,
     k_nyquist: float,
@@ -168,10 +174,10 @@ def spectral_band_rows(
     """Integrate generated/reference spectral power over normalized k bands."""
 
     generated = np.asarray(generated_power, dtype=np.float64)
-    target = np.asarray(target_power, dtype=np.float64)
+    reference = np.asarray(reference_power, dtype=np.float64)
     centers = np.asarray(k_centers, dtype=np.float64)
-    if generated.shape != target.shape:
-        raise ValueError("generated and target spectra must have identical shapes")
+    if generated.shape != reference.shape:
+        raise ValueError("generated and reference spectra must have identical shapes")
     if generated.ndim != 2 or generated.shape[0] != len(channel_names):
         raise ValueError("spectrum arrays do not match channel semantics")
     if generated.shape[1] != centers.size:
@@ -191,8 +197,8 @@ def spectral_band_rows(
             if upper == 1.0:
                 mask = (fraction >= lower) & (fraction <= upper)
             generated_band = float(np.sum(generated[channel, mask]))
-            target_band = float(np.sum(target[channel, mask]))
-            ratio = generated_band / target_band if target_band > eps else float("nan")
+            reference_band = float(np.sum(reference[channel, mask]))
+            ratio = generated_band / reference_band if reference_band > eps else float("nan")
             rows.append(
                 {
                     "channel": name,
@@ -200,11 +206,28 @@ def spectral_band_rows(
                     "k_fraction_min": float(lower),
                     "k_fraction_max": float(upper),
                     "generated_power": generated_band,
-                    "target_power": target_band,
-                    "generated_over_target": ratio,
+                    "reference_power": reference_band,
+                    "generated_over_reference": ratio,
                 }
             )
     return rows
+
+
+def _radial_bins(
+    grid: CartesianGrid2D,
+    num_k_bins: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    nx, ny = grid.shape
+    dx, dy = grid.spacing
+    kx = 2.0 * np.pi * np.fft.fftfreq(nx, d=dx)
+    ky = 2.0 * np.pi * np.fft.fftfreq(ny, d=dy)
+    kmag = np.sqrt(kx[:, None] ** 2 + ky[None, :] ** 2)
+    edges = np.linspace(0.0, grid.k_nyquist_min, num_k_bins + 1)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    valid = (kmag > 0.0) & (kmag <= grid.k_nyquist_min)
+    raw_bin = np.searchsorted(edges, kmag[valid], side="right") - 1
+    bin_index = np.clip(raw_bin, 0, num_k_bins - 1)
+    return centers, valid, bin_index
 
 
 def _unique_axis_values(values: np.ndarray, tolerance: float) -> np.ndarray:
