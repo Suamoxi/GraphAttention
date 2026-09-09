@@ -660,3 +660,89 @@ $$
 Validation times and Gaussian sources are deterministic functions of `(validation_seed, sample_id)` so validation does not depend on batch order. Sampling starts from a deterministic sample-ID-keyed Gaussian source and integrates `dx/dt=v_theta` from `t=0` to `t=1` with either explicit Euler or Heun; the reference inference setting is Heun with 50 uniform steps.
 
 M11 does not define a diffusion beta schedule, discrete diffusion timestep, epsilon/score/x0 target, SNR weighting, DDPM sampler, or DDIM sampler. Those remain a separate later diffusion task so the first generative experiment changes only the task mathematics needed for straight-path flow matching.
+
+## 22. M13 unconditional HIT-slice diffusion
+
+M13 adds a diffusion task while leaving the M9/M12 graph Transformer equations unchanged. It is a project adaptation of the DDPM formulation of Ho et al., *Denoising Diffusion Probabilistic Models* (NeurIPS 2020, arXiv:2006.11239), the cosine cumulative-noise schedule introduced by Nichol and Dhariwal, *Improved Denoising Diffusion Probabilistic Models* (ICML 2021, arXiv:2102.09672), and the generalized DDIM reverse process of Song et al., *Denoising Diffusion Implicit Models* (ICLR 2021, arXiv:2010.02502).
+
+The generated state is the same ordered five-channel conservative vector used by M11:
+
+$$
+\boxed{x_0=[\rho,\rho u,\rho v,\rho w,\rho E].}
+$$
+
+Physical nondimensionalization and train-only sample-balanced statistical standardization are applied before diffusion noising. The frozen first baseline uses `T=1000` discrete timesteps, cosine offset `s=0.008`, and epsilon prediction. One timestep is sampled independently per physical graph:
+
+$$
+t_g\sim\mathcal U\{1,\ldots,T\},
+\qquad
+\epsilon_{gi}\sim\mathcal N(0,I).
+$$
+
+With cumulative signal coefficient $\bar\alpha_t$, the task constructs
+
+$$
+\boxed{
+x_{t,gi}=\sqrt{\bar\alpha_{t_g}}x_{0,gi}
++\sqrt{1-\bar\alpha_{t_g}}\epsilon_{gi}.
+}
+$$
+
+The network predicts the exact sampled noise:
+
+$$
+\epsilon_\theta(x_t,\tau,G,R),
+\qquad
+\tau_g=\frac{t_g}{T}\in(0,1].
+$$
+
+The normalized scalar `t/T` is appended through the existing graph-level conditioning path. This is an intentional controlled-comparison choice: the generative process changes from M11 flow matching to diffusion without simultaneously introducing sinusoidal/Fourier embeddings, a learned time MLP, AdaLN, or per-layer time modulation.
+
+The objective reuses the M6 equal-sample reduction. For five equal-weight channels,
+
+$$
+\ell_{gi}=\frac{1}{5}
+\left\|\epsilon_\theta(x_{t,gi},\tau_g)-\epsilon_{gi}\right\|_2^2,
+$$
+
+$$
+L_g=\frac{1}{N_g}\sum_i\ell_{gi},
+\qquad
+\boxed{L=\frac{1}{B}\sum_g L_g}.
+$$
+
+Validation uses deterministic `(t,epsilon)` pairs derived from `(validation_seed, sample_id)` so validation is independent of loader batch order. Model selection uses validation epsilon MSE. The held-out test epsilon MSE is a denoising-objective diagnostic; generative quality is evaluated separately from independently generated samples.
+
+For reverse sampling, the task first reconstructs
+
+$$
+\hat x_0=
+\frac{x_t-\sqrt{1-\bar\alpha_t}\,\hat\epsilon}
+{\sqrt{\bar\alpha_t}}.
+$$
+
+For a selected previous timestep $t'<t$, generalized DDIM uses
+
+$$
+\sigma_t=\eta
+\sqrt{
+\frac{1-\bar\alpha_{t'}}{1-\bar\alpha_t}
+\left(1-\frac{\bar\alpha_t}{\bar\alpha_{t'}}\right)
+},
+$$
+
+$$
+x_{t'}=
+\sqrt{\bar\alpha_{t'}}\hat x_0
++\sqrt{1-\bar\alpha_{t'}-\sigma_t^2}\,\hat\epsilon
++\sigma_t z,
+\qquad z\sim\mathcal N(0,I).
+$$
+
+The sampling stochasticity parameter is restricted to $0\le\eta\le1$. `eta=0` is deterministic DDIM. `eta=1` with a reduced timestep grid is stochastic accelerated DDIM. Only `eta=1` while visiting every one of the `T` reverse transitions is labelled the ancestral-DDPM limit.
+
+Training and reverse generation are deliberately separate workflows. One trained checkpoint can therefore be evaluated with multiple `(steps, eta, seed)` choices without retraining. Generation reloads the exact saved train-only standardizers and the exact stored test split rather than refitting or resplitting. Generated IDs are independent deterministic RNG keys (`gen_...`); held-out CFD test IDs are stored separately and do not define generated-to-reference target pairs.
+
+For the first controlled M11-versus-M13 sampling-cost comparison, the reference diffusion setting is deterministic DDIM with 100 model evaluations. This is compared against M11 Heun with 50 steps, which also uses 100 model evaluations. Full `T=1000, eta=1` ancestral sampling is a separate cost/quality reference, not the equal-NFE baseline.
+
+M13 does not initially include SNR-weighted loss, `v` prediction, `x0` prediction, learned reverse variance, classifier-free guidance, conditional generation, x0 clipping, richer time embeddings, DDP, or low-precision target validation. Those are separate scientific or numerical changes and must not be attributed to the frozen baseline.
