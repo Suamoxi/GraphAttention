@@ -12,7 +12,7 @@ from .spectra import CartesianGrid2D, scatter_to_grid
 
 def save_marginal_plots(
     generated: np.ndarray,
-    target: np.ndarray,
+    reference: np.ndarray,
     channel_names: tuple[str, ...],
     output_dir: Path,
     *,
@@ -26,11 +26,11 @@ def save_marginal_plots(
     for channel, name in enumerate(channel_names):
         figure, axis = plt.subplots(figsize=(6.4, 4.2))
         axis.hist(
-            target[..., channel].reshape(-1),
+            reference[..., channel].reshape(-1),
             bins=bins,
             density=True,
             histtype="step",
-            label="target",
+            label="test reference",
         )
         axis.hist(
             generated[..., channel].reshape(-1),
@@ -50,7 +50,7 @@ def save_marginal_plots(
 def save_spectrum_plots(
     k_centers: np.ndarray,
     generated_power: np.ndarray,
-    target_power: np.ndarray,
+    reference_power: np.ndarray,
     channel_names: tuple[str, ...],
     output_dir: Path,
     *,
@@ -58,50 +58,62 @@ def save_spectrum_plots(
     eps: float,
     dpi: int,
 ) -> None:
-    """Save mean radial spectra and generated/reference ratios."""
+    """Save spectra versus physical k with normalized k as a secondary coordinate."""
 
     plt = _pyplot()
     output_dir.mkdir(parents=True, exist_ok=True)
-    normalized_k = np.asarray(k_centers, dtype=np.float64) / float(k_nyquist)
+    physical_k = np.asarray(k_centers, dtype=np.float64)
     for channel, name in enumerate(channel_names):
-        target_channel = np.asarray(target_power[channel], dtype=np.float64)
+        reference_channel = np.asarray(reference_power[channel], dtype=np.float64)
         generated_channel = np.asarray(generated_power[channel], dtype=np.float64)
         ratio = np.divide(
             generated_channel,
-            target_channel,
+            reference_channel,
             out=np.full_like(generated_channel, np.nan),
-            where=target_channel > eps,
+            where=reference_channel > eps,
         )
 
         figure, axes = plt.subplots(2, 1, figsize=(6.4, 7.0), sharex=True)
         axes[0].loglog(
-            normalized_k,
-            np.maximum(target_channel, eps),
-            label="target",
+            physical_k,
+            np.maximum(reference_channel, eps),
+            label="test reference",
         )
         axes[0].loglog(
-            normalized_k,
+            physical_k,
             np.maximum(generated_channel, eps),
             label="generated",
         )
         axes[0].set_ylabel("radial shell power")
         axes[0].legend()
 
-        axes[1].plot(normalized_k, ratio)
+        axes[1].semilogx(physical_k, ratio)
         axes[1].axhline(1.0, linewidth=1.0, linestyle="--")
-        axes[1].set_xlabel(r"$k/k_{Nyq}$")
-        axes[1].set_ylabel("generated / target")
-        axes[1].set_xlim(0.0, 1.0)
+        axes[1].set_xlabel("k")
+        axes[1].set_ylabel("generated / reference")
+        axes[1].set_xlim(float(physical_k[0]), float(k_nyquist))
+
+        secondary = axes[0].secondary_xaxis(
+            "top",
+            functions=(
+                lambda value: value / k_nyquist,
+                lambda value: value * k_nyquist,
+            ),
+        )
+        secondary.set_xlabel(r"$k/k_{Nyq}$")
         figure.suptitle(name)
         figure.tight_layout()
         figure.savefig(output_dir / f"{_safe_name(name)}.png", dpi=dpi)
         plt.close(figure)
 
 
-def save_field_examples(
+def save_nearest_reference_field_examples(
     generated: np.ndarray,
-    target: np.ndarray,
-    sample_ids: tuple[str, ...],
+    reference: np.ndarray,
+    generated_ids: tuple[str, ...],
+    reference_ids: tuple[str, ...],
+    nearest_reference_indices: np.ndarray,
+    nearest_reference_distances: np.ndarray,
     channel_names: tuple[str, ...],
     grid: CartesianGrid2D,
     output_dir: Path,
@@ -110,39 +122,44 @@ def save_field_examples(
     max_channels: int,
     dpi: int,
 ) -> None:
-    """Save target/generated/difference panels for the first deterministic samples."""
+    """Plot generated samples beside their descriptor-nearest real test snapshots."""
 
     plt = _pyplot()
     output_dir.mkdir(parents=True, exist_ok=True)
     sample_count = min(max(int(num_examples), 0), generated.shape[0])
     channel_count = min(max(int(max_channels), 0), generated.shape[2])
     for sample_index in range(sample_count):
-        sample_dir = output_dir / _safe_name(sample_ids[sample_index])
+        reference_index = int(nearest_reference_indices[sample_index])
+        sample_dir = output_dir / f"generated_{sample_index:04d}"
         sample_dir.mkdir(parents=True, exist_ok=True)
         for channel in range(channel_count):
             name = channel_names[channel]
-            target_field = scatter_to_grid(target[sample_index, :, channel], grid)
             generated_field = scatter_to_grid(generated[sample_index, :, channel], grid)
-            difference = generated_field - target_field
-            lower = float(min(np.min(target_field), np.min(generated_field)))
-            upper = float(max(np.max(target_field), np.max(generated_field)))
+            reference_field = scatter_to_grid(reference[reference_index, :, channel], grid)
+            lower = float(min(np.min(reference_field), np.min(generated_field)))
+            upper = float(max(np.max(reference_field), np.max(generated_field)))
 
-            figure, axes = plt.subplots(1, 3, figsize=(12.0, 3.8))
-            target_image = axes[0].imshow(target_field, origin="lower", vmin=lower, vmax=upper)
-            axes[0].set_title("target")
-            generated_image = axes[1].imshow(
+            figure, axes = plt.subplots(1, 2, figsize=(8.2, 3.8))
+            generated_image = axes[0].imshow(
                 generated_field,
                 origin="lower",
                 vmin=lower,
                 vmax=upper,
             )
-            axes[1].set_title("generated")
-            difference_image = axes[2].imshow(difference, origin="lower")
-            axes[2].set_title("generated - target")
-            figure.colorbar(target_image, ax=axes[0], fraction=0.046, pad=0.04)
-            figure.colorbar(generated_image, ax=axes[1], fraction=0.046, pad=0.04)
-            figure.colorbar(difference_image, ax=axes[2], fraction=0.046, pad=0.04)
-            figure.suptitle(f"{sample_ids[sample_index]} | {name}")
+            axes[0].set_title(f"generated\nkey={generated_ids[sample_index]}")
+            reference_image = axes[1].imshow(
+                reference_field,
+                origin="lower",
+                vmin=lower,
+                vmax=upper,
+            )
+            axes[1].set_title(f"nearest test\n{reference_ids[reference_index]}")
+            figure.colorbar(generated_image, ax=axes[0], fraction=0.046, pad=0.04)
+            figure.colorbar(reference_image, ax=axes[1], fraction=0.046, pad=0.04)
+            figure.suptitle(
+                f"{name} | descriptor distance="
+                f"{float(nearest_reference_distances[sample_index]):.4f}"
+            )
             figure.tight_layout()
             figure.savefig(sample_dir / f"{_safe_name(name)}.png", dpi=dpi)
             plt.close(figure)
