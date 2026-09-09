@@ -230,3 +230,29 @@ An inference output should be traceable to:
 ## 11. Benchmark reproducibility
 
 Performance results additionally follow `BENCHMARK_PROTOCOL.md` and must include hardware, backend, precision, graph sizes, warmup/measurement protocol, and git SHA.
+
+## 12. M13 standalone diffusion-generation replay
+
+M13 deliberately separates training from reverse generation. A diffusion training run must persist enough state for generation to reconstruct the scientific model without refitting any data-dependent quantity. The required source artifacts are:
+
+- `resolved_config.yaml` for the exact data/task/model/geometry definitions;
+- `summary.json` for model/run provenance and selected epoch;
+- `dataset_split_manifest.json` for the exact held-out test IDs;
+- `standardizers.pt` for the frozen named train-only input/target statistics;
+- the selected checkpoint, normally `best.pt`.
+
+The standalone generation runner reloads those artifacts. It must not regenerate the train/validation/test split and must not refit statistical scaling. If a saved test ID is absent from the currently resolved dataset, generation fails rather than substituting another sample.
+
+Every generation configuration is isolated below the source training run. Its directory name records sampler family, number of reverse model evaluations, `eta`, and sampling seed unless an explicit output name is supplied. Existing generation directories are not replaced unless `overwrite=true` is requested.
+
+A generation directory preserves:
+
+- `generated_test.pt` containing generated and held-out reference populations;
+- `generation_config.yaml` containing reverse-process settings;
+- a copy of the source `resolved_config.yaml`;
+- a copy of `dataset_split_manifest.json`;
+- `summary.json` identifying the source run, source checkpoint, sampler, step count, `eta`, seed, and model-evaluation count.
+
+Generated sample IDs such as `gen_000000` are deterministic RNG keys for the generated population. Held-out test IDs are stored separately as reference identifiers. Equal list positions do **not** assert a generated-to-target pairing. The reference population is included only to support population-level post-processing with the common generation benchmark.
+
+For stochastic reverse sampling, each generated sample receives its own deterministic generator derived from the configured sampling seed and generated ID. Reordering computational batches should therefore not redefine the intended generated sample RNG stream. As elsewhere in the repository, bitwise cross-device or cross-PyTorch-version identity is not claimed until explicitly demonstrated.
