@@ -369,3 +369,60 @@ $$
 from `t=0` to `t=1` on a uniform grid. Explicit Euler uses one model evaluation per step. Heun uses a predictor and endpoint correction and therefore uses two model evaluations per step. The reference configuration uses 50 Heun steps. Adaptive-step error control is not part of the M11 baseline.
 
 Generated standardized states are inverse-transformed with the frozen **input/state** training standardizer to the physically nondimensional state. No test-set statistics participate in this inverse transform.
+
+## 22. M13 discrete diffusion and generalized DDIM sampling
+
+M13 constructs the discrete cosine diffusion schedule once in float64. The un-clipped cumulative schedule is normalized so the clean endpoint is one, then discrete betas are derived and clipped to
+
+```text
+1e-8 <= beta_t <= 0.999
+```
+
+before recomputing the cumulative product used by training and sampling. The stored convention has `alpha_bar[0] = 1` and training timesteps in `t = 1, ..., T`. Schedule tensors are cast and cached on the active state device/dtype when used; the baseline target path is FP32 and CUDA low-precision behavior remains unvalidated.
+
+One integer timestep is sampled per physical graph and broadcast to its nodes through `batch_index`. The model-visible time is
+
+$$
+\tau=\frac{t}{T}\in(0,1],
+$$
+
+rather than the raw integer timestep. This keeps scalar-conditioning magnitude comparable to the existing flow-matching baseline while preserving the discrete schedule internally.
+
+Training noising is performed in the already standardized state space:
+
+$$
+x_t=\sqrt{\bar\alpha_t}x_0+
+\sqrt{1-\bar\alpha_t}\epsilon,
+\qquad
+\epsilon\sim\mathcal N(0,I).
+$$
+
+The sampled epsilon is the model target and is not statistically transformed again. The existing per-sample, equal-channel MSE reduction is used unchanged.
+
+Validation randomness is derived independently for each physical sample from a stable BLAKE2b hash of `(validation_seed, "validation", sample_id)`. Each validation sample therefore receives a deterministic timestep and Gaussian field independent of validation batch order. Training diffusion randomness uses a dedicated PyTorch generator seeded separately from model initialization. Stable hashing fixes seed construction, but bitwise equality across PyTorch versions, devices, or different RNG backends is not claimed.
+
+Reverse generation starts from an independent Gaussian source for each generated sampling key. The baseline generation runner uses keys `gen_000000`, `gen_000001`, and so on rather than held-out CFD filenames. For stochastic sampling, the same per-generated-sample generator supplies all later reverse-process noise draws. The clean held-out test state is never used to construct the generated state or its RNG stream.
+
+For `sampling.steps = K`, reverse timesteps are constructed by a linearly spaced grid from `T` to `1`, rounded to integer timesteps. Duplicate rounded timesteps are rejected. `K` must satisfy `1 <= K <= T`. Each selected reverse timestep uses one network evaluation, so the model-evaluation count is `K`.
+
+For consecutive selected times `t > t'`, the generalized DDIM variance is
+
+$$
+\sigma_t=\eta
+\sqrt{
+\frac{1-\bar\alpha_{t'}}{1-\bar\alpha_t}
+\left(1-\frac{\bar\alpha_t}{\bar\alpha_{t'}}\right)
+},
+$$
+
+with `0 <= eta <= 1`, and the direction coefficient uses
+
+$$
+\sqrt{\max(1-\bar\alpha_{t'}-\sigma_t^2,0)}.
+$$
+
+The explicit clamp to zero guards floating-point roundoff in a theoretically non-negative expression; it is not a change to the intended sampler. `eta=0` is deterministic DDIM. `eta=1` with `K<T` remains stochastic accelerated DDIM. Only `eta=1` with `K=T` is labelled `ddpm_ancestral`.
+
+No x0 clipping, dynamic thresholding, learned reverse variance, SNR loss weighting, or alternate prediction parameterization is applied in M13. Introducing any of those changes the numerical/scientific baseline and requires separate validation.
+
+Training and generation use separate scripts. Generation reloads the exact persisted `standardizers.pt` and `dataset_split_manifest.json`; it does not refit statistics or regenerate the split. Generated standardized states are inverse-transformed using the frozen **input/state** standardizer. The generation artifact stores generated RNG IDs and reference test IDs separately, and benchmark comparison is population-level rather than index-paired.
