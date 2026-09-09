@@ -40,17 +40,14 @@ def test_diffusion_training_problem_matches_forward_process_and_graph_time() -> 
     alpha_bar = task._alpha_bar_for(batch.inputs)
     node_alpha = alpha_bar[timesteps[batch.batch_index]].unsqueeze(1)
     expected = (
-        torch.sqrt(node_alpha) * batch.inputs
-        + torch.sqrt(1.0 - node_alpha) * problem.targets
+        torch.sqrt(node_alpha) * batch.inputs + torch.sqrt(1.0 - node_alpha) * problem.targets
     )
 
     torch.testing.assert_close(problem.inputs, expected)
     assert problem.conditioning_names[-1] == "diffusion_time"
     assert torch.all(problem.conditioning[:, -1] > 0.0)
     assert torch.all(problem.conditioning[:, -1] <= 1.0)
-    assert problem.target_channels == tuple(
-        f"epsilon:{name}" for name in batch.input_channels
-    )
+    assert problem.target_channels == tuple(f"epsilon:{name}" for name in batch.input_channels)
 
 
 def test_diffusion_validation_is_sample_id_deterministic_across_batch_order() -> None:
