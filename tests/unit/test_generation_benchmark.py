@@ -11,6 +11,7 @@ from graph_attention.evaluation import (
     infer_cartesian_grid_2d,
     run_generation_benchmark,
 )
+from graph_attention.evaluation.generation_benchmark import _fixed_mesh_samples
 from graph_attention.evaluation.nearest_reference import nearest_reference_diagnostics
 from graph_attention.evaluation.spectra import scatter_to_grid
 
@@ -69,6 +70,21 @@ def test_nearest_reference_uses_unpaired_descriptor_distance() -> None:
     assert diagnostics.rows[0]["nearest_id_role"] == "test_sample_id"
 
 
+def test_generation_benchmark_accepts_legacy_shared_sample_ids() -> None:
+    artifact = {
+        "sample_ids": ("sample_0", "sample_1"),
+        "node_counts": (2, 2),
+        "channel_names": ("a",),
+        "generated_nondimensional": torch.zeros((4, 1)),
+        "target_nondimensional": torch.ones((4, 1)),
+    }
+
+    _, _, generated_ids, reference_ids, _ = _fixed_mesh_samples(artifact)
+
+    assert generated_ids == ("sample_0", "sample_1")
+    assert reference_ids == ("sample_0", "sample_1")
+
+
 def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> None:
     run_dir = tmp_path / "m12_example"
     run_dir.mkdir()
@@ -104,14 +120,16 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
 
     torch.save(
         {
-            "sample_ids": tuple(f"sample_{index}" for index in range(num_samples)),
+            "generated_ids": tuple(f"gen_{index:06d}" for index in range(num_samples)),
+            "reference_ids": tuple(f"sample_{index}" for index in range(num_samples)),
             "node_counts": (num_nodes,) * num_samples,
             "channel_names": channel_names,
             "generated_standardized": generated.reshape(-1, len(channel_names)),
             "generated_nondimensional": generated.reshape(-1, len(channel_names)),
             "target_nondimensional": reference.reshape(-1, len(channel_names)),
-            "sample_steps": 10,
-            "solver": "heun",
+            "sampling_steps": 10,
+            "sampling_eta": 0.0,
+            "sampler": "ddim",
             "sampling_seed": 1,
         },
         run_dir / "generated_test.pt",
@@ -169,6 +187,7 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
     assert summary["reference_population"] == "test"
     assert summary["comparison_mode"] == "unpaired_population"
     assert summary["generated_reference_pairing"] is False
+    assert summary["generated_ids_semantics"] == "explicit_generation_keys"
     assert summary["num_generated_samples"] == num_samples
     assert summary["num_reference_samples"] == num_samples
     assert output_dir.is_dir()
