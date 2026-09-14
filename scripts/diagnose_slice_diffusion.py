@@ -14,6 +14,16 @@ import hydra
 import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
+from scripts.generate_slice_diffusion import _load_standardizers, _manifest_test_ids
+from scripts.train_slice_ablation import (
+    _attention_topologies_from_geometry,
+    _instantiate_model,
+    _loader,
+    _NodeRegressionCollator,
+    _positive_int,
+    _task_batch_to_device,
+)
+from scripts.train_slice_diffusion import _validate_diffusion_standardizers
 
 from graph_attention.data import PrecomputedSlicePTDataset
 from graph_attention.evaluation.diffusion_diagnostics import (
@@ -25,16 +35,6 @@ from graph_attention.evaluation.diffusion_diagnostics import (
 from graph_attention.geometry import cartesian_4_neighbor_edge_index
 from graph_attention.tasks import DiffusionDenoisingTask
 from graph_attention.tasks.diffusion import _model_epsilon, _randn_by_graph, _sample_generator
-from scripts.generate_slice_diffusion import _load_standardizers, _manifest_test_ids
-from scripts.train_slice_ablation import (
-    _NodeRegressionCollator,
-    _attention_topologies_from_geometry,
-    _instantiate_model,
-    _loader,
-    _positive_int,
-    _task_batch_to_device,
-)
-from scripts.train_slice_diffusion import _validate_diffusion_standardizers
 
 
 @hydra.main(
@@ -308,7 +308,8 @@ def run_diffusion_diagnostics(cfg: DictConfig) -> dict[str, Any]:
         "diagnostic_timestep_fractions": [value / task.timesteps for value in timesteps],
         "diagnostic_seed": diagnostic_seed,
         "noise_semantics": (
-            "one deterministic Gaussian field per test sample, reused across all diagnostic timesteps"
+            "one deterministic Gaussian field per test sample, reused across all "
+            "diagnostic timesteps"
         ),
         "sample_weighting": "equal physical samples before channel averaging",
         "num_test_samples": num_graphs,
@@ -329,7 +330,8 @@ def run_diffusion_diagnostics(cfg: DictConfig) -> dict[str, Any]:
             "epsilon_to_x0_mse_factor": "exact analytical multiplier (1-alpha_bar)/alpha_bar",
             "x0_mse": "clean-state reconstruction error implied by epsilon prediction",
             "oracle_x0_mse": (
-                "reconstruction using the exact injected noise; should remain near numerical precision"
+                "reconstruction using the exact injected noise; should remain near "
+                "numerical precision"
             ),
             "x0_mse_over_expected_from_epsilon": (
                 "should be approximately one; verifies the analytical amplification identity"
@@ -405,7 +407,9 @@ def _diagnostic_row(
         "noisy_state_mean_max_abs_per_sample": float(metrics["noisy_max"][:, channel_index].mean()),
         "epsilon_hat_mean": float(metrics["epsilon_hat_mean"][:, channel_index].mean()),
         "epsilon_hat_std": float(metrics["epsilon_hat_std"][:, channel_index].mean()),
-        "epsilon_hat_mean_max_abs_per_sample": float(metrics["epsilon_hat_max"][:, channel_index].mean()),
+        "epsilon_hat_mean_max_abs_per_sample": float(
+            metrics["epsilon_hat_max"][:, channel_index].mean()
+        ),
         "x0_hat_mean": float(metrics["x0_hat_mean"][:, channel_index].mean()),
         "x0_hat_std": x0_std,
         "x0_std_ratio": x0_std / clean_std if clean_std > 0.0 else float("nan"),
