@@ -18,7 +18,6 @@ from torch import nn
 
 from .diffusion import (
     DiffusionDenoisingTask,
-    _node_counts,
     _randn_by_graph,
     _sample_generator,
     _time_conditioning,
@@ -325,7 +324,6 @@ class ImprovedDiffusionDenoisingTask(DiffusionDenoisingTask):
         schedule = self._improved_schedule_for(problem.noise)
         node_timesteps = problem.timesteps[batch.batch_index]
         betas = schedule["betas"][node_timesteps].unsqueeze(1)
-        alphas = schedule["alphas"][node_timesteps].unsqueeze(1)
         alpha_bar = self._alpha_bar_for(problem.noise)[node_timesteps].unsqueeze(1)
         sqrt_recip_alphas = schedule["sqrt_recip_alphas"][node_timesteps].unsqueeze(1)
 
