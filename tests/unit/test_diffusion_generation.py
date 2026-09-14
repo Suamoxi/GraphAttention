@@ -24,8 +24,22 @@ def test_diffusion_generation_name_distinguishes_sampler_settings() -> None:
             eta=1.0,
             seed=5678,
             override=None,
+            start_timestep=1000,
+            total_timesteps=1000,
         )
         == "ddpm_ancestral_steps1000_eta1_seed5678"
+    )
+    assert (
+        _generation_name(
+            sampler="ddpm_ancestral_gaussian_restart",
+            steps=999,
+            eta=1.0,
+            seed=5678,
+            override=None,
+            start_timestep=999,
+            total_timesteps=1000,
+        )
+        == "ddpm_ancestral_gaussian_restart_start999_steps999_eta1_seed5678"
     )
 
 
