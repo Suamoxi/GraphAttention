@@ -126,13 +126,23 @@ class DiffusionDenoisingTask(NodeRegressionTask):
         eta: float = 0.0,
         sampling_seed: int = 5678,
         sampling_keys: Sequence[str] | None = None,
+        start_timestep: int | None = None,
     ) -> torch.Tensor:
-        """Sample with generalized DDIM; eta=1 and steps=T is ancestral DDPM."""
+        """Sample with generalized DDIM from an explicit Gaussian start timestep.
+
+        ``start_timestep=None`` preserves the original M13 behavior and starts
+        from ``T``.  A smaller start timestep deliberately initializes
+        ``x_start ~ N(0, I)`` and omits the terminal reverse transitions above
+        that timestep.  For ``start_timestep < T`` this Gaussian initialization
+        is a project sampling hypothesis rather than an exact draw from
+        ``q(x_start)``.
+        """
 
         _validate_state_batch(batch)
+        start = self._sampling_start_timestep(start_timestep)
         step_count = _positive_int(steps, "steps")
-        if step_count > self.timesteps:
-            raise ValueError(f"steps must be <= timesteps ({self.timesteps})")
+        if step_count > start:
+            raise ValueError(f"steps must be <= start_timestep ({start})")
         eta_value = float(eta)
         if not 0.0 <= eta_value <= 1.0:
             raise ValueError("eta must lie in [0, 1]")
@@ -148,7 +158,7 @@ class DiffusionDenoisingTask(NodeRegressionTask):
         state = _randn_by_graph(batch, generators)
         alpha_bar = self._alpha_bar_for(batch.inputs)
         sampling_times = _sampling_timesteps(
-            self.timesteps,
+            start,
             step_count,
             device=batch.inputs.device,
         )
@@ -182,7 +192,9 @@ class DiffusionDenoisingTask(NodeRegressionTask):
                 (1.0 - alpha_previous) / (1.0 - alpha_t) * (1.0 - alpha_t / alpha_previous)
             )
             sigma = eta_value * torch.sqrt(torch.clamp(variance_factor, min=0.0))
-            direction_scale = torch.sqrt(torch.clamp(1.0 - alpha_previous - sigma**2, min=0.0))
+            direction_scale = torch.sqrt(
+                torch.clamp(1.0 - alpha_previous - sigma**2, min=0.0)
+            )
             state = torch.sqrt(alpha_previous) * x0_hat + direction_scale * epsilon_hat
             if eta_value > 0.0:
                 state = state + sigma * _randn_by_graph(batch, generators)
@@ -191,14 +203,33 @@ class DiffusionDenoisingTask(NodeRegressionTask):
             raise ValueError("diffusion sampler produced NaN or Inf values")
         return state
 
-    def sampler_name(self, *, steps: int, eta: float) -> str:
+    def sampler_name(
+        self,
+        *,
+        steps: int,
+        eta: float,
+        start_timestep: int | None = None,
+    ) -> str:
         """Return an explicit label for the configured reverse process."""
 
+        start = self._sampling_start_timestep(start_timestep)
         step_count = _positive_int(steps, "steps")
+        if step_count > start:
+            raise ValueError(f"steps must be <= start_timestep ({start})")
         eta_value = float(eta)
-        if step_count == self.timesteps and eta_value == 1.0:
-            return "ddpm_ancestral"
+        if step_count == start and eta_value == 1.0:
+            if start == self.timesteps:
+                return "ddpm_ancestral"
+            return "ddpm_ancestral_gaussian_restart"
         return "ddim"
+
+    def _sampling_start_timestep(self, start_timestep: int | None) -> int:
+        if start_timestep is None:
+            return self.timesteps
+        start = _positive_int(start_timestep, "start_timestep")
+        if start > self.timesteps:
+            raise ValueError(f"start_timestep must be <= timesteps ({self.timesteps})")
+        return start
 
     def _diffusion_problem(
         self,
