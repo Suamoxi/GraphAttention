@@ -1,5 +1,6 @@
 from dataclasses import replace
 
+import pytest
 import torch
 
 from graph_attention.data import SyntheticMeshDataset
@@ -17,6 +18,25 @@ class _ZeroEpsilon(torch.nn.Module):
         conditioning: torch.Tensor,
     ) -> torch.Tensor:
         del edge_index, coords, batch_index, conditioning
+        return torch.zeros_like(inputs)
+
+
+class _RecordingZeroEpsilon(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.times: list[float] = []
+
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        *,
+        edge_index: torch.Tensor,
+        coords: torch.Tensor,
+        batch_index: torch.Tensor,
+        conditioning: torch.Tensor,
+    ) -> torch.Tensor:
+        del edge_index, coords, batch_index
+        self.times.append(float(conditioning[0, -1]))
         return torch.zeros_like(inputs)
 
 
@@ -90,9 +110,68 @@ def test_diffusion_sampling_does_not_use_clean_reference_values() -> None:
     torch.testing.assert_close(altered_generated, generated)
 
 
+def test_gaussian_restart_begins_at_requested_absolute_timestep() -> None:
+    task, _, batch = _batch(timesteps=10)
+    model = _RecordingZeroEpsilon()
+
+    task.sample_standardized(
+        model,
+        batch,
+        steps=9,
+        eta=1.0,
+        sampling_seed=44,
+        sampling_keys=("gen_000000", "gen_000001"),
+        start_timestep=9,
+    )
+
+    assert len(model.times) == 9
+    assert model.times[0] == pytest.approx(0.9)
+    assert model.times[-1] == pytest.approx(0.1)
+
+
+def test_gaussian_restart_remains_independent_of_clean_reference_values() -> None:
+    task, _, batch = _batch(timesteps=10)
+    model = _ZeroEpsilon()
+    generated = task.sample_standardized(
+        model,
+        batch,
+        steps=9,
+        eta=1.0,
+        sampling_seed=44,
+        sampling_keys=("gen_000000", "gen_000001"),
+        start_timestep=9,
+    )
+
+    altered = replace(batch, inputs=batch.inputs + 100.0, targets=batch.targets + 100.0)
+    altered_generated = task.sample_standardized(
+        model,
+        altered,
+        steps=9,
+        eta=1.0,
+        sampling_seed=44,
+        sampling_keys=("gen_000000", "gen_000001"),
+        start_timestep=9,
+    )
+    torch.testing.assert_close(altered_generated, generated)
+
+
+def test_sampling_rejects_invalid_restart_configuration() -> None:
+    task, _, batch = _batch(timesteps=10)
+    model = _ZeroEpsilon()
+
+    with pytest.raises(ValueError, match="start_timestep must be <= timesteps"):
+        task.sample_standardized(model, batch, steps=10, start_timestep=11)
+    with pytest.raises(ValueError, match="steps must be <= start_timestep"):
+        task.sample_standardized(model, batch, steps=10, start_timestep=9)
+
+
 def test_eta_one_with_all_steps_is_labeled_ancestral_ddpm() -> None:
     task, _, _ = _batch(timesteps=10)
 
     assert task.sampler_name(steps=10, eta=1.0) == "ddpm_ancestral"
+    assert (
+        task.sampler_name(steps=9, eta=1.0, start_timestep=9)
+        == "ddpm_ancestral_gaussian_restart"
+    )
     assert task.sampler_name(steps=5, eta=1.0) == "ddim"
     assert task.sampler_name(steps=10, eta=0.0) == "ddim"
