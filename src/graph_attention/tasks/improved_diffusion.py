@@ -385,14 +385,23 @@ class ImprovedDiffusionDenoisingTask(DiffusionDenoisingTask):
         eta: float = 1.0,
         sampling_seed: int = 5678,
         sampling_keys: tuple[str, ...] | list[str] | None = None,
+        start_timestep: int | None = None,
     ) -> torch.Tensor:
-        """Sample the full learned-variance ancestral Improved-DDPM chain."""
+        """Sample an adjacent learned-variance chain from an explicit Gaussian start.
+
+        ``start_timestep=None`` preserves the canonical Improved-DDPM chain from
+        ``T``.  A smaller start timestep initializes ``x_start ~ N(0, I)`` and
+        deliberately omits higher-noise reverse transitions.  This is a project
+        sampling hypothesis rather than an exact draw from ``q(x_start)``.
+        """
 
         _validate_state_batch(batch)
-        if _positive_int(steps, "steps") != self.timesteps or float(eta) != 1.0:
+        start = self._sampling_start_timestep(start_timestep)
+        step_count = _positive_int(steps, "steps")
+        if step_count != start or float(eta) != 1.0:
             raise ValueError(
-                "the first Improved-DDPM implementation supports only the exact full "
-                f"learned-variance ancestral chain: steps={self.timesteps}, eta=1"
+                "Improved-DDPM sampling supports only adjacent learned-variance ancestral "
+                f"steps from the configured start: steps={start}, eta=1"
             )
         seed = _nonnegative_int(sampling_seed, "sampling_seed")
         keys = tuple(batch.source.sample_ids) if sampling_keys is None else tuple(sampling_keys)
@@ -409,7 +418,7 @@ class ImprovedDiffusionDenoisingTask(DiffusionDenoisingTask):
         schedule = self._improved_schedule_for(state)
         alpha_bar = self._alpha_bar_for(state)
 
-        for timestep in range(self.timesteps, 0, -1):
+        for timestep in range(start, 0, -1):
             graph_timesteps = torch.full(
                 (batch.num_graphs,),
                 timestep,
@@ -452,9 +461,18 @@ class ImprovedDiffusionDenoisingTask(DiffusionDenoisingTask):
             raise ValueError("improved diffusion sampler produced NaN or Inf values")
         return state
 
-    def sampler_name(self, *, steps: int, eta: float) -> str:
-        if _positive_int(steps, "steps") == self.timesteps and float(eta) == 1.0:
-            return "improved_ddpm_ancestral_learned_variance"
+    def sampler_name(
+        self,
+        *,
+        steps: int,
+        eta: float,
+        start_timestep: int | None = None,
+    ) -> str:
+        start = self._sampling_start_timestep(start_timestep)
+        if _positive_int(steps, "steps") == start and float(eta) == 1.0:
+            if start == self.timesteps:
+                return "improved_ddpm_ancestral_learned_variance"
+            return "improved_ddpm_ancestral_learned_variance_gaussian_restart"
         return "unsupported_improved_diffusion_sampler"
 
     def _model_output(
