@@ -21,7 +21,11 @@ class _ZeroImprovedOutput(torch.nn.Module):
         conditioning: torch.Tensor,
     ) -> torch.Tensor:
         del edge_index, coords, batch_index, conditioning
-        return torch.zeros((inputs.shape[0], 2 * inputs.shape[1]), device=inputs.device, dtype=inputs.dtype)
+        return torch.zeros(
+            (inputs.shape[0], 2 * inputs.shape[1]),
+            device=inputs.device,
+            dtype=inputs.dtype,
+        )
 
 
 def _task_and_batch(timesteps: int = 10):
@@ -43,7 +47,8 @@ def test_improved_diffusion_model_probe_doubles_output_channels() -> None:
     assert probe.inputs.shape[1] == batch.inputs.shape[1]
     assert probe.targets.shape[1] == 2 * batch.inputs.shape[1]
     assert len(probe.target_channels) == 2 * len(batch.input_channels)
-    assert all(name.startswith("variance_range:") for name in probe.target_channels[len(batch.input_channels):])
+    variance_channels = probe.target_channels[len(batch.input_channels) :]
+    assert all(name.startswith("variance_range:") for name in variance_channels)
 
 
 def test_hybrid_loss_detaches_epsilon_from_vlb_branch() -> None:
