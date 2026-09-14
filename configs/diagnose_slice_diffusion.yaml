@@ -1,0 +1,14 @@
+run_dir: ???
+checkpoint: best.pt
+output_root: /scratch/coop/theret/GraphAttention_runs/diffusion_diagnostics
+output_name: null
+overwrite: false
+
+device: cuda
+batch_size: 128
+num_workers: 4
+diagnostic_seed: 2468
+
+# Fractions of the discrete diffusion horizon T.  For T=1000 these map to
+# [1, 10, 50, 100, 250, 500, 750, 900, 990, 1000].
+timestep_fractions: [0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99, 1.0]
