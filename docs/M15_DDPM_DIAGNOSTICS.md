@@ -135,7 +135,7 @@ The intended diagnosis is:
 1. **Oracle reconstruction is not near numerical precision** -> investigate diffusion coefficients/noising/reconstruction implementation.
 2. **Epsilon MSE becomes large only in specific timestep regions** -> investigate timestep conditioning, sampling of training timesteps, and potentially timestep/SNR loss weighting.
 3. **Epsilon MSE is moderate but x0 MSE explodes exactly according to the analytical amplification factor** -> the reverse failure is consistent with epsilon-prediction error amplification at low SNR; investigate alternative parameterization/weighting before increasing model capacity again.
-4. **Fixed-timestep diagnostics look acceptable but reverse sampling still diverges** -> next instrument the reverse trajectory itself and verify accumulated update/noise behavior step by step.
+4. **Fixed-timestep diagnostics look acceptable or show low-SNR amplification but do not establish how sampler states evolve** -> use M16 reverse-trajectory tracing to measure the actual production sampler state and update magnitudes through the full chain.
 
 No automatic causal claim is produced by the script; it provides the measurements needed to choose the next controlled experiment.
 
@@ -144,4 +144,4 @@ No automatic causal claim is produced by the script; it provides the measurement
 - The current CLI targets the existing `PrecomputedSlicePTDataset` diffusion workflow and the persisted held-out test split.
 - The diagnostic imports the existing task's internal noising/model-call helpers so it uses the same equations as training/sampling rather than maintaining a parallel diffusion implementation.
 - The diagnostic is single-process and uses float32 on the configured device, matching the current generation path.
-- Only fixed-timestep denoising is diagnosed in M15. Reverse-trajectory tracing is intentionally deferred until these measurements establish whether the failure is already visible in the one-step denoiser/reconstruction relation.
+- M15 itself diagnoses fixed-timestep denoising only. Reverse-trajectory behavior is a separate M16 diagnostic so the one-step and accumulated-error questions remain distinguishable.
