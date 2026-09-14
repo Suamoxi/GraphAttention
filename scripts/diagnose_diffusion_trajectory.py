@@ -12,11 +12,6 @@ import hydra
 import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
-
-from graph_attention.data import PrecomputedSlicePTDataset
-from graph_attention.evaluation.diffusion_diagnostics import reconstruct_x0_from_epsilon
-from graph_attention.geometry import cartesian_4_neighbor_edge_index
-from graph_attention.tasks import DiffusionDenoisingTask
 from scripts.diagnose_slice_diffusion import (
     _diagnostic_timesteps,
     _existing_directory,
@@ -24,14 +19,19 @@ from scripts.diagnose_slice_diffusion import (
 )
 from scripts.generate_slice_diffusion import _load_standardizers, _manifest_test_ids
 from scripts.train_slice_ablation import (
-    _NodeRegressionCollator,
     _attention_topologies_from_geometry,
     _instantiate_model,
     _loader,
+    _NodeRegressionCollator,
     _positive_int,
     _task_batch_to_device,
 )
 from scripts.train_slice_diffusion import _validate_diffusion_standardizers
+
+from graph_attention.data import PrecomputedSlicePTDataset
+from graph_attention.evaluation.diffusion_diagnostics import reconstruct_x0_from_epsilon
+from graph_attention.geometry import cartesian_4_neighbor_edge_index
+from graph_attention.tasks import DiffusionDenoisingTask
 
 
 @hydra.main(
@@ -427,7 +427,9 @@ class _TrajectoryRecorder(torch.nn.Module):
 
     def finalize(self, final_state: torch.Tensor) -> None:
         if self._previous_state is None or self._previous_timestep != 1:
-            raise RuntimeError("trajectory recorder did not observe the complete T -> 1 reverse path")
+            raise RuntimeError(
+                "trajectory recorder did not observe the complete T -> 1 reverse path"
+            )
         self.transition_rows.extend(
             _transition_rows(
                 self._previous_state,
