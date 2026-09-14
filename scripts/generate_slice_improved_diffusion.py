@@ -11,24 +11,24 @@ import hydra
 import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
-
-from graph_attention.data import PrecomputedSlicePTDataset
-from graph_attention.geometry import cartesian_4_neighbor_edge_index
-from graph_attention.tasks import ImprovedDiffusionDenoisingTask
 from scripts.generate_slice_diffusion import (
     _generation_name,
     _load_standardizers,
     _manifest_test_ids,
 )
 from scripts.train_slice_ablation import (
-    _NodeRegressionCollator,
     _attention_topologies_from_geometry,
     _instantiate_model,
     _loader,
+    _NodeRegressionCollator,
     _positive_int,
     _task_batch_to_device,
 )
 from scripts.train_slice_diffusion import _validate_diffusion_standardizers
+
+from graph_attention.data import PrecomputedSlicePTDataset
+from graph_attention.geometry import cartesian_4_neighbor_edge_index
+from graph_attention.tasks import ImprovedDiffusionDenoisingTask
 
 
 @hydra.main(
