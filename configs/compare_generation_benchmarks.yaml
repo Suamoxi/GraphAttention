@@ -1,0 +1,6 @@
+baseline_dir: ???
+candidate_dir: ???
+output_root: /scratch/coop/theret/GraphAttention_runs/relative_benchmark_comparisons
+comparison_name: null
+overwrite: false
+eps: 1.0e-12
