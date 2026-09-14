@@ -283,6 +283,7 @@ def _local_relative_rows(
     *,
     eps: float,
 ) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
     grouped: dict[tuple[str, str, str], list[float]] = defaultdict(list)
     fields = (
         "spatial_std",
