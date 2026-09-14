@@ -134,11 +134,50 @@ def test_improved_ancestral_sampling_does_not_use_clean_reference_values() -> No
     torch.testing.assert_close(altered_generated, generated)
 
 
-def test_improved_sampler_rejects_non_full_or_non_ancestral_sampling() -> None:
+def test_improved_gaussian_restart_sampling_is_clean_state_independent() -> None:
+    task, _, batch = _task_and_batch(timesteps=4)
+    model = _ZeroImprovedOutput()
+    generated = task.sample_standardized(
+        model,
+        batch,
+        steps=3,
+        eta=1.0,
+        sampling_seed=44,
+        sampling_keys=("gen_000000", "gen_000001"),
+        start_timestep=3,
+    )
+
+    altered = replace(batch, inputs=batch.inputs + 100.0, targets=batch.targets + 100.0)
+    altered_generated = task.sample_standardized(
+        model,
+        altered,
+        steps=3,
+        eta=1.0,
+        sampling_seed=44,
+        sampling_keys=("gen_000000", "gen_000001"),
+        start_timestep=3,
+    )
+    torch.testing.assert_close(altered_generated, generated)
+    assert task.sampler_name(steps=4, eta=1.0) == "improved_ddpm_ancestral_learned_variance"
+    assert (
+        task.sampler_name(steps=3, eta=1.0, start_timestep=3)
+        == "improved_ddpm_ancestral_learned_variance_gaussian_restart"
+    )
+
+
+def test_improved_sampler_rejects_non_adjacent_or_non_ancestral_sampling() -> None:
     task, _, batch = _task_and_batch(timesteps=4)
     model = _ZeroImprovedOutput()
 
-    with pytest.raises(ValueError, match="exact full learned-variance ancestral chain"):
+    with pytest.raises(ValueError, match="adjacent learned-variance ancestral"):
         task.sample_standardized(model, batch, steps=2, eta=1.0)
-    with pytest.raises(ValueError, match="exact full learned-variance ancestral chain"):
+    with pytest.raises(ValueError, match="adjacent learned-variance ancestral"):
         task.sample_standardized(model, batch, steps=4, eta=0.0)
+    with pytest.raises(ValueError, match="adjacent learned-variance ancestral"):
+        task.sample_standardized(
+            model,
+            batch,
+            steps=2,
+            eta=1.0,
+            start_timestep=3,
+        )
