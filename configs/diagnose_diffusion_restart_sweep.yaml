@@ -1,0 +1,25 @@
+run_dir: ???
+checkpoint: best.pt
+output_root: /scratch/coop/theret/GraphAttention_runs/diffusion_restart_diagnostics
+output_name: null
+overwrite: false
+
+device: cuda
+num_workers: 4
+num_samples: 32
+diagnostic_seed: 5678
+reverse_seed: 8765
+
+# For T=1000 these map to [1000, 999, 995, 990, 980, 950, 900].
+start_timestep_fractions:
+  - 1.0
+  - 0.999
+  - 0.995
+  - 0.99
+  - 0.98
+  - 0.95
+  - 0.9
+
+modes:
+  - exact_forward_marginal
+  - gaussian_restart
