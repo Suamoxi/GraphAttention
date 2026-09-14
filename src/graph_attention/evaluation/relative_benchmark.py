@@ -14,9 +14,9 @@ import json
 import math
 import shutil
 from collections import defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
-
+from typing import Any
 
 _REQUIRED_FILES = (
     "summary.json",
