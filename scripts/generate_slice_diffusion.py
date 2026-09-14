@@ -80,8 +80,23 @@ def run_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
     task = instantiate(source_cfg.task)
     if not isinstance(task, DiffusionDenoisingTask):
         raise TypeError("source diffusion run must use task=hit_diffusion")
-    if sampling_steps > task.timesteps:
-        raise ValueError(f"sampling.steps must be <= task.timesteps ({task.timesteps})")
+
+    start_value = cfg.sampling.get("start_timestep")
+    sampling_start_timestep = (
+        task.timesteps
+        if start_value is None
+        else _positive_int(start_value, "sampling.start_timestep")
+    )
+    if sampling_start_timestep > task.timesteps:
+        raise ValueError(
+            "sampling.start_timestep must be <= task.timesteps "
+            f"({task.timesteps})"
+        )
+    if sampling_steps > sampling_start_timestep:
+        raise ValueError(
+            "sampling.steps must be <= sampling.start_timestep "
+            f"({sampling_start_timestep})"
+        )
 
     standardizers = _load_standardizers(standardizers_path)
     _validate_diffusion_standardizers(standardizers)
@@ -132,13 +147,19 @@ def run_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
         raise ValueError("diffusion checkpoint does not contain model_state_dict")
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
-    sampler = task.sampler_name(steps=sampling_steps, eta=sampling_eta)
+    sampler = task.sampler_name(
+        steps=sampling_steps,
+        eta=sampling_eta,
+        start_timestep=sampling_start_timestep,
+    )
     generation_name = _generation_name(
         sampler=sampler,
         steps=sampling_steps,
         eta=sampling_eta,
         seed=sampling_seed,
         override=cfg.output_name,
+        start_timestep=sampling_start_timestep,
+        total_timesteps=task.timesteps,
     )
     output_dir = run_dir / "generations" / generation_name
     if output_dir.exists() and not bool(cfg.overwrite):
@@ -156,6 +177,7 @@ def run_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
         sampling_steps=sampling_steps,
         sampling_eta=sampling_eta,
         sampling_seed=sampling_seed,
+        sampling_start_timestep=sampling_start_timestep,
     )
 
     if output_dir.exists():
@@ -207,6 +229,7 @@ def _generate_test_population(
     sampling_steps: int,
     sampling_eta: float,
     sampling_seed: int,
+    sampling_start_timestep: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     model.eval()
     generated_standardized_parts: list[torch.Tensor] = []
@@ -237,6 +260,7 @@ def _generate_test_population(
                 eta=sampling_eta,
                 sampling_seed=sampling_seed,
                 sampling_keys=batch_generated_ids,
+                start_timestep=sampling_start_timestep,
             )
             generated_nondimensional = standardizers.inputs.inverse(
                 generated_standardized,
@@ -259,7 +283,12 @@ def _generate_test_population(
     if channel_names is None:
         raise ValueError("test generation loader contains no samples")
 
-    sampler = task.sampler_name(steps=sampling_steps, eta=sampling_eta)
+    sampler = task.sampler_name(
+        steps=sampling_steps,
+        eta=sampling_eta,
+        start_timestep=sampling_start_timestep,
+    )
+    restart_below_terminal = sampling_start_timestep < task.timesteps
     artifact = {
         "generated_ids": tuple(generated_ids),
         "reference_ids": tuple(reference_ids),
@@ -270,6 +299,9 @@ def _generate_test_population(
         "target_nondimensional": torch.cat(reference_nondimensional_parts, dim=0),
         "sampling_steps": sampling_steps,
         "sampling_eta": sampling_eta,
+        "sampling_start_timestep": sampling_start_timestep,
+        "sampling_start_t_over_T": sampling_start_timestep / task.timesteps,
+        "initial_state_distribution": "standard_normal",
         "sampler": sampler,
         "sampling_seed": sampling_seed,
         "model_evaluations": sampling_steps,
@@ -281,8 +313,23 @@ def _generate_test_population(
         "sampling_steps": sampling_steps,
         "sampling_eta": sampling_eta,
         "sampling_seed": sampling_seed,
+        "sampling_start_timestep": sampling_start_timestep,
+        "sampling_start_t_over_T": sampling_start_timestep / task.timesteps,
+        "initial_state_distribution": "standard_normal",
+        "gaussian_restart_below_terminal": restart_below_terminal,
+        "gaussian_restart_semantics": (
+            "project sampling hypothesis; N(0,I) is exact only at the terminal prior and "
+            "is an approximation to q(x_t) for start_timestep < T"
+        ),
         "model_evaluations": sampling_steps,
-        "is_exact_ancestral_ddpm": sampler == "ddpm_ancestral",
+        "is_exact_ancestral_ddpm": (
+            sampler == "ddpm_ancestral" and sampling_start_timestep == task.timesteps
+        ),
+        "is_adjacent_ancestral_restart": (
+            sampler == "ddpm_ancestral_gaussian_restart"
+            and sampling_steps == sampling_start_timestep
+            and sampling_eta == 1.0
+        ),
         "generated_ids": "independent_deterministic_sampling_keys",
         "reference_ids": "held_out_test_sample_ids",
         "reference_pairing": False,
@@ -337,6 +384,8 @@ def _generation_name(
     eta: float,
     seed: int,
     override: object,
+    start_timestep: int | None = None,
+    total_timesteps: int | None = None,
 ) -> str:
     if override is not None:
         if not isinstance(override, str) or not override.strip():
@@ -346,7 +395,14 @@ def _generation_name(
             raise ValueError("output_name must be one directory name, not a path")
         return name
     eta_label = f"{eta:.6g}".replace(".", "p")
-    return f"{sampler}_steps{steps}_eta{eta_label}_seed{seed}"
+    restart_label = ""
+    if (
+        start_timestep is not None
+        and total_timesteps is not None
+        and start_timestep != total_timesteps
+    ):
+        restart_label = f"_start{start_timestep}"
+    return f"{sampler}{restart_label}_steps{steps}_eta{eta_label}_seed{seed}"
 
 
 def _existing_directory(value: object, name: str) -> Path:
