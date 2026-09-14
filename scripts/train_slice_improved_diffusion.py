@@ -11,6 +11,16 @@ import hydra
 import torch
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
+from scripts.train_slice_ablation import (
+    _attention_topologies_from_geometry,
+    _instantiate_model,
+    _loader,
+    _NodeRegressionCollator,
+    _positive_int,
+    _task_batch_to_device,
+    _write_dataset_artifacts,
+)
+from scripts.train_slice_diffusion import _validate_diffusion_standardizers
 from torch.utils.tensorboard import SummaryWriter
 
 from graph_attention.data import PrecomputedSlicePTDataset, make_grouped_split_manifest
@@ -18,16 +28,6 @@ from graph_attention.geometry import cartesian_4_neighbor_edge_index
 from graph_attention.tasks import ImprovedDiffusionDenoisingTask
 from graph_attention.training import fit_train_standardizers
 from graph_attention.utils.provenance import collect_runtime_provenance
-from scripts.train_slice_ablation import (
-    _NodeRegressionCollator,
-    _attention_topologies_from_geometry,
-    _instantiate_model,
-    _loader,
-    _positive_int,
-    _task_batch_to_device,
-    _write_dataset_artifacts,
-)
-from scripts.train_slice_diffusion import _validate_diffusion_standardizers
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
@@ -52,7 +52,9 @@ def run_slice_improved_diffusion(cfg: DictConfig) -> dict[str, Any]:
 
     device = torch.device(str(settings.device))
     if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA improved diffusion requested but torch.cuda.is_available() is false")
+        raise RuntimeError(
+            "CUDA improved diffusion requested but torch.cuda.is_available() is false"
+        )
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         raise RuntimeError("the first Improved-DDPM runner is intentionally single-process")
 
