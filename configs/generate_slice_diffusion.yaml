@@ -10,3 +10,6 @@ sampling:
   steps: 100
   eta: 0.0
   seed: 5678
+  # null preserves the original M13 start at T. Values below T initialize
+  # x_start ~ N(0,I) and are an explicit Gaussian-restart sampling hypothesis.
+  start_timestep: null
