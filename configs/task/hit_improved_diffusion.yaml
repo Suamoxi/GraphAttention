@@ -1,0 +1,15 @@
+_target_: graph_attention.tasks.ImprovedDiffusionDenoisingTask
+state_fields:
+  - rho
+  - rhou
+  - rhov
+  - rhow
+  - rhoE
+conditioning_parameters: []
+physical_nondimensionalization: true
+timesteps: 1000
+cosine_s: 0.008
+validation_seed: 1234
+vlb_weight: 0.001
+importance_history_per_timestep: 10
+importance_uniform_probability: 0.001
