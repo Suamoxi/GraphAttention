@@ -75,6 +75,12 @@ def run_improved_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
     sampling_steps = _positive_int(cfg.sampling.steps, "sampling.steps")
     sampling_seed = _positive_int(cfg.sampling.seed, "sampling.seed", allow_zero=True)
     sampling_eta = float(cfg.sampling.eta)
+    start_value = cfg.sampling.get("start_timestep")
+    sampling_start_timestep = (
+        None
+        if start_value is None
+        else _positive_int(start_value, "sampling.start_timestep")
+    )
 
     dataset = instantiate(source_cfg.data)
     if not isinstance(dataset, PrecomputedSlicePTDataset):
@@ -82,10 +88,11 @@ def run_improved_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
     task = instantiate(source_cfg.task)
     if not isinstance(task, ImprovedDiffusionDenoisingTask):
         raise TypeError("source run must use task=hit_improved_diffusion")
-    if sampling_steps != task.timesteps or sampling_eta != 1.0:
+    effective_start = task._sampling_start_timestep(sampling_start_timestep)
+    if sampling_steps != effective_start or sampling_eta != 1.0:
         raise ValueError(
-            "Improved-DDPM generation currently requires the exact full learned-variance "
-            f"ancestral chain: sampling.steps={task.timesteps}, sampling.eta=1"
+            "Improved-DDPM generation requires adjacent learned-variance ancestral steps "
+            f"from the configured start: sampling.steps={effective_start}, sampling.eta=1"
         )
 
     standardizers = _load_standardizers(standardizers_path)
@@ -138,7 +145,11 @@ def run_improved_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
         raise ValueError("Improved-DDPM checkpoint does not contain model_state_dict")
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
-    sampler = task.sampler_name(steps=sampling_steps, eta=sampling_eta)
+    sampler = task.sampler_name(
+        steps=sampling_steps,
+        eta=sampling_eta,
+        start_timestep=sampling_start_timestep,
+    )
     generation_name = _generation_name(
         sampler=sampler,
         steps=sampling_steps,
@@ -162,6 +173,7 @@ def run_improved_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
         sampling_steps=sampling_steps,
         sampling_eta=sampling_eta,
         sampling_seed=sampling_seed,
+        sampling_start_timestep=sampling_start_timestep,
     )
 
     if output_dir.exists():
@@ -215,6 +227,7 @@ def _generate_test_population(
     sampling_steps: int,
     sampling_eta: float,
     sampling_seed: int,
+    sampling_start_timestep: int | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     model.eval()
     generated_standardized_parts: list[torch.Tensor] = []
@@ -245,6 +258,7 @@ def _generate_test_population(
                 eta=sampling_eta,
                 sampling_seed=sampling_seed,
                 sampling_keys=batch_generated_ids,
+                start_timestep=sampling_start_timestep,
             )
             generated_nondimensional = standardizers.inputs.inverse(
                 generated_standardized,
@@ -267,7 +281,13 @@ def _generate_test_population(
     if channel_names is None:
         raise ValueError("test generation loader contains no samples")
 
-    sampler = task.sampler_name(steps=sampling_steps, eta=sampling_eta)
+    effective_start = task._sampling_start_timestep(sampling_start_timestep)
+    sampler = task.sampler_name(
+        steps=sampling_steps,
+        eta=sampling_eta,
+        start_timestep=sampling_start_timestep,
+    )
+    gaussian_restart = effective_start < task.timesteps
     artifact = {
         "generated_ids": tuple(generated_ids),
         "reference_ids": tuple(reference_ids),
@@ -276,6 +296,7 @@ def _generate_test_population(
         "generated_standardized": torch.cat(generated_standardized_parts, dim=0),
         "generated_nondimensional": torch.cat(generated_nondimensional_parts, dim=0),
         "target_nondimensional": torch.cat(reference_nondimensional_parts, dim=0),
+        "sampling_start_timestep": effective_start,
         "sampling_steps": sampling_steps,
         "sampling_eta": sampling_eta,
         "sampler": sampler,
@@ -286,11 +307,18 @@ def _generate_test_population(
     generation = {
         "artifact": "generated_test.pt",
         "sampler": sampler,
+        "sampling_start_timestep": effective_start,
         "sampling_steps": sampling_steps,
         "sampling_eta": sampling_eta,
         "sampling_seed": sampling_seed,
         "model_evaluations": sampling_steps,
-        "is_exact_ancestral_ddpm": True,
+        "is_exact_ancestral_ddpm": not gaussian_restart,
+        "gaussian_restart": gaussian_restart,
+        "gaussian_restart_semantics": (
+            None
+            if not gaussian_restart
+            else "x_start~N(0,I); diagnostic sampling hypothesis below trained terminal T"
+        ),
         "learned_reverse_variance": True,
         "generated_ids": "independent_deterministic_sampling_keys",
         "reference_ids": "held_out_test_sample_ids",
