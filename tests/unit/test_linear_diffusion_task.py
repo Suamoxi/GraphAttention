@@ -4,8 +4,8 @@ import torch
 from graph_attention.tasks.linear_diffusion import LinearBetaDiffusionDenoisingTask
 
 
-def _task(**overrides: float | int) -> LinearBetaDiffusionDenoisingTask:
-    kwargs = {
+def _task(**overrides: object) -> LinearBetaDiffusionDenoisingTask:
+    kwargs: dict[str, object] = {
         "state_fields": ("rho", "momentum"),
         "timesteps": 4,
         "beta_start": 0.1,
