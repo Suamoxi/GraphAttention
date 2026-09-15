@@ -280,7 +280,10 @@ def run_slice_edm(cfg: DictConfig) -> dict[str, Any]:
             "c_in": "1/sqrt(sigma^2+sigma_data^2)",
             "c_noise": "log(sigma)/4",
         },
-        "loss": "((sigma^2+sigma_data^2)/(sigma*sigma_data)^2)*MSE(D(x+noise,sigma),x)",
+        "loss": (
+            "((sigma^2+sigma_data^2)/(sigma*sigma_data)^2)*"
+            "MSE(D(x+noise,sigma),x)"
+        ),
         "time_conditioning": "edm_log_sigma_over_4",
         "forward_process": "x_sigma=x0+sigma*epsilon",
         "best_epoch": best_epoch,
