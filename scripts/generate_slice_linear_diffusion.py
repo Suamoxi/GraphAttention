@@ -8,10 +8,10 @@ from typing import Any
 
 import hydra
 from hydra.utils import instantiate
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+from scripts.generate_slice_diffusion import run_diffusion_generation
 
 from graph_attention.tasks.linear_diffusion import LinearBetaDiffusionDenoisingTask
-from scripts.generate_slice_diffusion import run_diffusion_generation
 
 
 @hydra.main(
@@ -30,8 +30,6 @@ def run_slice_linear_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
     source_cfg_path = run_dir / "resolved_config.yaml"
     if not source_cfg_path.is_file():
         raise FileNotFoundError(f"source resolved_config.yaml does not exist: {source_cfg_path}")
-
-    from omegaconf import OmegaConf
 
     source_cfg = OmegaConf.load(source_cfg_path)
     task = instantiate(source_cfg.task)
