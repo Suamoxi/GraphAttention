@@ -1,6 +1,7 @@
 """Scientific learning objectives and task semantics."""
 
 from .diffusion import DiffusionDenoisingTask
+from .edm_diffusion import EDMDenoisingTask, EDMLoss, EDMProblem, karras_sigma_schedule
 from .flow_matching import FlowMatchingTask
 from .improved_diffusion import (
     ImprovedDiffusionDenoisingTask,
@@ -12,6 +13,9 @@ from .regression import NodeRegressionBatch, NodeRegressionTask
 
 __all__ = [
     "DiffusionDenoisingTask",
+    "EDMDenoisingTask",
+    "EDMLoss",
+    "EDMProblem",
     "FlowMatchingTask",
     "ImprovedDiffusionDenoisingTask",
     "ImprovedDiffusionLoss",
@@ -19,4 +23,5 @@ __all__ = [
     "LossSecondMomentTimestepSampler",
     "NodeRegressionBatch",
     "NodeRegressionTask",
+    "karras_sigma_schedule",
 ]
