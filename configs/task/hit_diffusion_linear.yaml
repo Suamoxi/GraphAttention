@@ -1,0 +1,13 @@
+_target_: graph_attention.tasks.linear_diffusion.LinearBetaDiffusionDenoisingTask
+state_fields:
+  - rho
+  - rhou
+  - rhov
+  - rhow
+  - rhoE
+conditioning_parameters: []
+physical_nondimensionalization: true
+timesteps: 1000
+beta_start: 1.0e-4
+beta_end: 2.0e-2
+validation_seed: 1234
