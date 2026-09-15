@@ -1,0 +1,17 @@
+_target_: graph_attention.tasks.EDMDenoisingTask
+state_fields:
+  - rho
+  - rhou
+  - rhov
+  - rhow
+  - rhoE
+conditioning_parameters: []
+physical_nondimensionalization: true
+
+# The standardized CFD state has unit channel scale by construction.  These
+# values preserve the original EDM ratios relative to sigma_data=0.5 by scaling
+# all sigma magnitudes by two.
+sigma_data: 1.0
+p_mean: -0.5068528194400547
+p_std: 1.2
+validation_seed: 1234
