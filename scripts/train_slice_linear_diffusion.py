@@ -9,9 +9,9 @@ from typing import Any
 import hydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig
+from scripts.train_slice_diffusion import run_slice_diffusion
 
 from graph_attention.tasks.linear_diffusion import LinearBetaDiffusionDenoisingTask
-from scripts.train_slice_diffusion import run_slice_diffusion
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
