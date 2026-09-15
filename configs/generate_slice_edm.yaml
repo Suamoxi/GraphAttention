@@ -1,0 +1,17 @@
+run_dir: ???
+checkpoint: best.pt
+device: cuda
+batch_size: 128
+num_workers: 4
+overwrite: false
+output_name: null
+
+sampling:
+  # Original EDM defaults scaled by two because this project standardizes the
+  # CFD state to sigma_data=1 rather than the original image convention 0.5.
+  steps: 18
+  sigma_min: 0.004
+  sigma_max: 160.0
+  rho: 7.0
+  solver: heun
+  seed: 5678
