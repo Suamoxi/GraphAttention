@@ -9,7 +9,7 @@ from graph_attention.models import (
     NodeLinearBaseline,
     SparseGraphTransformer,
 )
-from graph_attention.tasks import FlowMatchingTask, NodeRegressionTask
+from graph_attention.tasks import FlowMatchingTask, NodeRegressionTask, VPSDEDenoisingTask
 
 
 def _config(overrides: list[str] | None = None):
@@ -157,3 +157,22 @@ def test_hit_slice_flow_matching_configs_compose() -> None:
     assert cfg.generative.batch_size == 128
     assert cfg.generative.sample_steps == 50
     assert cfg.generative.solver == "heun"
+
+
+def test_hit_vp_sde_config_instantiates_with_m21_continuous_schedule() -> None:
+    cfg = _config(
+        [
+            "data=hit_slice_pt",
+            "task=hit_vp_sde",
+            "+generative=hit_slice_diffusion",
+            "model=alternating_dilated_geometric_sparse_transformer",
+        ]
+    )
+    task = instantiate(cfg.task)
+
+    assert isinstance(task, VPSDEDenoisingTask)
+    assert list(cfg.task.state_fields) == ["rho", "rhou", "rhov", "rhow", "rhoE"]
+    assert cfg.task.physical_nondimensionalization is True
+    assert cfg.task.beta_min == 0.1
+    assert cfg.task.beta_max == 20.0
+    assert cfg.task.training_eps == 1.0e-5
