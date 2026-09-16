@@ -91,7 +91,7 @@ class VPSDEDenoisingTask(NodeRegressionTask):
             - 0.5 * self.beta_min * times
         )
         alpha = torch.exp(log_alpha)
-        sigma_sq = torch.clamp(1.0 - torch.exp(2.0 * log_alpha), min=0.0)
+        sigma_sq = torch.clamp(-torch.expm1(2.0 * log_alpha), min=0.0)
         sigma = torch.sqrt(sigma_sq)
         return alpha, sigma
 
@@ -431,11 +431,11 @@ def _validate_graph_times(
     *,
     lower_bound: float,
 ) -> None:
-    _validate_times_tensor(times)
-    if times.shape != (num_graphs,):
-        raise ValueError(f"VP-SDE times must have shape [{num_graphs}]")
-    if bool(torch.any(times < lower_bound)) or bool(torch.any(times > 1.0)):
-        raise ValueError(f"VP-SDE times must lie in [{lower_bound}, 1]")
+        _validate_times_tensor(times)
+        if times.shape != (num_graphs,):
+            raise ValueError(f"VP-SDE times must have shape [{num_graphs}]")
+        if bool(torch.any(times < lower_bound)) or bool(torch.any(times > 1.0)):
+            raise ValueError(f"VP-SDE times must lie in [{lower_bound}, 1]")
 
 
 def _validate_times_tensor(times: torch.Tensor) -> None:
