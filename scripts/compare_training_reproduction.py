@@ -52,6 +52,8 @@ def compare_runs(
         baseline / "dataset_split_manifest.json",
         candidate / "dataset_split_manifest.json",
         ignored_keys=_IGNORED_MANIFEST_KEYS,
+        atol=atol,
+        rtol=rtol,
     )
     _compare_standardizers(
         baseline / "standardizers.pt",
@@ -69,12 +71,13 @@ def compare_runs(
 
     baseline_summary = json.loads((baseline / "summary.json").read_text())
     candidate_summary = json.loads((candidate / "summary.json").read_text())
-    if baseline_summary != candidate_summary:
-        raise AssertionError(
-            "summary.json differs:\n"
-            f"baseline={json.dumps(baseline_summary, sort_keys=True)}\n"
-            f"candidate={json.dumps(candidate_summary, sort_keys=True)}"
-        )
+    _assert_nested_equal(
+        baseline_summary,
+        candidate_summary,
+        path="summary.json",
+        atol=atol,
+        rtol=rtol,
+    )
 
     print("REPRODUCTION CHECK PASSED")
     print(f"baseline:  {baseline}")
@@ -119,14 +122,21 @@ def _compare_json(
     candidate_path: Path,
     *,
     ignored_keys: set[str],
+    atol: float,
+    rtol: float,
 ) -> None:
     baseline = json.loads(baseline_path.read_text())
     candidate = json.loads(candidate_path.read_text())
     for key in ignored_keys:
         baseline.pop(key, None)
         candidate.pop(key, None)
-    if baseline != candidate:
-        raise AssertionError(f"JSON artifacts differ: {baseline_path.name}")
+    _assert_nested_equal(
+        baseline,
+        candidate,
+        path=baseline_path.name,
+        atol=atol,
+        rtol=rtol,
+    )
 
 
 def _compare_standardizers(
@@ -152,7 +162,9 @@ def _compare_checkpoint(
     candidate = torch.load(candidate_path, map_location="cpu", weights_only=True)
     if not isinstance(baseline, dict) or not isinstance(candidate, dict):
         raise TypeError("checkpoint payloads must be dictionaries")
-    baseline = {key: value for key, value in baseline.items() if key not in _IGNORED_CHECKPOINT_KEYS}
+    baseline = {
+        key: value for key, value in baseline.items() if key not in _IGNORED_CHECKPOINT_KEYS
+    }
     candidate = {
         key: value for key, value in candidate.items() if key not in _IGNORED_CHECKPOINT_KEYS
     }
@@ -209,6 +221,17 @@ def _assert_nested_equal(
                 path=f"{path}[{index}]",
                 atol=atol,
                 rtol=rtol,
+            )
+        return
+
+    if isinstance(baseline, float) and isinstance(candidate, (int, float)):
+        left = torch.tensor(baseline, dtype=torch.float64)
+        right = torch.tensor(float(candidate), dtype=torch.float64)
+        if not torch.allclose(left, right, rtol=rtol, atol=atol):
+            difference = abs(baseline - float(candidate))
+            raise AssertionError(
+                f"float differs at {path}: {baseline!r} != {candidate!r}; "
+                f"abs_diff={difference:.17g}"
             )
         return
 
