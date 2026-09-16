@@ -1,0 +1,15 @@
+run_dir: ???
+checkpoint: best.pt
+device: cuda
+batch_size: 128
+num_workers: 4
+overwrite: false
+output_name: null
+
+sampling:
+  steps: 1000
+  method: probability_flow_ode
+  solver: heun
+  sampling_eps: 1.0e-3
+  final_denoise: true
+  seed: 5678
