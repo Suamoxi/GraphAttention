@@ -23,7 +23,13 @@ from torch.utils.tensorboard import SummaryWriter
 
 from graph_attention.data import make_grouped_split_manifest
 from graph_attention.objectives import SampleLossAggregate, sample_reduced_mse
-from graph_attention.tasks import DiffusionDenoisingTask, EDMDenoisingTask, EDMProblem, NodeRegressionBatch, NodeRegressionTask
+from graph_attention.tasks import (
+    DiffusionDenoisingTask,
+    EDMDenoisingTask,
+    EDMProblem,
+    NodeRegressionBatch,
+    NodeRegressionTask,
+)
 from graph_attention.training import fit_train_standardizers, train_equal_sample_optimizer_step
 from graph_attention.training.data_pipeline import (
     GraphTaskCollator,
@@ -178,9 +184,13 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
                 batch = task_batch_to_device(host_batch, device=device, dtype=torch.float32)
                 scaled = device_standardizers.transform(batch)
                 problem = task.make_training_problem(scaled, generator=training_generator)
-                step_loss, step_samples = adapter.optimizer_step(model, optimizer, problem)
+                step_loss, step_loss_sum, step_samples = adapter.optimizer_step(
+                    model,
+                    optimizer,
+                    problem,
+                )
 
-                train_loss_sum += step_loss * step_samples
+                train_loss_sum += step_loss_sum
                 train_samples += step_samples
                 tensorboard.add_scalar(f"{metric}/train_step", step_loss, global_step)
                 global_step += 1
@@ -321,12 +331,16 @@ class _TaskAdapter:
         model: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
         problem: Any,
-    ) -> tuple[float, int]:
+    ) -> tuple[float, float, int]:
         optimizer.zero_grad(set_to_none=True)
         aggregate = self.loss(model, problem)
         aggregate.mean.backward()
         optimizer.step()
-        return float(aggregate.mean.detach().cpu()), aggregate.sample_count
+        return (
+            float(aggregate.mean.detach().cpu()),
+            float(aggregate.loss_sum.detach().cpu()),
+            aggregate.sample_count,
+        )
 
     def summary_metadata(self) -> dict[str, Any]:
         raise NotImplementedError
@@ -382,7 +396,7 @@ class _DDPMAdapter(_TaskAdapter):
         model: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
         problem: Any,
-    ) -> tuple[float, int]:
+    ) -> tuple[float, float, int]:
         batch = self.model_batch(problem)
         result = train_equal_sample_optimizer_step(
             model,
@@ -390,7 +404,12 @@ class _DDPMAdapter(_TaskAdapter):
             [batch],
             local_sample_count=batch.num_graphs,
         )
-        return float(result.objective.cpu()), result.local_sample_count
+        step_loss = float(result.objective.cpu())
+        return (
+            step_loss,
+            step_loss * result.local_sample_count,
+            result.local_sample_count,
+        )
 
     def summary_metadata(self) -> dict[str, Any]:
         schedule = str(getattr(self.task, "noise_schedule", "cosine"))
@@ -433,6 +452,29 @@ class _EDMAdapter(_TaskAdapter):
             per_sample=losses.per_sample,
             loss_sum=losses.loss_sum,
             sample_count=losses.sample_count,
+        )
+
+    def optimizer_step(
+        self,
+        model: torch.nn.Module,
+        optimizer: torch.optim.Optimizer,
+        problem: Any,
+    ) -> tuple[float, float, int]:
+        if not isinstance(problem, EDMProblem):
+            raise TypeError("EDM task must return EDMProblem values")
+
+        # Preserve the original M22 operation order exactly: the task returns
+        # EDMLoss, backward is called on EDMLoss.mean, and epoch accumulation
+        # uses EDMLoss.loss_sum rather than reconstructing it from a Python mean.
+        optimizer.zero_grad(set_to_none=True)
+        predictions = _forward_model(model, problem.model_batch)
+        losses = self.task.edm_loss(predictions, problem)
+        losses.mean.backward()
+        optimizer.step()
+        return (
+            float(losses.mean.detach().cpu()),
+            float(losses.loss_sum.detach().cpu()),
+            losses.sample_count,
         )
 
     def summary_metadata(self) -> dict[str, Any]:
@@ -586,18 +628,26 @@ def _write_dataset_artifacts(
 
 
 def _mesh_summary(dataset: Any, probe: NodeRegressionBatch) -> dict[str, Any]:
+    first_stop = int(probe.ptr[1])
+    first_graph_edges = (
+        (probe.edge_index[0] < first_stop) & (probe.edge_index[1] < first_stop)
+    )
+    attention_counts = {
+        name: int(
+            ((topology[0] < first_stop) & (topology[1] < first_stop)).sum()
+        )
+        for name, topology in probe.attention_edge_indices.items()
+    }
     payload: dict[str, Any] = {
-        "directed_edges_per_slice": int(probe.edge_index.shape[1]),
-        "attention_topologies": {
-            name: int(topology.shape[1]) for name, topology in probe.attention_edge_indices.items()
-        },
+        "directed_edges_per_slice": int(first_graph_edges.sum()),
+        "attention_topologies": attention_counts,
     }
     grid_shape = getattr(dataset, "grid_shape_2d", None)
     if grid_shape is not None:
         payload["grid_shape_2d"] = list(grid_shape)
         payload["nodes_per_slice"] = int(grid_shape[0] * grid_shape[1])
     else:
-        payload["probe_nodes"] = int(probe.inputs.shape[0])
+        payload["probe_nodes"] = first_stop
     return payload
 
 
