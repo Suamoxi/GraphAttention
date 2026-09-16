@@ -10,6 +10,7 @@ from .improved_diffusion import (
     LossSecondMomentTimestepSampler,
 )
 from .regression import NodeRegressionBatch, NodeRegressionTask
+from .vp_sde import VPSDEDenoisingTask
 
 __all__ = [
     "DiffusionDenoisingTask",
@@ -23,5 +24,6 @@ __all__ = [
     "LossSecondMomentTimestepSampler",
     "NodeRegressionBatch",
     "NodeRegressionTask",
+    "VPSDEDenoisingTask",
     "karras_sigma_schedule",
 ]
