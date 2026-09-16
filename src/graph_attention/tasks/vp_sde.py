@@ -82,7 +82,10 @@ class VPSDEDenoisingTask(NodeRegressionTask):
         _validate_times_tensor(times)
         return self.beta_min + times * (self.beta_max - self.beta_min)
 
-    def marginal_coefficients(self, times: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def marginal_coefficients(
+        self,
+        times: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Return ``alpha(t)`` and ``sigma(t)`` for the analytic VP marginal."""
 
         _validate_times_tensor(times)
@@ -298,13 +301,21 @@ class VPSDEDenoisingTask(NodeRegressionTask):
             raise TypeError("final_denoise must be boolean")
 
         seed = _nonnegative_int(sampling_seed, "sampling_seed")
-        keys = tuple(batch.source.sample_ids) if sampling_keys is None else tuple(sampling_keys)
+        keys = (
+            tuple(batch.source.sample_ids)
+            if sampling_keys is None
+            else tuple(sampling_keys)
+        )
         if len(keys) != batch.num_graphs:
             raise ValueError("sampling_keys must contain one key per graph")
         if any(not isinstance(key, str) or not key for key in keys):
             raise ValueError("sampling_keys must contain non-empty strings")
 
-        purpose = "vp_pf_ode_sampling" if method == "probability_flow_ode" else "vp_sde_sampling"
+        purpose = (
+            "vp_pf_ode_sampling"
+            if method == "probability_flow_ode"
+            else "vp_sde_sampling"
+        )
         generators = [
             _sample_generator(batch.inputs.device, seed, purpose, key)
             for key in keys
@@ -431,11 +442,11 @@ def _validate_graph_times(
     *,
     lower_bound: float,
 ) -> None:
-        _validate_times_tensor(times)
-        if times.shape != (num_graphs,):
-            raise ValueError(f"VP-SDE times must have shape [{num_graphs}]")
-        if bool(torch.any(times < lower_bound)) or bool(torch.any(times > 1.0)):
-            raise ValueError(f"VP-SDE times must lie in [{lower_bound}, 1]")
+    _validate_times_tensor(times)
+    if times.shape != (num_graphs,):
+        raise ValueError(f"VP-SDE times must have shape [{num_graphs}]")
+    if bool(torch.any(times < lower_bound)) or bool(torch.any(times > 1.0)):
+        raise ValueError(f"VP-SDE times must lie in [{lower_bound}, 1]")
 
 
 def _validate_times_tensor(times: torch.Tensor) -> None:
