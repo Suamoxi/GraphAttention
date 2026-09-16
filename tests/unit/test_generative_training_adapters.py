@@ -3,9 +3,15 @@ from __future__ import annotations
 import torch
 
 from graph_attention.data import SyntheticMeshDataset
-from graph_attention.tasks import DiffusionDenoisingTask, EDMDenoisingTask
+from graph_attention.tasks import DiffusionDenoisingTask, EDMDenoisingTask, VPSDEDenoisingTask
 from graph_attention.training import train_equal_sample_optimizer_step
-from scripts.train_generative import _DDPMAdapter, _EDMAdapter, _forward_model
+from scripts.train_generative import (
+    _DDPMAdapter,
+    _EDMAdapter,
+    _GenericTaskAdapter,
+    _forward_model,
+    _task_adapter,
+)
 
 
 class _ScalarModel(torch.nn.Module):
@@ -27,7 +33,9 @@ class _ScalarModel(torch.nn.Module):
         return self.weight * inputs
 
 
-def _prepared_batch(task: DiffusionDenoisingTask | EDMDenoisingTask):
+def _prepared_batch(
+    task: DiffusionDenoisingTask | EDMDenoisingTask | VPSDEDenoisingTask,
+):
     dataset = SyntheticMeshDataset(num_samples=2, spatial_dim=2, seed=19)
     return task.pack_and_prepare([dataset[0], dataset[1]], dataset.field_catalog)
 
@@ -93,6 +101,47 @@ def test_edm_adapter_matches_previous_manual_optimizer_sequence() -> None:
     reference_optimizer.zero_grad(set_to_none=True)
     predictions = _forward_model(reference_model, problem.model_batch)
     losses = task.edm_loss(predictions, problem)
+    losses.mean.backward()
+    reference_optimizer.step()
+
+    assert step_samples == losses.sample_count
+    assert step_loss == float(losses.mean.detach().cpu())
+    assert step_loss_sum == float(losses.loss_sum.detach().cpu())
+    torch.testing.assert_close(adapter_model.weight, reference_model.weight, rtol=0.0, atol=0.0)
+
+
+def test_vp_sde_uses_generic_task_adapter_without_runner_changes() -> None:
+    task = VPSDEDenoisingTask(
+        state_fields=("rho", "momentum"),
+        beta_min=0.1,
+        beta_max=20.0,
+        validation_seed=91,
+    )
+    batch = _prepared_batch(task)
+    problem = task.make_training_problem(
+        batch,
+        generator=torch.Generator().manual_seed(123),
+    )
+
+    adapter = _task_adapter(task)
+    assert isinstance(adapter, _GenericTaskAdapter)
+    assert adapter.metric_name == "epsilon_mse"
+    assert adapter.noise_seed_name == "vp_sde_noise_seed"
+
+    adapter_model = _ScalarModel()
+    reference_model = _ScalarModel()
+    adapter_optimizer = torch.optim.SGD(adapter_model.parameters(), lr=0.01)
+    reference_optimizer = torch.optim.SGD(reference_model.parameters(), lr=0.01)
+
+    step_loss, step_loss_sum, step_samples = adapter.optimizer_step(
+        adapter_model,
+        adapter_optimizer,
+        problem,
+    )
+
+    reference_optimizer.zero_grad(set_to_none=True)
+    predictions = _forward_model(reference_model, problem)
+    losses = task.training_loss(predictions, problem)
     losses.mean.backward()
     reference_optimizer.step()
 
