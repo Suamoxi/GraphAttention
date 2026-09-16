@@ -1,0 +1,48 @@
+baseline_run_dir: ???
+candidate_run_dir: ???
+baseline_checkpoint: best.pt
+candidate_checkpoint: best.pt
+
+output_root: /scratch/coop/theret/GraphAttention_runs/noise_level_diagnostics
+output_name: null
+overwrite: false
+
+device: cuda
+batch_size: 128
+num_workers: 4
+diagnostic_seed: 2468
+
+# Shared normalized times for discrete DDPM and continuous VP-SDE.  The low-t
+# levels are intentionally denser because fine-scale x0 reconstruction is most
+# sensitive there.  M21 maps t to round(t*T); M23 uses t directly.
+time_fractions:
+  - 0.001
+  - 0.005
+  - 0.01
+  - 0.025
+  - 0.05
+  - 0.10
+  - 0.15
+  - 0.20
+  - 0.25
+  - 0.30
+  - 0.35
+  - 0.40
+  - 0.45
+  - 0.50
+  - 0.60
+  - 0.70
+  - 0.80
+  - 0.90
+  - 0.95
+  - 1.00
+
+spectra:
+  num_k_bins: 24
+  subtract_mean: true
+  cartesian_tolerance: 1.0e-8
+  eps: 1.0e-12
+  bands:
+    low: [0.0, 0.25]
+    mid: [0.25, 0.5]
+    high: [0.5, 1.0]
