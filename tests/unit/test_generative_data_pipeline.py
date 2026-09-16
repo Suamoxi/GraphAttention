@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import torch
 
-from graph_attention.data import FieldCatalog, FieldRole, FieldSpec, FieldSupport, Mesh, Sample
-from graph_attention.data import SyntheticMeshDataset
+from graph_attention.data import (
+    FieldCatalog,
+    FieldRole,
+    FieldSpec,
+    FieldSupport,
+    Mesh,
+    Sample,
+    SyntheticMeshDataset,
+)
 from graph_attention.geometry import (
     build_attention_edge_indices,
     cartesian_4_neighbor_edge_index,
