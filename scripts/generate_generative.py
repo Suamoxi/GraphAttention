@@ -3,8 +3,8 @@
 The runner owns source-artifact loading, dataset/test-split reconstruction,
 standardization, model restoration, population packing, and generation artifacts.
 Sampler dynamics remain task-owned through ``sample_standardized`` and
-``sampler_name``. This keeps VP-SDE generation out of task-specific launcher
-scripts while preserving the existing benchmark artifact schema.
+``sampler_name`` so continuous generative tasks can share one launcher and
+benchmark artifact schema.
 """
 
 from __future__ import annotations
@@ -163,6 +163,7 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
 
     grid_shape = source_summary.get("grid_shape_2d")
     nodes_per_sample = source_summary.get("nodes_per_slice")
+    initial_state_distribution = _initial_state_distribution(sampling["method"])
     summary = {
         "run_name": generation_name,
         "benchmark_run_name": f"{run_dir.name}__{generation_name}",
@@ -183,7 +184,7 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
         "sampling_seed": sampling["seed"],
         "sampler": sampler,
         "model_evaluations": generation["model_evaluations"],
-        "initial_state_distribution": "standard_normal_at_t1",
+        "initial_state_distribution": initial_state_distribution,
         "sampling_random_stream": "task_owned_deterministic_stream",
         "grid_shape_2d": grid_shape,
         "nodes_per_slice": nodes_per_sample,
@@ -266,6 +267,7 @@ def _generate_test_population(
         solver=sampling["solver"],
         final_denoise=sampling["final_denoise"],
     )
+    initial_state_distribution = _initial_state_distribution(sampling["method"])
     artifact = {
         "generated_ids": tuple(generated_ids),
         "reference_ids": tuple(reference_ids),
@@ -293,7 +295,7 @@ def _generate_test_population(
         "sampling_eps": sampling["sampling_eps"],
         "sampling_final_denoise": sampling["final_denoise"],
         "sampling_seed": sampling["seed"],
-        "initial_state_distribution": "standard_normal_at_t1",
+        "initial_state_distribution": initial_state_distribution,
         "random_stream_semantics": "task_owned_deterministic_stream",
         "model_evaluations": nfe,
         "generated_ids": "independent_deterministic_sampling_keys",
@@ -312,14 +314,21 @@ def _sampling_settings(config: DictConfig) -> dict[str, Any]:
     sampling_eps = float(config.sampling_eps)
     if not torch.isfinite(torch.tensor(sampling_eps)):
         raise ValueError("sampling.sampling_eps must be finite")
-    if method == "discrete_ancestral":
-        if sampling_eps != 0.0:
-            raise ValueError("sampling.sampling_eps must be 0 for discrete_ancestral")
-    elif not 0.0 < sampling_eps < 1.0:
-        raise ValueError("sampling.sampling_eps must lie strictly between 0 and 1")
     final_denoise = config.final_denoise
     if not isinstance(final_denoise, bool):
         raise TypeError("sampling.final_denoise must be boolean")
+
+    if method == "discrete_ancestral":
+        if sampling_eps != 0.0:
+            raise ValueError("sampling.sampling_eps must be 0 for discrete_ancestral")
+    elif method == "flow_ode":
+        if sampling_eps != 0.0:
+            raise ValueError("sampling.sampling_eps must be 0 for flow_ode")
+        if final_denoise:
+            raise ValueError("flow_ode does not use final_denoise")
+    elif not 0.0 < sampling_eps < 1.0:
+        raise ValueError("sampling.sampling_eps must lie strictly between 0 and 1")
+
     seed = _nonnegative_int(config.seed, "sampling.seed")
     return {
         "steps": steps,
@@ -345,6 +354,14 @@ def _model_evaluations(
             evaluations = 2 * steps
         else:
             raise ValueError("unsupported probability-flow ODE solver")
+    elif method == "flow_ode":
+        if final_denoise:
+            raise ValueError("flow ODE sampling does not use final_denoise")
+        if solver == "euler":
+            return steps
+        if solver == "heun":
+            return 2 * steps
+        raise ValueError("unsupported flow ODE solver")
     elif method == "reverse_sde":
         if solver != "euler_maruyama":
             raise ValueError("unsupported reverse-SDE solver")
@@ -358,6 +375,12 @@ def _model_evaluations(
     else:
         raise ValueError("unsupported generative sampling method")
     return evaluations + int(final_denoise)
+
+
+def _initial_state_distribution(method: str) -> str:
+    if method == "flow_ode":
+        return "standard_normal_at_t0"
+    return "standard_normal_at_t1"
 
 
 def _load_standardizers(path: Path) -> TaskStandardizers:
