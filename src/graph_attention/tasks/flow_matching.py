@@ -10,6 +10,7 @@ from operator import index as operator_index
 import torch
 from torch import nn
 
+from ..objectives import SampleLossAggregate, sample_reduced_mse
 from .regression import NodeRegressionBatch, NodeRegressionTask
 
 _FLOW_TIME_NAME = "flow_time"
@@ -22,6 +23,9 @@ class FlowMatchingTask(NodeRegressionTask):
     ``NodeRegressionTask`` data preparation path. Statistical standardization is
     applied by the training layer before this task constructs the Gaussian path.
     """
+
+    training_metric_name = "flow_velocity_mse"
+    training_seed_name = "path_seed"
 
     def __init__(
         self,
@@ -71,6 +75,47 @@ class FlowMatchingTask(NodeRegressionTask):
         _validate_state_batch(batch)
         times, source = _deterministic_validation_inputs(batch, self.validation_seed)
         return _flow_problem(batch, times, source)
+
+    def make_model_probe(self, problem: NodeRegressionBatch) -> NodeRegressionBatch:
+        """Expose the model-facing batch for the common generative runner."""
+
+        if not isinstance(problem, NodeRegressionBatch):
+            raise TypeError("flow-matching problem must be a NodeRegressionBatch")
+        return problem
+
+    def training_loss(
+        self,
+        predictions: torch.Tensor,
+        problem: NodeRegressionBatch,
+    ) -> SampleLossAggregate:
+        """Return equal-physical-sample velocity MSE for common training orchestration."""
+
+        if not isinstance(problem, NodeRegressionBatch):
+            raise TypeError("flow-matching problem must be a NodeRegressionBatch")
+        if predictions.shape != problem.targets.shape:
+            raise ValueError(
+                "flow-matching predictions must match target velocity shape: "
+                f"got {tuple(predictions.shape)}, expected {tuple(problem.targets.shape)}"
+            )
+        return sample_reduced_mse(
+            predictions,
+            problem.targets,
+            problem.ptr,
+            node_weights=problem.node_weights,
+        )
+
+    def training_summary_metadata(self) -> dict[str, object]:
+        """Describe the unchanged M11 straight-path flow-matching formulation."""
+
+        return {
+            "task": "linear_gaussian_flow_matching",
+            "prediction_type": "velocity",
+            "training_time_distribution": "t ~ Uniform(0,1)",
+            "time_conditioning": "raw_scalar_t_in_[0,1]",
+            "path": "x_t=(1-t)*x_source+t*x_data",
+            "target_velocity": "x_data-x_source",
+            "generation": "task.sample_standardized",
+        }
 
     @torch.no_grad()
     def sample_standardized(
