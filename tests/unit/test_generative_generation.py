@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import pytest
 import torch
+from omegaconf import OmegaConf
 
 from graph_attention.data import SyntheticMeshDataset
 from graph_attention.tasks import VPSDEDenoisingTask
@@ -9,6 +11,7 @@ from scripts.generate_generative import (
     _generate_test_population,
     _generation_name,
     _model_evaluations,
+    _sampling_settings,
 )
 
 
@@ -52,6 +55,43 @@ def test_vp_generation_model_evaluation_counts_include_final_denoise() -> None:
         solver="euler_maruyama",
         final_denoise=True,
     ) == 1001
+    assert _model_evaluations(
+        steps=1000,
+        method="discrete_ancestral",
+        solver="ddpm",
+        final_denoise=False,
+    ) == 1000
+
+
+def test_discrete_ancestral_sampling_settings_use_t0_without_final_denoise() -> None:
+    settings = _sampling_settings(
+        OmegaConf.create(
+            {
+                "steps": 1000,
+                "method": "discrete_ancestral",
+                "solver": "ddpm",
+                "sampling_eps": 0.0,
+                "final_denoise": False,
+                "seed": 5678,
+            }
+        )
+    )
+    assert settings["sampling_eps"] == 0.0
+    assert settings["final_denoise"] is False
+
+    with pytest.raises(ValueError, match="must be 0 for discrete_ancestral"):
+        _sampling_settings(
+            OmegaConf.create(
+                {
+                    "steps": 1000,
+                    "method": "discrete_ancestral",
+                    "solver": "ddpm",
+                    "sampling_eps": 1.0e-3,
+                    "final_denoise": False,
+                    "seed": 5678,
+                }
+            )
+        )
 
 
 def test_generation_name_is_stable_and_filesystem_safe() -> None:

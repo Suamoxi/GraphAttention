@@ -42,8 +42,9 @@ class VPSDEDenoisingTask(NodeRegressionTask):
 
         score(x_t, t) = -epsilon_theta(x_t, t) / sigma(t).
 
-    Sampling exposes both the reverse-time SDE and the associated deterministic
-    probability-flow ODE while keeping the graph backbone unchanged.
+    Sampling exposes the reverse-time SDE, its deterministic probability-flow
+    ODE, and a DDPM-style discrete ancestral ablation built from the same
+    continuous VP marginal.
     """
 
     training_metric_name = "epsilon_mse"
@@ -276,29 +277,47 @@ class VPSDEDenoisingTask(NodeRegressionTask):
         sampling_seed: int = 5678,
         sampling_keys: Sequence[str] | None = None,
     ) -> torch.Tensor:
-        """Generate standardized states with the VP reverse SDE or PF-ODE.
+        """Generate standardized states with one of the VP reverse processes.
 
-        ``steps`` is the number of numerical transitions from ``t=1`` to
-        ``sampling_eps``. The probability-flow ODE supports Euler or Heun.
-        Reverse-SDE integration uses Euler-Maruyama. ``final_denoise`` applies the
-        epsilon-based clean-state estimate at the positive endpoint; it is not an
-        additional ODE/SDE integration step.
+        PF-ODE and reverse-SDE methods integrate from ``t=1`` to
+        ``sampling_eps``; the former supports Euler/Heun and the latter uses
+        Euler-Maruyama. ``discrete_ancestral`` instead places ``steps`` uniform
+        intervals on ``[0, 1]``, defines ``alpha_bar_i = alpha(i/steps)^2``, and
+        applies consecutive DDPM-style ancestral updates all the way to ``t=0``.
+        The discrete ablation therefore requires ``sampling_eps=0`` and
+        ``final_denoise=False``.
         """
 
         _validate_vp_batch(batch)
         step_count = _positive_int(steps, "steps")
-        endpoint = _open_unit_float(sampling_eps, "sampling_eps")
-        if endpoint < self.training_eps:
-            raise ValueError("sampling_eps must be greater than or equal to training_eps")
-        if method not in {"probability_flow_ode", "reverse_sde"}:
-            raise ValueError("method must be 'probability_flow_ode' or 'reverse_sde'")
-        if method == "probability_flow_ode":
-            if solver not in {"euler", "heun"}:
-                raise ValueError("probability-flow ODE solver must be 'euler' or 'heun'")
-        elif solver != "euler_maruyama":
-            raise ValueError("reverse-SDE solver must be 'euler_maruyama'")
         if not isinstance(final_denoise, bool):
             raise TypeError("final_denoise must be boolean")
+        if method not in {"probability_flow_ode", "reverse_sde", "discrete_ancestral"}:
+            raise ValueError(
+                "method must be 'probability_flow_ode', 'reverse_sde', or 'discrete_ancestral'"
+            )
+
+        if method == "discrete_ancestral":
+            endpoint = float(sampling_eps)
+            if not torch.isfinite(torch.tensor(endpoint)) or endpoint != 0.0:
+                raise ValueError("discrete ancestral sampling requires sampling_eps=0")
+            if solver != "ddpm":
+                raise ValueError("discrete ancestral solver must be 'ddpm'")
+            if final_denoise:
+                raise ValueError("discrete ancestral sampling does not use final_denoise")
+            if 1.0 / step_count < self.training_eps:
+                raise ValueError(
+                    "discrete ancestral first positive time lies below the training domain"
+                )
+        else:
+            endpoint = _open_unit_float(sampling_eps, "sampling_eps")
+            if endpoint < self.training_eps:
+                raise ValueError("sampling_eps must be greater than or equal to training_eps")
+            if method == "probability_flow_ode":
+                if solver not in {"euler", "heun"}:
+                    raise ValueError("probability-flow ODE solver must be 'euler' or 'heun'")
+            elif solver != "euler_maruyama":
+                raise ValueError("reverse-SDE solver must be 'euler_maruyama'")
 
         seed = _nonnegative_int(sampling_seed, "sampling_seed")
         keys = (
@@ -321,6 +340,19 @@ class VPSDEDenoisingTask(NodeRegressionTask):
             for key in keys
         ]
         state = _randn_by_graph(batch, generators)
+
+        if method == "discrete_ancestral":
+            state = self._sample_discrete_ancestral(
+                model,
+                batch,
+                state,
+                steps=step_count,
+                generators=generators,
+            )
+            if not torch.isfinite(state).all():
+                raise ValueError("VP-SDE sampler produced NaN or Inf values")
+            return state
+
         times = torch.linspace(
             1.0,
             endpoint,
@@ -373,6 +405,58 @@ class VPSDEDenoisingTask(NodeRegressionTask):
             raise ValueError("VP-SDE sampler produced NaN or Inf values")
         return state
 
+    @torch.no_grad()
+    def _sample_discrete_ancestral(
+        self,
+        model: nn.Module,
+        batch: NodeRegressionBatch,
+        state: torch.Tensor,
+        *,
+        steps: int,
+        generators: Sequence[torch.Generator],
+    ) -> torch.Tensor:
+        """Apply DDPM-style eta=1 transitions on the continuous VP marginal grid."""
+
+        times = torch.linspace(
+            0.0,
+            1.0,
+            steps=steps + 1,
+            device=state.device,
+            dtype=state.dtype,
+        )
+        alpha, _ = self.marginal_coefficients(times)
+        alpha_bar = alpha.square()
+
+        for index in range(steps, 0, -1):
+            graph_time = times[index].expand(batch.num_graphs)
+            epsilon_hat = _model_epsilon(model, batch, state, graph_time)
+            alpha_t = alpha_bar[index]
+            alpha_previous = alpha_bar[index - 1]
+            x0_hat = (
+                state - torch.sqrt(torch.clamp(1.0 - alpha_t, min=0.0)) * epsilon_hat
+            ) / torch.sqrt(alpha_t)
+
+            if index == 1:
+                state = x0_hat
+                continue
+
+            variance_factor = (
+                (1.0 - alpha_previous)
+                / (1.0 - alpha_t)
+                * (1.0 - alpha_t / alpha_previous)
+            )
+            posterior_sigma = torch.sqrt(torch.clamp(variance_factor, min=0.0))
+            direction_scale = torch.sqrt(
+                torch.clamp(1.0 - alpha_previous - posterior_sigma.square(), min=0.0)
+            )
+            state = (
+                torch.sqrt(alpha_previous) * x0_hat
+                + direction_scale * epsilon_hat
+                + posterior_sigma * _randn_by_graph(batch, generators)
+            )
+
+        return state
+
     def sampler_name(
         self,
         *,
@@ -388,6 +472,10 @@ class VPSDEDenoisingTask(NodeRegressionTask):
             base = f"vp_probability_flow_{solver}_steps{step_count}"
         elif method == "reverse_sde" and solver == "euler_maruyama":
             base = f"vp_reverse_sde_euler_maruyama_steps{step_count}"
+        elif method == "discrete_ancestral" and solver == "ddpm":
+            if final_denoise:
+                raise ValueError("discrete ancestral sampling does not use final_denoise")
+            return f"vp_discrete_ancestral_steps{step_count}"
         else:
             raise ValueError("invalid VP-SDE method/solver combination")
         return f"{base}_denoise" if final_denoise else base

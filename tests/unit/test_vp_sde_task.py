@@ -7,6 +7,7 @@ import torch
 
 from graph_attention.data import SyntheticMeshDataset
 from graph_attention.tasks import VPSDEDenoisingTask
+from graph_attention.tasks.diffusion import _randn_by_graph, _sample_generator
 
 
 class _ZeroEpsilon(torch.nn.Module):
@@ -183,6 +184,61 @@ def test_reverse_sde_sampling_is_seed_deterministic() -> None:
     assert not torch.equal(first, different)
 
 
+def test_discrete_ancestral_one_step_matches_vp_x0_update_and_sde_rng_stream() -> None:
+    task, _, batch = _batch()
+    model = _ZeroEpsilon()
+    keys = ("gen_0", "gen_1")
+    generators = [
+        _sample_generator(batch.inputs.device, 44, "vp_sde_sampling", key)
+        for key in keys
+    ]
+    initial_state = _randn_by_graph(batch, generators)
+    alpha, _ = task.marginal_coefficients(
+        torch.ones((batch.num_graphs,), dtype=batch.inputs.dtype)
+    )
+    expected = initial_state / alpha[batch.batch_index].unsqueeze(1)
+
+    generated = task.sample_standardized(
+        model,
+        batch,
+        steps=1,
+        method="discrete_ancestral",
+        solver="ddpm",
+        sampling_eps=0.0,
+        final_denoise=False,
+        sampling_seed=44,
+        sampling_keys=keys,
+    )
+
+    torch.testing.assert_close(generated, expected)
+
+
+def test_discrete_ancestral_sampling_is_seed_deterministic() -> None:
+    task, _, batch = _batch()
+    model = _ZeroEpsilon()
+    kwargs = {
+        "steps": 4,
+        "method": "discrete_ancestral",
+        "solver": "ddpm",
+        "sampling_eps": 0.0,
+        "final_denoise": False,
+        "sampling_keys": ("gen_0", "gen_1"),
+    }
+
+    first = task.sample_standardized(model, batch, sampling_seed=44, **kwargs)
+    second = task.sample_standardized(model, batch, sampling_seed=44, **kwargs)
+    different = task.sample_standardized(model, batch, sampling_seed=45, **kwargs)
+
+    torch.testing.assert_close(first, second)
+    assert not torch.equal(first, different)
+    assert task.sampler_name(
+        steps=4,
+        method="discrete_ancestral",
+        solver="ddpm",
+        final_denoise=False,
+    ) == "vp_discrete_ancestral_steps4"
+
+
 def test_vp_sampler_rejects_incompatible_method_solver_pairs() -> None:
     task, _, batch = _batch()
     model = _ZeroEpsilon()
@@ -202,4 +258,34 @@ def test_vp_sampler_rejects_incompatible_method_solver_pairs() -> None:
             steps=2,
             method="reverse_sde",
             solver="heun",
+        )
+    with pytest.raises(ValueError, match="discrete ancestral solver"):
+        task.sample_standardized(
+            model,
+            batch,
+            steps=2,
+            method="discrete_ancestral",
+            solver="heun",
+            sampling_eps=0.0,
+            final_denoise=False,
+        )
+    with pytest.raises(ValueError, match="requires sampling_eps=0"):
+        task.sample_standardized(
+            model,
+            batch,
+            steps=2,
+            method="discrete_ancestral",
+            solver="ddpm",
+            sampling_eps=1.0e-3,
+            final_denoise=False,
+        )
+    with pytest.raises(ValueError, match="does not use final_denoise"):
+        task.sample_standardized(
+            model,
+            batch,
+            steps=2,
+            method="discrete_ancestral",
+            solver="ddpm",
+            sampling_eps=0.0,
+            final_denoise=True,
         )

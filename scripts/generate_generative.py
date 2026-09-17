@@ -184,7 +184,7 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
         "sampler": sampler,
         "model_evaluations": generation["model_evaluations"],
         "initial_state_distribution": "standard_normal_at_t1",
-        "sampling_random_stream": "task_owned_method_specific_deterministic_stream",
+        "sampling_random_stream": "task_owned_deterministic_stream",
         "grid_shape_2d": grid_shape,
         "nodes_per_slice": nodes_per_sample,
         "reference_population": "test",
@@ -294,7 +294,7 @@ def _generate_test_population(
         "sampling_final_denoise": sampling["final_denoise"],
         "sampling_seed": sampling["seed"],
         "initial_state_distribution": "standard_normal_at_t1",
-        "random_stream_semantics": "task_owned_method_specific_deterministic_stream",
+        "random_stream_semantics": "task_owned_deterministic_stream",
         "model_evaluations": nfe,
         "generated_ids": "independent_deterministic_sampling_keys",
         "reference_ids": "held_out_test_sample_ids",
@@ -310,7 +310,12 @@ def _sampling_settings(config: DictConfig) -> dict[str, Any]:
     method = str(config.method)
     solver = str(config.solver)
     sampling_eps = float(config.sampling_eps)
-    if not torch.isfinite(torch.tensor(sampling_eps)) or not 0.0 < sampling_eps < 1.0:
+    if not torch.isfinite(torch.tensor(sampling_eps)):
+        raise ValueError("sampling.sampling_eps must be finite")
+    if method == "discrete_ancestral":
+        if sampling_eps != 0.0:
+            raise ValueError("sampling.sampling_eps must be 0 for discrete_ancestral")
+    elif not 0.0 < sampling_eps < 1.0:
         raise ValueError("sampling.sampling_eps must lie strictly between 0 and 1")
     final_denoise = config.final_denoise
     if not isinstance(final_denoise, bool):
@@ -344,6 +349,12 @@ def _model_evaluations(
         if solver != "euler_maruyama":
             raise ValueError("unsupported reverse-SDE solver")
         evaluations = steps
+    elif method == "discrete_ancestral":
+        if solver != "ddpm":
+            raise ValueError("unsupported discrete ancestral solver")
+        if final_denoise:
+            raise ValueError("discrete ancestral sampling does not use final_denoise")
+        return steps
     else:
         raise ValueError("unsupported generative sampling method")
     return evaluations + int(final_denoise)
