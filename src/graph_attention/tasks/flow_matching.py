@@ -117,6 +117,27 @@ class FlowMatchingTask(NodeRegressionTask):
             "generation": "task.sample_standardized",
         }
 
+    def sampler_name(
+        self,
+        *,
+        steps: int,
+        method: str = "flow_ode",
+        solver: str = "heun",
+        final_denoise: bool = False,
+    ) -> str:
+        """Return a stable label for the common generation artifact path."""
+
+        step_count = _positive_int(steps, "steps")
+        method_name = str(method)
+        solver_name = str(solver)
+        if method_name != "flow_ode":
+            raise ValueError("flow matching generation requires method='flow_ode'")
+        if solver_name not in {"euler", "heun"}:
+            raise ValueError("flow matching solver must be 'euler' or 'heun'")
+        if final_denoise:
+            raise ValueError("flow matching does not use a separate final_denoise step")
+        return f"flow_ode_{solver_name}_steps{step_count}"
+
     @torch.no_grad()
     def sample_standardized(
         self,
@@ -124,19 +145,31 @@ class FlowMatchingTask(NodeRegressionTask):
         batch: NodeRegressionBatch,
         *,
         steps: int,
+        method: str = "flow_ode",
         solver: str = "heun",
+        sampling_eps: float = 0.0,
+        final_denoise: bool = False,
         sampling_seed: int = 5678,
+        sampling_keys: Iterable[str] | None = None,
     ) -> torch.Tensor:
         """Integrate ``dx/dt = v_theta(x,t)`` from deterministic Gaussian sources."""
 
         _validate_state_batch(batch)
         step_count = _positive_int(steps, "steps")
+        method_name = str(method)
         solver_name = str(solver)
+        if method_name != "flow_ode":
+            raise ValueError("flow matching generation requires method='flow_ode'")
         if solver_name not in {"euler", "heun"}:
             raise ValueError("solver must be 'euler' or 'heun'")
+        if float(sampling_eps) != 0.0:
+            raise ValueError("flow matching sampling_eps must be exactly 0.0")
+        if final_denoise:
+            raise ValueError("flow matching does not use a separate final_denoise step")
         seed = _nonnegative_int(sampling_seed, "sampling_seed")
+        keys = _sampling_keys(batch, sampling_keys)
 
-        state = _deterministic_sampling_source(batch, seed)
+        state = _deterministic_sampling_source(batch, seed, keys)
         dt = 1.0 / step_count
         for step in range(step_count):
             t_value = step / step_count
@@ -227,11 +260,33 @@ def _deterministic_validation_inputs(
     return torch.stack(times), torch.cat(sources, dim=0)
 
 
-def _deterministic_sampling_source(batch: NodeRegressionBatch, seed: int) -> torch.Tensor:
+def _sampling_keys(
+    batch: NodeRegressionBatch,
+    sampling_keys: Iterable[str] | None,
+) -> tuple[str, ...]:
+    if sampling_keys is None:
+        keys = tuple(batch.source.sample_ids)
+    else:
+        keys = tuple(sampling_keys)
+    if len(keys) != batch.num_graphs:
+        raise ValueError(
+            "sampling_keys must contain exactly one key per graph: "
+            f"got {len(keys)}, expected {batch.num_graphs}"
+        )
+    if any(not isinstance(value, str) or not value for value in keys):
+        raise ValueError("sampling_keys must contain non-empty strings")
+    return keys
+
+
+def _deterministic_sampling_source(
+    batch: NodeRegressionBatch,
+    seed: int,
+    sampling_keys: tuple[str, ...],
+) -> torch.Tensor:
     sources: list[torch.Tensor] = []
     node_counts = _node_counts(batch)
-    for node_count, sample_id in zip(node_counts, batch.source.sample_ids, strict=True):
-        generator = _sample_generator(batch.inputs.device, seed, "sampling", sample_id)
+    for node_count, sample_key in zip(node_counts, sampling_keys, strict=True):
+        generator = _sample_generator(batch.inputs.device, seed, "sampling", sample_key)
         sources.append(
             torch.randn(
                 (node_count, batch.inputs.shape[1]),
