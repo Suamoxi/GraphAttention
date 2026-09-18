@@ -18,11 +18,11 @@ RUN_ROOT=/scratch/coop/theret/GraphAttention_runs
 RUN_NAME=m24_m12_flow_1000e_h128_l10_h4
 RUN_DIR=${RUN_ROOT}/${RUN_NAME}
 
+# Preferred M24 generation name used by the combined generation+benchmark SLURM.
 GEN_NAME=flow_heun_steps50_seed5678
 GEN_DIR=${RUN_DIR}/generations/${GEN_NAME}
 
 BENCH_ROOT=${RUN_ROOT}/benchmark_m24_flow
-BENCH_DIR=${BENCH_ROOT}/${GEN_NAME}
 
 OLD_FLOW_BENCH=${RUN_ROOT}/benchmark_300e_comparison/m12_flow_l10/m12_dinat_exact2_flow_300e_h128_l10_h4
 M22_BENCH=${RUN_ROOT}/benchmark_m22_edm_karras/edm_karras_heun_steps18_sigmin0p004_sigmax160_rho7_seed5678
@@ -35,12 +35,9 @@ EDM_RELATIVE_DIR=${RELATIVE_ROOT}/${EDM_RELATIVE_NAME}
 
 cd "$REPO"
 
-printf '%s\n' "============================================================"
-printf '%s\n' "M24 - benchmark existing Flow Matching generation"
-printf '%s\n' "============================================================"
-printf 'Generation: %s\n' "$GEN_DIR"
-printf 'Benchmark:  %s\n' "$BENCH_DIR"
-printf '%s\n' "============================================================"
+echo "============================================================"
+echo "M24 - benchmark existing Flow Matching generation"
+echo "============================================================"
 
 echo
 echo "===== Git ====="
@@ -51,6 +48,48 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "ERROR: tracked repository files are modified."
     exit 1
 fi
+
+echo
+echo "===== Locate existing generation ====="
+
+# If the expected generation path is absent, locate an existing generated_test.pt.
+# This covers runs created without output_name, whose directory is typically
+# flow_ode_heun_steps50_eps0_seed5678.
+if [ ! -f "${GEN_DIR}/generated_test.pt" ]; then
+    echo "Expected generation not found at:"
+    echo "  ${GEN_DIR}"
+    echo "Searching under:"
+    echo "  ${RUN_DIR}/generations"
+
+    mapfile -t GENERATION_ARTIFACTS < <(
+        find "${RUN_DIR}/generations"             -mindepth 2             -maxdepth 2             -type f             -name generated_test.pt             -print 2>/dev/null | sort
+    )
+
+    if [ "${#GENERATION_ARTIFACTS[@]}" -eq 0 ]; then
+        echo "ERROR: no generated_test.pt found under ${RUN_DIR}/generations"
+        echo
+        echo "Current generation tree:"
+        find "${RUN_DIR}/generations" -maxdepth 2 -type f -print 2>/dev/null | sort || true
+        exit 1
+    fi
+
+    if [ "${#GENERATION_ARTIFACTS[@]}" -gt 1 ]; then
+        echo "ERROR: multiple generation artifacts found; refusing to guess:"
+        printf '  %s\n' "${GENERATION_ARTIFACTS[@]}"
+        exit 1
+    fi
+
+    GEN_DIR=$(dirname "${GENERATION_ARTIFACTS[0]}")
+    GEN_NAME=$(basename "$GEN_DIR")
+    echo "Using discovered generation:"
+    echo "  ${GEN_DIR}"
+fi
+
+BENCH_DIR=${BENCH_ROOT}/${GEN_NAME}
+
+echo
+echo "Generation: ${GEN_DIR}"
+echo "Benchmark:  ${BENCH_DIR}"
 
 echo
 echo "===== Checking generation artifacts ====="
