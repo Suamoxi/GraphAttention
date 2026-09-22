@@ -156,7 +156,7 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             eps=eps,
         )
 
-    energy_enabled = bool(OmegaConf.select(cfg, "energy_spectrum.enabled", default=True))
+    energy_enabled = bool(OmegaConf.select(cfg, "energy_spectrum.enabled", default=False))
     energy_lower_quantile = float(
         OmegaConf.select(cfg, "energy_spectrum.lower_quantile", default=0.10)
     )
@@ -302,7 +302,7 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
                 dpi=int(cfg.plots.dpi),
             )
         if (
-            bool(OmegaConf.select(cfg, "plots.energy_spectrum", default=True))
+            bool(OmegaConf.select(cfg, "plots.energy_spectrum", default=False))
             and energy_enabled
         ):
             assert energy_k_centers is not None
