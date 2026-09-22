@@ -12,7 +12,15 @@ from torch import nn
 class SparseMultiheadAttention(nn.Module):
     """Scaled dot-product attention restricted to explicitly supplied directed edges."""
 
-    def __init__(self, hidden_dim: int, num_heads: int) -> None:
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int,
+        *,
+        dropout: float = 0.0,
+        qkv_bias: bool = True,
+        out_proj_bias: bool = False,
+    ) -> None:
         super().__init__()
         self.hidden_dim = _positive_count(hidden_dim, "hidden_dim")
         self.num_heads = _positive_count(num_heads, "num_heads")
@@ -21,8 +29,19 @@ class SparseMultiheadAttention(nn.Module):
 
         self.head_dim = self.hidden_dim // self.num_heads
         self.scale = 1.0 / sqrt(self.head_dim)
-        self.qkv = nn.Linear(self.hidden_dim, 3 * self.hidden_dim)
-        self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim, bias=False)
+        self.attention_dropout = float(dropout)
+        if not 0.0 <= self.attention_dropout < 1.0:
+            raise ValueError("dropout must lie in [0, 1)")
+        self.qkv = nn.Linear(
+            self.hidden_dim,
+            3 * self.hidden_dim,
+            bias=bool(qkv_bias),
+        )
+        self.out_proj = nn.Linear(
+            self.hidden_dim,
+            self.hidden_dim,
+            bias=bool(out_proj_bias),
+        )
 
     def forward(self, inputs: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         _validate_hidden_inputs(
@@ -97,6 +116,11 @@ class SparseMultiheadAttention(nn.Module):
         )
         denominator.scatter_add_(0, target_by_head, exp_scores)
         weights = exp_scores / denominator[target]
+        weights = torch.nn.functional.dropout(
+            weights,
+            p=self.attention_dropout,
+            training=self.training,
+        )
 
         messages = weights.to(dtype=value.dtype).unsqueeze(-1) * value[source]
         aggregated = torch.zeros_like(query)
