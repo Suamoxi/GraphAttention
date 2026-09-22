@@ -19,14 +19,19 @@ from .nearest_reference import (
     nearest_reference_diagnostics,
 )
 from .plotting import (
+    save_energy_spectrum_population_plots,
     save_marginal_plots,
     save_nearest_reference_field_examples,
     save_spectrum_plots,
 )
 from .spectra import (
     CartesianGrid2D,
+    energy_spectral_band_rows,
+    energy_spectrum_population_rows,
+    energy_spectrum_sample_rows,
     infer_cartesian_grid_2d,
     sample_radial_spectra,
+    sample_velocity_energy_spectra,
     spectral_band_rows,
 )
 
@@ -151,6 +156,68 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             eps=eps,
         )
 
+    energy_enabled = bool(OmegaConf.select(cfg, "energy_spectrum.enabled", default=True))
+    energy_lower_quantile = float(
+        OmegaConf.select(cfg, "energy_spectrum.lower_quantile", default=0.10)
+    )
+    energy_upper_quantile = float(
+        OmegaConf.select(cfg, "energy_spectrum.upper_quantile", default=0.90)
+    )
+    energy_sample_rows: list[dict[str, Any]] = []
+    energy_summary_rows: list[dict[str, Any]] = []
+    energy_band_rows: list[dict[str, Any]] = []
+    generated_sample_energy: np.ndarray | None = None
+    reference_sample_energy: np.ndarray | None = None
+    energy_k_centers: np.ndarray | None = None
+    if energy_enabled:
+        energy_k_centers, generated_sample_energy = sample_velocity_energy_spectra(
+            generated,
+            grid,
+            channel_names,
+            num_k_bins=int(cfg.spectra.num_k_bins),
+            subtract_mean=True,
+        )
+        reference_energy_centers, reference_sample_energy = sample_velocity_energy_spectra(
+            reference,
+            grid,
+            channel_names,
+            num_k_bins=int(cfg.spectra.num_k_bins),
+            subtract_mean=True,
+        )
+        np.testing.assert_allclose(
+            energy_k_centers,
+            reference_energy_centers,
+            rtol=0.0,
+            atol=0.0,
+        )
+        energy_sample_rows = energy_spectrum_sample_rows(
+            generated_sample_energy,
+            reference_sample_energy,
+            energy_k_centers,
+            generation_keys,
+            reference_ids,
+            k_nyquist=grid.k_nyquist_min,
+        )
+        energy_summary_rows = energy_spectrum_population_rows(
+            generated_sample_energy,
+            reference_sample_energy,
+            energy_k_centers,
+            k_nyquist=grid.k_nyquist_min,
+            eps=eps,
+            lower_quantile=energy_lower_quantile,
+            upper_quantile=energy_upper_quantile,
+        )
+        energy_band_rows = energy_spectral_band_rows(
+            generated_sample_energy,
+            reference_sample_energy,
+            energy_k_centers,
+            k_nyquist=grid.k_nyquist_min,
+            bands=bands,
+            eps=eps,
+            lower_quantile=energy_lower_quantile,
+            upper_quantile=energy_upper_quantile,
+        )
+
     nearest_rows: list[dict[str, Any]] = []
     nearest_summary: dict[str, Any] | None = None
     nearest_indices: np.ndarray | None = None
@@ -205,6 +272,9 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
     _write_csv(output_dir / "spectral_bands.csv", band_rows)
     _write_csv(output_dir / "nearest_reference.csv", nearest_rows)
     _write_csv(output_dir / "physical_metrics.csv", physical_rows)
+    _write_csv(output_dir / "energy_spectrum_per_sample.csv", energy_sample_rows)
+    _write_csv(output_dir / "energy_spectrum_summary.csv", energy_summary_rows)
+    _write_csv(output_dir / "energy_spectral_bands.csv", energy_band_rows)
 
     if bool(cfg.plots.enabled):
         plot_root = output_dir / "plots"
@@ -230,6 +300,24 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
                 k_nyquist=grid.k_nyquist_min,
                 eps=eps,
                 dpi=int(cfg.plots.dpi),
+            )
+        if (
+            bool(OmegaConf.select(cfg, "plots.energy_spectrum", default=True))
+            and energy_enabled
+        ):
+            assert energy_k_centers is not None
+            assert generated_sample_energy is not None
+            assert reference_sample_energy is not None
+            save_energy_spectrum_population_plots(
+                energy_k_centers,
+                generated_sample_energy,
+                reference_sample_energy,
+                plot_root / "energy_spectrum",
+                k_nyquist=grid.k_nyquist_min,
+                eps=eps,
+                dpi=int(cfg.plots.dpi),
+                lower_quantile=energy_lower_quantile,
+                upper_quantile=energy_upper_quantile,
             )
         if bool(cfg.plots.fields):
             assert nearest_indices is not None
@@ -294,6 +382,13 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
         "nearest_reference": nearest_summary,
         "channel_summary": _channel_summary(channel_rows, band_rows),
         "physical_summary": _physical_summary(physical_rows),
+        "energy_spectrum": _energy_spectrum_summary(
+            energy_summary_rows,
+            energy_band_rows,
+            enabled=energy_enabled,
+            lower_quantile=energy_lower_quantile,
+            upper_quantile=energy_upper_quantile,
+        ),
         "outputs": {
             "channel_metrics": "channel_metrics.csv",
             "sample_statistics": "sample_statistics.csv",
@@ -302,6 +397,15 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             "spectral_bands": "spectral_bands.csv",
             "nearest_reference": "nearest_reference.csv",
             "physical_metrics": "physical_metrics.csv",
+            "energy_spectrum_per_sample": (
+                "energy_spectrum_per_sample.csv" if energy_enabled else None
+            ),
+            "energy_spectrum_summary": (
+                "energy_spectrum_summary.csv" if energy_enabled else None
+            ),
+            "energy_spectral_bands": (
+                "energy_spectral_bands.csv" if energy_enabled else None
+            ),
             "plots": "plots" if bool(cfg.plots.enabled) else None,
         },
     }
@@ -728,6 +832,69 @@ def _physical_summary(rows: list[dict[str, float | str]]) -> dict[str, Any]:
             "generated_over_reference": _finite_or_none(float(row["generated_over_reference"])),
         }
         for row in rows
+    }
+
+
+def _energy_spectrum_summary(
+    rows: list[dict[str, Any]],
+    band_rows: list[dict[str, Any]],
+    *,
+    enabled: bool,
+    lower_quantile: float,
+    upper_quantile: float,
+) -> dict[str, Any]:
+    if not enabled:
+        return {"enabled": False}
+    if not rows:
+        raise ValueError("enabled energy spectrum requires population summary rows")
+
+    mean_log_errors: list[float] = []
+    median_log_errors: list[float] = []
+    for row in rows:
+        generated_mean = float(row["generated_mean"])
+        reference_mean = float(row["reference_mean"])
+        generated_median = float(row["generated_median"])
+        reference_median = float(row["reference_median"])
+        if generated_mean > 0.0 and reference_mean > 0.0:
+            mean_log_errors.append(math.log(generated_mean / reference_mean))
+        if generated_median > 0.0 and reference_median > 0.0:
+            median_log_errors.append(math.log(generated_median / reference_median))
+
+    return {
+        "enabled": True,
+        "definition": "velocity_based_2d_slice_specific_kinetic_energy_spectrum",
+        "velocity_definition": "u=rhou/rho, v=rhov/rho, w=rhow/rho",
+        "subtract_component_mean_per_snapshot": True,
+        "population_interval": [
+            lower_quantile,
+            upper_quantile,
+        ],
+        "central_aggregations": ["mean", "median"],
+        "mean_rms_log_error": (
+            float(np.sqrt(np.mean(np.square(mean_log_errors))))
+            if mean_log_errors
+            else None
+        ),
+        "median_rms_log_error": (
+            float(np.sqrt(np.mean(np.square(median_log_errors))))
+            if median_log_errors
+            else None
+        ),
+        "bands": {
+            str(row["band"]): {
+                "generated_mean_over_reference": _finite_or_none(
+                    float(row["generated_mean_over_reference"])
+                ),
+                "generated_median_over_reference": _finite_or_none(
+                    float(row["generated_median_over_reference"])
+                ),
+                "generated_q10": _finite_or_none(float(row["generated_q10"])),
+                "generated_q90": _finite_or_none(float(row["generated_q90"])),
+                "reference_q10": _finite_or_none(float(row["reference_q10"])),
+                "reference_q90": _finite_or_none(float(row["reference_q90"])),
+            }
+            for row in band_rows
+        },
     }
 
 
