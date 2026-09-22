@@ -33,6 +33,7 @@ class FlowMatchingTask(NodeRegressionTask):
         conditioning_parameters: Iterable[str] = (),
         physical_nondimensionalization: bool = False,
         validation_seed: int = 1234,
+        time_embedding_scale: float = 1.0,
     ) -> None:
         if isinstance(state_fields, str):
             raise TypeError("state_fields must be an iterable of field names, not one string")
@@ -45,6 +46,11 @@ class FlowMatchingTask(NodeRegressionTask):
         )
         self.state_fields = self.input_fields
         self.validation_seed = _nonnegative_int(validation_seed, "validation_seed")
+        self.time_embedding_scale = float(time_embedding_scale)
+        if not torch.isfinite(torch.tensor(self.time_embedding_scale)):
+            raise ValueError("time_embedding_scale must be finite")
+        if self.time_embedding_scale <= 0.0:
+            raise ValueError("time_embedding_scale must be positive")
 
     def make_training_problem(
         self,
@@ -67,7 +73,12 @@ class FlowMatchingTask(NodeRegressionTask):
             dtype=batch.inputs.dtype,
             generator=generator,
         )
-        return _flow_problem(batch, times, source)
+        return _flow_problem(
+            batch,
+            times,
+            source,
+            time_embedding_scale=self.time_embedding_scale,
+        )
 
     def make_validation_problem(self, batch: NodeRegressionBatch) -> NodeRegressionBatch:
         """Construct deterministic path points keyed only by validation seed and sample ID."""
@@ -111,7 +122,8 @@ class FlowMatchingTask(NodeRegressionTask):
             "task": "linear_gaussian_flow_matching",
             "prediction_type": "velocity",
             "training_time_distribution": "t ~ Uniform(0,1)",
-            "time_conditioning": "raw_scalar_t_in_[0,1]",
+            "time_conditioning": "scaled_scalar_time",
+            "time_embedding_scale": self.time_embedding_scale,
             "path": "x_t=(1-t)*x_source+t*x_data",
             "target_velocity": "x_data-x_source",
             "generation": "task.sample_standardized",
@@ -179,7 +191,13 @@ class FlowMatchingTask(NodeRegressionTask):
                 dtype=state.dtype,
                 device=state.device,
             )
-            k1 = _model_velocity(model, batch, state, times)
+            k1 = _model_velocity(
+                model,
+                batch,
+                state,
+                times,
+                time_embedding_scale=self.time_embedding_scale,
+            )
             if solver_name == "euler":
                 state = state + dt * k1
                 continue
@@ -191,7 +209,13 @@ class FlowMatchingTask(NodeRegressionTask):
                 dtype=state.dtype,
                 device=state.device,
             )
-            k2 = _model_velocity(model, batch, predictor, next_times)
+            k2 = _model_velocity(
+                model,
+                batch,
+                predictor,
+                next_times,
+                time_embedding_scale=self.time_embedding_scale,
+            )
             state = state + 0.5 * dt * (k1 + k2)
 
         if not torch.isfinite(state).all():
@@ -203,6 +227,8 @@ def _flow_problem(
     batch: NodeRegressionBatch,
     times: torch.Tensor,
     source: torch.Tensor,
+    *,
+    time_embedding_scale: float,
 ) -> NodeRegressionBatch:
     if times.shape != (batch.num_graphs,) or not times.is_floating_point():
         raise ValueError(f"times must have floating shape [{batch.num_graphs}]")
@@ -216,7 +242,11 @@ def _flow_problem(
     node_times = times[batch.batch_index].unsqueeze(1)
     state = (1.0 - node_times) * source + node_times * batch.inputs
     velocity = batch.inputs - source
-    conditioning = _time_conditioning(batch, times)
+    conditioning = _time_conditioning(
+        batch,
+        times,
+        time_embedding_scale=time_embedding_scale,
+    )
     velocity_channels = tuple(f"d_dt:{name}" for name in batch.input_channels)
     return replace(
         batch,
@@ -228,8 +258,14 @@ def _flow_problem(
     )
 
 
-def _time_conditioning(batch: NodeRegressionBatch, times: torch.Tensor) -> torch.Tensor:
-    return torch.cat((batch.conditioning, times.unsqueeze(1)), dim=1)
+def _time_conditioning(
+    batch: NodeRegressionBatch,
+    times: torch.Tensor,
+    *,
+    time_embedding_scale: float,
+) -> torch.Tensor:
+    scaled_times = times * time_embedding_scale
+    return torch.cat((batch.conditioning, scaled_times.unsqueeze(1)), dim=1)
 
 
 def _deterministic_validation_inputs(
@@ -322,8 +358,14 @@ def _model_velocity(
     batch: NodeRegressionBatch,
     state: torch.Tensor,
     times: torch.Tensor,
+    *,
+    time_embedding_scale: float,
 ) -> torch.Tensor:
-    conditioning = _time_conditioning(batch, times)
+    conditioning = _time_conditioning(
+        batch,
+        times,
+        time_embedding_scale=time_embedding_scale,
+    )
     model_kwargs = {
         "edge_index": batch.edge_index,
         "coords": batch.coords,
