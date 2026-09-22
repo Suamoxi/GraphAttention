@@ -70,6 +70,13 @@ def test_diffusion_training_problem_matches_forward_process_and_graph_time() -> 
     assert problem.target_channels == tuple(f"epsilon:{name}" for name in batch.input_channels)
 
 
+def test_diffusion_model_probe_is_the_problem_batch() -> None:
+    task, _, batch = _batch()
+    problem = task.make_validation_problem(batch)
+
+    assert task.make_model_probe(problem) is problem
+
+
 def test_diffusion_validation_is_sample_id_deterministic_across_batch_order() -> None:
     task, dataset, _ = _batch()
     forward = task.make_validation_problem(
