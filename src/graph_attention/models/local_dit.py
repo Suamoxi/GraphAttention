@@ -34,12 +34,15 @@ class LocalDiTGraphTransformer(_BaseDiTGraphTransformer):
         num_layers: int,
         spatial_dim: int,
         mlp_ratio: int = 4,
+        dropout: float = 0.0,
         conditioning_channels: int = 0,
         condition_embed_dim: int = 128,
         use_coord_mlp: bool = True,
         coordinate_normalization: str = "centered_bbox",
         coordinate_normalization_eps: float = 1.0e-8,
         use_sdpa: bool = True,
+        qkv_bias: bool = True,
+        out_proj_bias: bool = False,
     ) -> None:
         # Kept in the public signature so Full/Local configs can remain identical.
         del use_sdpa
@@ -50,9 +53,16 @@ class LocalDiTGraphTransformer(_BaseDiTGraphTransformer):
             num_heads=num_heads,
             num_layers=num_layers,
             spatial_dim=spatial_dim,
-            attention_factory=lambda dim, heads: LocalDiTMultiheadAttention(dim, heads),
+            attention_factory=lambda dim, heads: LocalDiTMultiheadAttention(
+                dim,
+                heads,
+                dropout=dropout,
+                qkv_bias=qkv_bias,
+                out_proj_bias=out_proj_bias,
+            ),
             uses_local_edges=True,
             mlp_ratio=mlp_ratio,
+            dropout=dropout,
             conditioning_channels=conditioning_channels,
             condition_embed_dim=condition_embed_dim,
             use_coord_mlp=use_coord_mlp,
