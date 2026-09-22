@@ -142,7 +142,11 @@ def _instantiate_matched_dit(
         attention_mode = "alternating_local_exact2hop_geometric"
 
     metadata = {
-        "policy": "matched_dit_shared_initialization",
+        "policy": (
+            "matched_full_local_dit_initialization"
+            if target in {_FULL_DIT_TARGET, _LOCAL_DIT_TARGET}
+            else "matched_full_dit_shared_parameters_plus_dinat_geometry"
+        ),
         "shared_parameter_seed": seed,
         "architecture_family": "dit_adaln_zero",
         "coordinate_conditioning": "absolute_centered_bbox",
@@ -181,7 +185,6 @@ def _instantiate_matched_dit(
         )
     metadata.update(
         {
-            "policy": "matched_full_dit_shared_parameters_plus_dinat_geometry",
             "geometry_parameter_seed": geometry_seed,
             "geometry_parameter_names": expected_geometry_keys,
             "layer_topology_schedule": "local_exact2hop_alternating_local_first",
