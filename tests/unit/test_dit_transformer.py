@@ -183,3 +183,29 @@ def test_dit_factory_matches_full_and_local_initialization_for_edm() -> None:
         rtol=0.0,
         atol=0.0,
     )
+
+
+def test_diffusion4avbp_matched_full_dit_parameter_count() -> None:
+    model = FullDiTGraphTransformer(
+        in_channels=5,
+        out_channels=5,
+        hidden_dim=128,
+        num_heads=4,
+        num_layers=6,
+        spatial_dim=2,
+        mlp_ratio=4,
+        dropout=0.1,
+        conditioning_channels=1,
+        condition_embed_dim=256,
+        use_coord_mlp=True,
+        coordinate_normalization="centered_bbox",
+        coordinate_normalization_eps=1.0e-8,
+        use_sdpa=True,
+        qkv_bias=True,
+        out_proj_bias=True,
+    )
+
+    assert sum(parameter.numel() for parameter in model.parameters()) == 1_881_733
+    assert model.blocks[0].attention.out_proj.bias is not None
+    assert isinstance(model.blocks[0].mlp[2], torch.nn.Dropout)
+    assert model.blocks[0].mlp[2].p == 0.1
