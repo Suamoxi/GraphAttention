@@ -21,8 +21,23 @@ from .sparse_transformer import (
 class GeometricSparseMultiheadAttention(SparseMultiheadAttention):
     """Sparse attention with a learned per-head bias from relative displacement."""
 
-    def __init__(self, hidden_dim: int, num_heads: int, spatial_dim: int) -> None:
-        super().__init__(hidden_dim=hidden_dim, num_heads=num_heads)
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int,
+        spatial_dim: int,
+        *,
+        dropout: float = 0.0,
+        qkv_bias: bool = True,
+        out_proj_bias: bool = False,
+    ) -> None:
+        super().__init__(
+            hidden_dim=hidden_dim,
+            num_heads=num_heads,
+            dropout=dropout,
+            qkv_bias=qkv_bias,
+            out_proj_bias=out_proj_bias,
+        )
         self.spatial_dim = _positive_count(spatial_dim, "spatial_dim")
         self.geometry_mlp = nn.Sequential(
             nn.Linear(self.spatial_dim, self.num_heads),
