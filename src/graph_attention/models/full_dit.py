@@ -21,6 +21,9 @@ class FullDiTMultiheadAttention(nn.Module):
         num_heads: int,
         *,
         use_sdpa: bool = True,
+        dropout: float = 0.0,
+        qkv_bias: bool = True,
+        out_proj_bias: bool = False,
     ) -> None:
         super().__init__()
         self.hidden_dim = _positive_count(hidden_dim, "hidden_dim")
@@ -31,10 +34,21 @@ class FullDiTMultiheadAttention(nn.Module):
         self.head_dim = self.hidden_dim // self.num_heads
         self.scale = 1.0 / sqrt(self.head_dim)
         self.use_sdpa = bool(use_sdpa)
+        self.attention_dropout = float(dropout)
+        if not 0.0 <= self.attention_dropout < 1.0:
+            raise ValueError("dropout must lie in [0, 1)")
 
-        # Names/shapes intentionally match LocalDiTMultiheadAttention.
-        self.qkv = nn.Linear(self.hidden_dim, 3 * self.hidden_dim)
-        self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim, bias=False)
+        # Fused qkv is parameter-equivalent to independent q/k/v projections.
+        self.qkv = nn.Linear(
+            self.hidden_dim,
+            3 * self.hidden_dim,
+            bias=bool(qkv_bias),
+        )
+        self.out_proj = nn.Linear(
+            self.hidden_dim,
+            self.hidden_dim,
+            bias=bool(out_proj_bias),
+        )
 
     def forward(
         self,
@@ -95,12 +109,17 @@ class FullDiTMultiheadAttention(nn.Module):
                 key,
                 value,
                 attn_mask=None,
-                dropout_p=0.0,
+                dropout_p=self.attention_dropout if self.training else 0.0,
                 is_causal=False,
             )
         else:
             scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale
             weights = torch.softmax(scores, dim=-1)
+            weights = F.dropout(
+                weights,
+                p=self.attention_dropout,
+                training=self.training,
+            )
             output = torch.matmul(weights, value)
 
         output = output.transpose(1, 2).contiguous().reshape(
@@ -123,12 +142,15 @@ class FullDiTGraphTransformer(_BaseDiTGraphTransformer):
         num_layers: int,
         spatial_dim: int,
         mlp_ratio: int = 4,
+        dropout: float = 0.0,
         conditioning_channels: int = 0,
         condition_embed_dim: int = 128,
         use_coord_mlp: bool = True,
         coordinate_normalization: str = "centered_bbox",
         coordinate_normalization_eps: float = 1.0e-8,
         use_sdpa: bool = True,
+        qkv_bias: bool = True,
+        out_proj_bias: bool = False,
     ) -> None:
         super().__init__(
             in_channels=in_channels,
@@ -141,9 +163,13 @@ class FullDiTGraphTransformer(_BaseDiTGraphTransformer):
                 dim,
                 heads,
                 use_sdpa=use_sdpa,
+                dropout=dropout,
+                qkv_bias=qkv_bias,
+                out_proj_bias=out_proj_bias,
             ),
             uses_local_edges=False,
             mlp_ratio=mlp_ratio,
+            dropout=dropout,
             conditioning_channels=conditioning_channels,
             condition_embed_dim=condition_embed_dim,
             use_coord_mlp=use_coord_mlp,
