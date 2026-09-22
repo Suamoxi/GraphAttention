@@ -116,6 +116,13 @@ class DiffusionDenoisingTask(NodeRegressionTask):
             torch.cat(noise_parts, dim=0),
         )
 
+    def make_model_probe(self, problem: NodeRegressionBatch) -> NodeRegressionBatch:
+        """Return the already model-facing DDPM batch."""
+
+        if not isinstance(problem, NodeRegressionBatch):
+            raise TypeError("DDPM problem must be a NodeRegressionBatch")
+        return problem
+
     @torch.no_grad()
     def sample_standardized(
         self,
