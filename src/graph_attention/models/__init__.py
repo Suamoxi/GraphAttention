@@ -2,6 +2,7 @@
 
 from .baseline import NodeLinearBaseline
 from .dilated_transformer import AlternatingDilatedGeometricSparseGraphTransformer
+from .dinat_dit import AlternatingDilatedGeometricDiT, DiNATDiTMultiheadAttention
 from .full_dit import FullDiTGraphTransformer, FullDiTMultiheadAttention
 from .geometric_transformer import (
     GeometricSparseGraphTransformer,
@@ -11,7 +12,9 @@ from .local_dit import LocalDiTGraphTransformer, LocalDiTMultiheadAttention
 from .sparse_transformer import SparseGraphTransformer, SparseMultiheadAttention
 
 __all__ = [
+    "AlternatingDilatedGeometricDiT",
     "AlternatingDilatedGeometricSparseGraphTransformer",
+    "DiNATDiTMultiheadAttention",
     "FullDiTGraphTransformer",
     "FullDiTMultiheadAttention",
     "GeometricSparseGraphTransformer",
