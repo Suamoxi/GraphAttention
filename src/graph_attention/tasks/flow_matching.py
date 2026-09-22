@@ -85,7 +85,12 @@ class FlowMatchingTask(NodeRegressionTask):
 
         _validate_state_batch(batch)
         times, source = _deterministic_validation_inputs(batch, self.validation_seed)
-        return _flow_problem(batch, times, source)
+        return _flow_problem(
+            batch,
+            times,
+            source,
+            time_embedding_scale=self.time_embedding_scale,
+        )
 
     def make_model_probe(self, problem: NodeRegressionBatch) -> NodeRegressionBatch:
         """Expose the model-facing batch for the common generative runner."""
