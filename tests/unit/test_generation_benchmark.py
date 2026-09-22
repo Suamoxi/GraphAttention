@@ -13,7 +13,10 @@ from graph_attention.evaluation import (
 )
 from graph_attention.evaluation.generation_benchmark import _fixed_mesh_samples
 from graph_attention.evaluation.nearest_reference import nearest_reference_diagnostics
-from graph_attention.evaluation.spectra import scatter_to_grid
+from graph_attention.evaluation.spectra import (
+    sample_velocity_energy_spectra,
+    scatter_to_grid,
+)
 
 
 def test_empirical_wasserstein_1_equal_size_samples() -> None:
@@ -37,6 +40,31 @@ def test_cartesian_grid_inference_handles_permuted_node_order() -> None:
     field = scatter_to_grid(canonical_linear_index, grid)
 
     np.testing.assert_array_equal(field, np.arange(12).reshape(3, 4))
+
+
+def test_velocity_energy_spectrum_recovers_resolved_tke_for_axis_mode() -> None:
+    nx = ny = 8
+    x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing="ij")
+    coords = np.column_stack((x.reshape(-1), y.reshape(-1))).astype(np.float64)
+    grid = infer_cartesian_grid_2d(coords, shape_hint=(nx, ny))
+
+    u = np.sin(2.0 * np.pi * x / nx).reshape(-1)
+    zeros = np.zeros_like(u)
+    rho = np.ones_like(u)
+    sample = np.stack((rho, rho * u, rho * zeros, rho * zeros, 10.0 * rho), axis=1)
+    samples = sample[None, ...]
+    channel_names = ("rho.value", "rhou.x", "rhov.y", "rhow.z", "rhoE.value")
+
+    _, energy = sample_velocity_energy_spectra(
+        samples,
+        grid,
+        channel_names,
+        num_k_bins=8,
+        subtract_mean=True,
+    )
+
+    expected_tke = 0.5 * np.mean(u**2)
+    assert float(np.sum(energy[0])) == pytest.approx(expected_tke)
 
 
 def test_nearest_reference_uses_unpaired_descriptor_distance() -> None:
@@ -200,10 +228,18 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
     assert (output_dir / "spectral_bands.csv").stat().st_size > 0
     assert (output_dir / "nearest_reference.csv").stat().st_size > 0
     assert (output_dir / "physical_metrics.csv").stat().st_size > 0
+    assert (output_dir / "energy_spectrum_per_sample.csv").stat().st_size > 0
+    assert (output_dir / "energy_spectrum_summary.csv").stat().st_size > 0
+    assert (output_dir / "energy_spectral_bands.csv").stat().st_size > 0
     assert summary["channel_summary"]["rhou.x"]["wasserstein_1"] > 0.0
     assert summary["nearest_reference"]["generated_to_test"]["mean"] >= 0.0
     assert summary["physical_summary"]["u_mean"]["generated_over_reference"] is None
     assert summary["physical_summary"]["u_mean"]["normalized_difference"] is not None
+    assert summary["energy_spectrum"]["enabled"] is True
+    assert summary["energy_spectrum"]["population_interval"] == [0.1, 0.9]
+    assert summary["energy_spectrum"]["central_aggregations"] == ["mean", "median"]
+    assert summary["energy_spectrum"]["mean_rms_log_error"] is not None
+    assert summary["energy_spectrum"]["median_rms_log_error"] is not None
 
     with pytest.raises(FileExistsError, match="overwrite=true"):
         run_generation_benchmark(cfg)
