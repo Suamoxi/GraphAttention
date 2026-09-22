@@ -32,10 +32,14 @@ class DiTBlock(nn.Module):
         *,
         mlp_ratio: int,
         attention: nn.Module,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
         hidden = _positive_count(hidden_dim, "hidden_dim")
         ratio = _positive_count(mlp_ratio, "mlp_ratio")
+        dropout_probability = float(dropout)
+        if not 0.0 <= dropout_probability < 1.0:
+            raise ValueError("dropout must lie in [0, 1)")
 
         self.norm1 = nn.LayerNorm(hidden, elementwise_affine=False, eps=1.0e-6)
         self.attention = attention
@@ -43,6 +47,7 @@ class DiTBlock(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(hidden, hidden * ratio),
             nn.GELU(approximate="tanh"),
+            nn.Dropout(dropout_probability),
             nn.Linear(hidden * ratio, hidden),
         )
         self.adaLN_modulation = nn.Sequential(
@@ -130,6 +135,7 @@ class _BaseDiTGraphTransformer(nn.Module):
         attention_factory: Callable[[int, int], nn.Module],
         uses_local_edges: bool,
         mlp_ratio: int = 4,
+        dropout: float = 0.0,
         conditioning_channels: int = 0,
         condition_embed_dim: int = 128,
         use_coord_mlp: bool = True,
@@ -144,6 +150,9 @@ class _BaseDiTGraphTransformer(nn.Module):
         self.num_layers = _positive_count(num_layers, "num_layers")
         self.spatial_dim = _positive_count(spatial_dim, "spatial_dim")
         self.mlp_ratio = _positive_count(mlp_ratio, "mlp_ratio")
+        self.dropout = float(dropout)
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError("dropout must lie in [0, 1)")
         self.conditioning_channels = _nonnegative_count(
             conditioning_channels,
             "conditioning_channels",
@@ -192,6 +201,7 @@ class _BaseDiTGraphTransformer(nn.Module):
                 self.hidden_dim,
                 mlp_ratio=self.mlp_ratio,
                 attention=attention_factory(self.hidden_dim, self.num_heads),
+                dropout=self.dropout,
             )
             for _ in range(self.num_layers)
         )
