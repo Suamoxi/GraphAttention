@@ -125,6 +125,9 @@ def _instantiate_matched_dit(
             model_cfg.get("coordinate_normalization_eps", 1.0e-8)
         ),
         "use_sdpa": bool(model_cfg.get("use_sdpa", True)),
+        "dropout": float(model_cfg.get("dropout", 0.0)),
+        "qkv_bias": bool(model_cfg.get("qkv_bias", True)),
+        "out_proj_bias": bool(model_cfg.get("out_proj_bias", False)),
     }
 
     torch.manual_seed(seed)
