@@ -18,6 +18,11 @@ spectra:
     mid: [0.25, 0.5]
     high: [0.5, 1.0]
 
+energy_spectrum:
+  enabled: true
+  lower_quantile: 0.10
+  upper_quantile: 0.90
+
 nearest_reference:
   enabled: true
   include_channel_correlations: true
@@ -30,6 +35,7 @@ plots:
   enabled: true
   marginals: true
   spectra: true
+  energy_spectrum: true
   fields: true
   marginal_bins: 128
   num_field_examples: 2
