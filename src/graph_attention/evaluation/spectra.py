@@ -199,6 +199,7 @@ def sample_velocity_energy_spectra(
     centers, valid, bin_index = _radial_bins(grid, bins)
     spectrum = np.zeros((values.shape[0], bins), dtype=np.float64)
     num_grid_points = float(expected_nodes)
+    delta_k = float(grid.k_nyquist_min) / float(bins)
 
     for sample_index in range(values.shape[0]):
         mode_energy = np.zeros(grid.shape, dtype=np.float64)
@@ -208,11 +209,12 @@ def sample_velocity_energy_spectra(
                 field = field - float(np.mean(field))
             transformed = np.fft.fft2(field, norm="ortho")
             mode_energy += 0.5 * np.abs(transformed) ** 2 / num_grid_points
-        spectrum[sample_index] = np.bincount(
+        shell_energy = np.bincount(
             bin_index,
             weights=mode_energy[valid],
             minlength=bins,
         )[:bins]
+        spectrum[sample_index] = shell_energy / delta_k
 
     return centers, spectrum
 
@@ -341,13 +343,14 @@ def energy_spectral_band_rows(
         raise ValueError("energy spectra do not match k centers")
 
     fraction = centers / float(k_nyquist)
+    delta_k = float(k_nyquist) / float(centers.size)
     rows: list[dict[str, float | str]] = []
     for band_name, (lower, upper) in bands.items():
         mask = (fraction >= lower) & (fraction < upper)
         if upper == 1.0:
             mask = (fraction >= lower) & (fraction <= upper)
-        generated_band = np.sum(generated[:, mask], axis=1)
-        reference_band = np.sum(reference[:, mask], axis=1)
+        generated_band = np.sum(generated[:, mask], axis=1) * delta_k
+        reference_band = np.sum(reference[:, mask], axis=1) * delta_k
 
         generated_mean = float(np.mean(generated_band))
         reference_mean = float(np.mean(reference_band))
