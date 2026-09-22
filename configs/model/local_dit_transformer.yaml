@@ -1,4 +1,4 @@
-_target_: graph_attention.models.LocalDiTGraphTransformer
+_target_: graph_attention.models.local_dit.LocalDiTGraphTransformer
 in_channels: 2
 out_channels: 1
 hidden_dim: 64

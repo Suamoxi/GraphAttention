@@ -9,8 +9,12 @@ def test_full_and_local_dit_configs_match_except_target() -> None:
         full = compose(config_name="config", overrides=["model=full_dit_transformer"])
         local = compose(config_name="config", overrides=["model=local_dit_transformer"])
 
-    assert full.model._target_ == "graph_attention.models.FullDiTGraphTransformer"
-    assert local.model._target_ == "graph_attention.models.LocalDiTGraphTransformer"
+    assert full.model._target_ == (
+        "graph_attention.models.full_dit.FullDiTGraphTransformer"
+    )
+    assert local.model._target_ == (
+        "graph_attention.models.local_dit.LocalDiTGraphTransformer"
+    )
 
     full_values = dict(full.model)
     local_values = dict(local.model)

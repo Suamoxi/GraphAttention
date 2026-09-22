@@ -19,8 +19,8 @@ from graph_attention.tasks import NodeRegressionBatch
 _M8_TARGET = "graph_attention.models.SparseGraphTransformer"
 _M9_TARGET = "graph_attention.models.GeometricSparseGraphTransformer"
 _M12_DILATED_TARGET = "graph_attention.models.AlternatingDilatedGeometricSparseGraphTransformer"
-_FULL_DIT_TARGET = "graph_attention.models.FullDiTGraphTransformer"
-_LOCAL_DIT_TARGET = "graph_attention.models.LocalDiTGraphTransformer"
+_FULL_DIT_TARGET = "graph_attention.models.full_dit.FullDiTGraphTransformer"
+_LOCAL_DIT_TARGET = "graph_attention.models.local_dit.LocalDiTGraphTransformer"
 
 
 def instantiate_controlled_model(

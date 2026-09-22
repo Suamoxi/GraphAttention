@@ -2,9 +2,11 @@ import torch
 from omegaconf import OmegaConf
 
 from graph_attention.data import SyntheticMeshDataset
-from graph_attention.models import (
+from graph_attention.models.full_dit import (
     FullDiTGraphTransformer,
     FullDiTMultiheadAttention,
+)
+from graph_attention.models.local_dit import (
     LocalDiTGraphTransformer,
     LocalDiTMultiheadAttention,
 )
@@ -33,6 +35,11 @@ def _model_kwargs() -> dict[str, object]:
         "coordinate_normalization": "centered_bbox",
         "use_sdpa": False,
     }
+
+
+def test_full_and_local_dit_are_separate_model_modules() -> None:
+    assert FullDiTGraphTransformer.__module__ == "graph_attention.models.full_dit"
+    assert LocalDiTGraphTransformer.__module__ == "graph_attention.models.local_dit"
 
 
 def test_full_and_local_attention_match_on_complete_graph() -> None:
@@ -123,13 +130,13 @@ def test_dit_factory_matches_full_and_local_initialization_for_edm() -> None:
     }
     full_cfg = OmegaConf.create(
         {
-            "_target_": "graph_attention.models.FullDiTGraphTransformer",
+            "_target_": "graph_attention.models.full_dit.FullDiTGraphTransformer",
             **common,
         }
     )
     local_cfg = OmegaConf.create(
         {
-            "_target_": "graph_attention.models.LocalDiTGraphTransformer",
+            "_target_": "graph_attention.models.local_dit.LocalDiTGraphTransformer",
             **common,
         }
     )
@@ -140,7 +147,12 @@ def test_dit_factory_matches_full_and_local_initialization_for_edm() -> None:
     assert full_metadata["policy"] == "matched_full_local_dit_initialization"
     assert local_metadata["policy"] == "matched_full_local_dit_initialization"
     for name, full_value in full.state_dict().items():
-        torch.testing.assert_close(full_value, local.state_dict()[name], rtol=0.0, atol=0.0)
+        torch.testing.assert_close(
+            full_value,
+            local.state_dict()[name],
+            rtol=0.0,
+            atol=0.0,
+        )
 
     full_output = full(
         problem.model_batch.inputs,
@@ -159,5 +171,15 @@ def test_dit_factory_matches_full_and_local_initialization_for_edm() -> None:
 
     assert full_output.shape == problem.model_batch.inputs.shape
     assert local_output.shape == problem.model_batch.inputs.shape
-    torch.testing.assert_close(full_output, torch.zeros_like(full_output), rtol=0.0, atol=0.0)
-    torch.testing.assert_close(local_output, torch.zeros_like(local_output), rtol=0.0, atol=0.0)
+    torch.testing.assert_close(
+        full_output,
+        torch.zeros_like(full_output),
+        rtol=0.0,
+        atol=0.0,
+    )
+    torch.testing.assert_close(
+        local_output,
+        torch.zeros_like(local_output),
+        rtol=0.0,
+        atol=0.0,
+    )

@@ -1,4 +1,4 @@
-_target_: graph_attention.models.FullDiTGraphTransformer
+_target_: graph_attention.models.full_dit.FullDiTGraphTransformer
 in_channels: 2
 out_channels: 1
 hidden_dim: 64

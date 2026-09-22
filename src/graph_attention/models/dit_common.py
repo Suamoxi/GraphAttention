@@ -1,19 +1,16 @@
-"""Matched full/local DiT-style transformers for packed CFD graphs."""
+"""Shared DiT building blocks for packed CFD graph models."""
 
 from __future__ import annotations
 
-from math import sqrt
+from collections.abc import Callable, Mapping
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from .geometric_transformer import _validate_model_coords
 from .sparse_transformer import (
-    SparseMultiheadAttention,
     _positive_count,
     _validate_edge_index,
-    _validate_hidden_inputs,
     _validate_model_inputs,
 )
 
@@ -26,148 +23,22 @@ def _modulate(
     return inputs * (1.0 + scale) + shift
 
 
-class FullDiTMultiheadAttention(nn.Module):
-    """Full self-attention with the same learnable parameterization as sparse attention."""
-
-    def __init__(
-        self,
-        hidden_dim: int,
-        num_heads: int,
-        *,
-        use_sdpa: bool = True,
-    ) -> None:
-        super().__init__()
-        self.hidden_dim = _positive_count(hidden_dim, "hidden_dim")
-        self.num_heads = _positive_count(num_heads, "num_heads")
-        if self.hidden_dim % self.num_heads != 0:
-            raise ValueError("hidden_dim must be divisible by num_heads")
-
-        self.head_dim = self.hidden_dim // self.num_heads
-        self.scale = 1.0 / sqrt(self.head_dim)
-        self.use_sdpa = bool(use_sdpa)
-
-        # These names/shapes intentionally match SparseMultiheadAttention so a
-        # full/local pair can share an exactly identical initialization.
-        self.qkv = nn.Linear(self.hidden_dim, 3 * self.hidden_dim)
-        self.out_proj = nn.Linear(self.hidden_dim, self.hidden_dim, bias=False)
-
-    def forward(
-        self,
-        inputs: torch.Tensor,
-        *,
-        edge_index: torch.Tensor,
-        batch_index: torch.Tensor | None,
-    ) -> torch.Tensor:
-        del edge_index
-        _validate_hidden_inputs(
-            inputs,
-            expected_channels=self.hidden_dim,
-            parameter=self.qkv.weight,
-        )
-
-        if batch_index is None:
-            return self._dense_attention(inputs.unsqueeze(0)).squeeze(0)
-
-        counts = _validate_packed_batch_index(
-            batch_index,
-            num_nodes=inputs.shape[0],
-            device=inputs.device,
-        )
-        num_graphs = int(counts.numel())
-
-        # Fixed-mesh batches use this vectorized path.
-        if bool(torch.all(counts == counts[0])):
-            nodes_per_graph = int(counts[0])
-            dense = inputs.reshape(num_graphs, nodes_per_graph, self.hidden_dim)
-            return self._dense_attention(dense).reshape_as(inputs)
-
-        # Variable-size graphs remain supported without padding one graph into
-        # another graph's attention domain.
-        outputs: list[torch.Tensor] = []
-        start = 0
-        for count in counts.detach().cpu().tolist():
-            stop = start + int(count)
-            outputs.append(self._dense_attention(inputs[start:stop].unsqueeze(0)).squeeze(0))
-            start = stop
-        return torch.cat(outputs, dim=0)
-
-    def _dense_attention(self, inputs: torch.Tensor) -> torch.Tensor:
-        batch_size, num_nodes, hidden_dim = inputs.shape
-        qkv = self.qkv(inputs).reshape(
-            batch_size,
-            num_nodes,
-            3,
-            self.num_heads,
-            self.head_dim,
-        )
-        query, key, value = qkv.unbind(dim=2)
-        query = query.transpose(1, 2)
-        key = key.transpose(1, 2)
-        value = value.transpose(1, 2)
-
-        if self.use_sdpa:
-            output = F.scaled_dot_product_attention(
-                query,
-                key,
-                value,
-                attn_mask=None,
-                dropout_p=0.0,
-                is_causal=False,
-            )
-        else:
-            scores = torch.matmul(query, key.transpose(-2, -1)) * self.scale
-            weights = torch.softmax(scores, dim=-1)
-            output = torch.matmul(weights, value)
-
-        output = output.transpose(1, 2).contiguous().reshape(
-            batch_size,
-            num_nodes,
-            hidden_dim,
-        )
-        return self.out_proj(output)
-
-
-class LocalDiTMultiheadAttention(SparseMultiheadAttention):
-    """Sparse local attention with the same qkv/out projection as full DiT attention."""
-
-    def forward(
-        self,
-        inputs: torch.Tensor,
-        *,
-        edge_index: torch.Tensor,
-        batch_index: torch.Tensor | None,
-    ) -> torch.Tensor:
-        del batch_index
-        return super().forward(inputs, edge_index)
-
-
 class DiTBlock(nn.Module):
-    """adaLN-Zero DiT block; only the attention connectivity is configurable."""
+    """adaLN-Zero DiT block shared by full and local attention models."""
 
     def __init__(
         self,
         hidden_dim: int,
-        num_heads: int,
         *,
         mlp_ratio: int,
-        attention_mode: str,
-        use_sdpa: bool,
+        attention: nn.Module,
     ) -> None:
         super().__init__()
         hidden = _positive_count(hidden_dim, "hidden_dim")
         ratio = _positive_count(mlp_ratio, "mlp_ratio")
-        if attention_mode == "full":
-            self.attention = FullDiTMultiheadAttention(
-                hidden,
-                num_heads,
-                use_sdpa=use_sdpa,
-            )
-        elif attention_mode == "local":
-            self.attention = LocalDiTMultiheadAttention(hidden, num_heads)
-        else:
-            raise ValueError("attention_mode must be 'full' or 'local'")
 
         self.norm1 = nn.LayerNorm(hidden, elementwise_affine=False, eps=1.0e-6)
+        self.attention = attention
         self.norm2 = nn.LayerNorm(hidden, elementwise_affine=False, eps=1.0e-6)
         self.mlp = nn.Sequential(
             nn.Linear(hidden, hidden * ratio),
@@ -245,9 +116,7 @@ class DiTFinalLayer(nn.Module):
 
 
 class _BaseDiTGraphTransformer(nn.Module):
-    """Common DiT implementation for a controlled full-vs-local attention study."""
-
-    attention_mode: str
+    """Shared DiT model body; concrete modules provide only attention connectivity."""
 
     def __init__(
         self,
@@ -257,13 +126,15 @@ class _BaseDiTGraphTransformer(nn.Module):
         num_heads: int,
         num_layers: int,
         spatial_dim: int,
+        *,
+        attention_factory: Callable[[int, int], nn.Module],
+        uses_local_edges: bool,
         mlp_ratio: int = 4,
         conditioning_channels: int = 0,
         condition_embed_dim: int = 128,
         use_coord_mlp: bool = True,
         coordinate_normalization: str = "centered_bbox",
         coordinate_normalization_eps: float = 1.0e-8,
-        use_sdpa: bool = True,
     ) -> None:
         super().__init__()
         self.in_channels = _positive_count(in_channels, "in_channels")
@@ -292,7 +163,7 @@ class _BaseDiTGraphTransformer(nn.Module):
 
         self.coordinate_normalization = coordinate_normalization
         self.coordinate_normalization_eps = float(coordinate_normalization_eps)
-        self.use_sdpa = bool(use_sdpa)
+        self._uses_local_edges = bool(uses_local_edges)
 
         self.input_projection = nn.Linear(self.in_channels, self.hidden_dim)
         if use_coord_mlp:
@@ -319,10 +190,8 @@ class _BaseDiTGraphTransformer(nn.Module):
         self.blocks = nn.ModuleList(
             DiTBlock(
                 self.hidden_dim,
-                self.num_heads,
                 mlp_ratio=self.mlp_ratio,
-                attention_mode=self.attention_mode,
-                use_sdpa=self.use_sdpa,
+                attention=attention_factory(self.hidden_dim, self.num_heads),
             )
             for _ in range(self.num_layers)
         )
@@ -353,7 +222,7 @@ class _BaseDiTGraphTransformer(nn.Module):
         coords: torch.Tensor,
         batch_index: torch.Tensor | None = None,
         conditioning: torch.Tensor | None = None,
-        attention_edge_indices: dict[str, torch.Tensor] | None = None,
+        attention_edge_indices: Mapping[str, torch.Tensor] | None = None,
     ) -> torch.Tensor:
         del attention_edge_indices
         _validate_model_inputs(
@@ -391,7 +260,7 @@ class _BaseDiTGraphTransformer(nn.Module):
         )
 
         model_edge_index = edge_index
-        if self.attention_mode == "local":
+        if self._uses_local_edges:
             _validate_edge_index(
                 edge_index,
                 num_nodes=inputs.shape[0],
@@ -455,18 +324,6 @@ class _BaseDiTGraphTransformer(nn.Module):
         )
         assert self.condition_projection is not None
         return self.condition_projection(fourier)
-
-
-class FullDiTGraphTransformer(_BaseDiTGraphTransformer):
-    """DiT with global self-attention within each physical graph."""
-
-    attention_mode = "full"
-
-
-class LocalDiTGraphTransformer(_BaseDiTGraphTransformer):
-    """DiT with one-hop mesh attention plus self-attention."""
-
-    attention_mode = "local"
 
 
 def _sinusoidal_condition_features(
