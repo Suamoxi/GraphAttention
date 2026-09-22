@@ -199,6 +199,11 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
                     "high": [0.5, 1.0],
                 },
             },
+            "energy_spectrum": {
+                "enabled": True,
+                "lower_quantile": 0.10,
+                "upper_quantile": 0.90,
+            },
             "nearest_reference": {
                 "enabled": True,
                 "include_channel_correlations": True,
