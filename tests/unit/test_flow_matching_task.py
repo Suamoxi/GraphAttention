@@ -92,3 +92,53 @@ def test_flow_matching_heun_sampling_uses_raw_time_and_not_clean_state_values() 
         sampling_seed=44,
     )
     torch.testing.assert_close(altered_generated, generated)
+
+
+def test_flow_matching_time_embedding_scale_changes_conditioning_not_path() -> None:
+    dataset = SyntheticMeshDataset(num_samples=2, spatial_dim=2, seed=7)
+    task = FlowMatchingTask(
+        state_fields=("rho", "momentum"),
+        validation_seed=91,
+        time_embedding_scale=1000.0,
+    )
+    batch = task.pack_and_prepare([dataset[0], dataset[1]], dataset.field_catalog)
+    generator = torch.Generator().manual_seed(123)
+    problem = task.make_training_problem(batch, generator=generator)
+
+    reference_generator = torch.Generator().manual_seed(123)
+    times = torch.rand((batch.num_graphs,), generator=reference_generator)
+    source = torch.randn(batch.inputs.shape, generator=reference_generator)
+    node_times = times[batch.batch_index].unsqueeze(1)
+
+    torch.testing.assert_close(
+        problem.inputs,
+        (1.0 - node_times) * source + node_times * batch.inputs,
+    )
+    torch.testing.assert_close(problem.conditioning[:, -1], 1000.0 * times)
+
+
+def test_flow_matching_sampling_applies_time_embedding_scale() -> None:
+    dataset = SyntheticMeshDataset(num_samples=2, spatial_dim=2, seed=7)
+    task = FlowMatchingTask(
+        state_fields=("rho", "momentum"),
+        validation_seed=91,
+        time_embedding_scale=1000.0,
+    )
+    batch = task.pack_and_prepare([dataset[0], dataset[1]], dataset.field_catalog)
+
+    source = task.sample_standardized(
+        _TimeVelocity(),
+        batch,
+        steps=1,
+        solver="euler",
+        sampling_seed=44,
+    )
+    generated = task.sample_standardized(
+        _TimeVelocity(),
+        batch,
+        steps=4,
+        solver="heun",
+        sampling_seed=44,
+    )
+
+    torch.testing.assert_close(generated, source + 500.0)
