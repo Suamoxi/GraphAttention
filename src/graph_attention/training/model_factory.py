@@ -9,7 +9,9 @@ from omegaconf import DictConfig
 
 from graph_attention.models import (
     AlternatingDilatedGeometricSparseGraphTransformer,
+    FullDiTGraphTransformer,
     GeometricSparseGraphTransformer,
+    LocalDiTGraphTransformer,
     SparseGraphTransformer,
 )
 from graph_attention.tasks import NodeRegressionBatch
@@ -17,6 +19,8 @@ from graph_attention.tasks import NodeRegressionBatch
 _M8_TARGET = "graph_attention.models.SparseGraphTransformer"
 _M9_TARGET = "graph_attention.models.GeometricSparseGraphTransformer"
 _M12_DILATED_TARGET = "graph_attention.models.AlternatingDilatedGeometricSparseGraphTransformer"
+_FULL_DIT_TARGET = "graph_attention.models.FullDiTGraphTransformer"
+_LOCAL_DIT_TARGET = "graph_attention.models.LocalDiTGraphTransformer"
 
 
 def instantiate_controlled_model(
@@ -25,14 +29,11 @@ def instantiate_controlled_model(
     *,
     seed: int,
 ) -> tuple[torch.nn.Module, dict[str, Any]]:
-    """Instantiate the controlled M8/M9/M12 model family with matched initialization.
-
-    This is the exact initialization policy previously embedded in
-    ``scripts.train_slice_ablation``. Moving it here lets generative runners stay
-    independent of a particular dataset script without changing parameter values.
-    """
+    """Instantiate a controlled model family with reproducible matched initialization."""
 
     target = str(model_cfg.get("_target_", ""))
+    if target in {_FULL_DIT_TARGET, _LOCAL_DIT_TARGET}:
+        return _instantiate_matched_dit(model_cfg, probe, seed=seed)
     if target not in {_M8_TARGET, _M9_TARGET, _M12_DILATED_TARGET}:
         raise TypeError("unsupported controlled graph model class")
 
@@ -95,3 +96,54 @@ def instantiate_controlled_model(
         "geometry_parameter_names": expected_geometry_keys,
         "layer_topology_schedule": "local_exact2hop_alternating_local_first",
     }
+
+
+def _instantiate_matched_dit(
+    model_cfg: DictConfig,
+    probe: NodeRegressionBatch,
+    *,
+    seed: int,
+) -> tuple[torch.nn.Module, dict[str, Any]]:
+    target = str(model_cfg.get("_target_", ""))
+    common = {
+        "in_channels": probe.inputs.shape[1],
+        "out_channels": probe.targets.shape[1],
+        "hidden_dim": int(model_cfg.hidden_dim),
+        "num_heads": int(model_cfg.num_heads),
+        "num_layers": int(model_cfg.num_layers),
+        "spatial_dim": probe.coords.shape[1],
+        "mlp_ratio": int(model_cfg.mlp_ratio),
+        "conditioning_channels": probe.conditioning.shape[1],
+        "condition_embed_dim": int(
+            model_cfg.get("condition_embed_dim", model_cfg.hidden_dim)
+        ),
+        "use_coord_mlp": bool(model_cfg.get("use_coord_mlp", True)),
+        "coordinate_normalization": str(
+            model_cfg.get("coordinate_normalization", "centered_bbox")
+        ),
+        "coordinate_normalization_eps": float(
+            model_cfg.get("coordinate_normalization_eps", 1.0e-8)
+        ),
+        "use_sdpa": bool(model_cfg.get("use_sdpa", True)),
+    }
+
+    torch.manual_seed(seed)
+    full_reference = FullDiTGraphTransformer(**common)
+    metadata = {
+        "policy": "matched_full_local_dit_initialization",
+        "shared_parameter_seed": seed,
+        "architecture_family": "dit_adaln_zero",
+        "coordinate_conditioning": "absolute_centered_bbox",
+        "attention_mode": "full" if target == _FULL_DIT_TARGET else "local_one_hop_plus_self",
+    }
+    if target == _FULL_DIT_TARGET:
+        return full_reference, metadata
+
+    local = LocalDiTGraphTransformer(**common)
+    incompatible = local.load_state_dict(full_reference.state_dict(), strict=True)
+    if incompatible.missing_keys or incompatible.unexpected_keys:
+        raise RuntimeError(
+            "full/local DiT parameter contracts diverged: "
+            f"missing={incompatible.missing_keys}, unexpected={incompatible.unexpected_keys}"
+        )
+    return local, metadata

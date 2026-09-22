@@ -17,7 +17,6 @@ from scripts.generate_slice_diffusion import (
 )
 from scripts.train_slice_ablation import (
     _attention_topologies_from_geometry,
-    _instantiate_model,
     _loader,
     _NodeRegressionCollator,
     _positive_int,
@@ -28,6 +27,7 @@ from scripts.train_slice_diffusion import _validate_diffusion_standardizers
 from graph_attention.data import PrecomputedSlicePTDataset
 from graph_attention.geometry import cartesian_4_neighbor_edge_index
 from graph_attention.tasks import EDMDenoisingTask
+from graph_attention.training.model_factory import instantiate_controlled_model
 
 
 @hydra.main(
@@ -129,7 +129,7 @@ def run_edm_generation(cfg: DictConfig) -> dict[str, Any]:
     probe_scaled = standardizers.transform(probe)
     probe_problem = task.make_validation_problem(probe_scaled)
     model_probe = task.make_model_probe(probe_problem)
-    model, _ = _instantiate_model(source_cfg.model, model_probe, seed=seed)
+    model, _ = instantiate_controlled_model(source_cfg.model, model_probe, seed=seed)
     model = model.to(device=device, dtype=torch.float32)
 
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
