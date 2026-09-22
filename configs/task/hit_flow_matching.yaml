@@ -8,3 +8,4 @@ state_fields:
 conditioning_parameters: []
 physical_nondimensionalization: true
 validation_seed: 1234
+time_embedding_scale: 1.0
