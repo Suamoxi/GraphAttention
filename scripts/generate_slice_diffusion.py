@@ -13,7 +13,6 @@ from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from scripts.train_slice_ablation import (
     _attention_topologies_from_geometry,
-    _instantiate_model,
     _loader,
     _NodeRegressionCollator,
     _positive_int,
@@ -25,6 +24,7 @@ from graph_attention.data import PrecomputedSlicePTDataset
 from graph_attention.geometry import cartesian_4_neighbor_edge_index
 from graph_attention.tasks import DiffusionDenoisingTask
 from graph_attention.training import ChannelStandardizer, TaskStandardizers
+from graph_attention.training.model_factory import instantiate_controlled_model
 
 
 @hydra.main(
@@ -139,7 +139,8 @@ def run_diffusion_generation(cfg: DictConfig) -> dict[str, Any]:
     probe = next(iter(test_loader))
     probe_scaled = standardizers.transform(probe)
     probe_diffusion = task.make_validation_problem(probe_scaled)
-    model, _ = _instantiate_model(source_cfg.model, probe_diffusion, seed=seed)
+    model_probe = task.make_model_probe(probe_diffusion)
+    model, _ = instantiate_controlled_model(source_cfg.model, model_probe, seed=seed)
     model = model.to(device=device, dtype=torch.float32)
 
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
