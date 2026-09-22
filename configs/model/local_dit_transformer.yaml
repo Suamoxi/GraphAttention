@@ -12,3 +12,6 @@ use_coord_mlp: true
 coordinate_normalization: centered_bbox
 coordinate_normalization_eps: 1.0e-8
 use_sdpa: true
+dropout: 0.0
+qkv_bias: true
+out_proj_bias: false
