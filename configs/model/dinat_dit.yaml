@@ -1,0 +1,17 @@
+_target_: graph_attention.models.dinat_dit.AlternatingDilatedGeometricDiT
+in_channels: 2
+out_channels: 1
+hidden_dim: 64
+num_heads: 4
+num_layers: 4
+spatial_dim: 2
+mlp_ratio: 4
+dropout: 0.0
+conditioning_channels: 0
+condition_embed_dim: 128
+use_coord_mlp: true
+coordinate_normalization: centered_bbox
+coordinate_normalization_eps: 1.0e-8
+use_sdpa: true
+qkv_bias: true
+out_proj_bias: false
