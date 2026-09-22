@@ -1,8 +1,10 @@
 """Linear-beta DDPM schedule ablation for packed node fields.
 
-This module keeps the M13 epsilon-prediction task, loss, time conditioning,
-and reverse sampler unchanged while replacing only the discrete forward-noise
-schedule with the original DDPM-style linear beta schedule.
+This module keeps the M13 epsilon-prediction task, loss, and time conditioning
+while replacing the forward-noise schedule with the original DDPM-style linear
+beta schedule. In addition to the legacy DDPM/DDIM sampler, it exposes a
+continuous reverse VP-SDE interpretation whose marginal matches the discrete
+schedule exactly at every trained timestep.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ class LinearBetaDiffusionDenoisingTask(DiffusionDenoisingTask):
     The default experiment uses ``T=1000`` and
     ``beta_t = linspace(1e-4, 2e-2, T)``.  Unlike the cosine baseline, no beta
     clipping is applied: the configured endpoint itself is the maximum beta.
-    All other M13 task and sampling semantics are inherited unchanged.
+    Legacy M13 sampling semantics remain available, alongside the matched
+    continuous reverse-SDE sampler used for controlled solver comparisons.
     """
 
     def __init__(
