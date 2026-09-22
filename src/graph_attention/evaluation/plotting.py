@@ -107,6 +107,97 @@ def save_spectrum_plots(
         plt.close(figure)
 
 
+def save_energy_spectrum_population_plots(
+    k_centers: np.ndarray,
+    generated_sample_energy: np.ndarray,
+    reference_sample_energy: np.ndarray,
+    output_dir: Path,
+    *,
+    k_nyquist: float,
+    eps: float,
+    dpi: int,
+    lower_quantile: float = 0.10,
+    upper_quantile: float = 0.90,
+) -> None:
+    """Plot generated and test energy-spectrum populations on shared axes.
+
+    Two figures are written: one using the population mean as the central
+    curve and one using the population median. Both show the 10--90% snapshot
+    interval for each population.
+    """
+
+    plt = _pyplot()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    physical_k = np.asarray(k_centers, dtype=np.float64)
+    generated = np.asarray(generated_sample_energy, dtype=np.float64)
+    reference = np.asarray(reference_sample_energy, dtype=np.float64)
+    if generated.ndim != 2 or reference.ndim != 2:
+        raise ValueError("energy spectra must have shape [S, K]")
+    if generated.shape[1] != physical_k.size or reference.shape[1] != physical_k.size:
+        raise ValueError("energy spectra do not match k centers")
+
+    generated_low = np.quantile(generated, lower_quantile, axis=0)
+    generated_high = np.quantile(generated, upper_quantile, axis=0)
+    reference_low = np.quantile(reference, lower_quantile, axis=0)
+    reference_high = np.quantile(reference, upper_quantile, axis=0)
+
+    aggregations = {
+        "mean": (np.mean(generated, axis=0), np.mean(reference, axis=0)),
+        "median": (np.median(generated, axis=0), np.median(reference, axis=0)),
+    }
+    for aggregation, (generated_center, reference_center) in aggregations.items():
+        figure, axis = plt.subplots(figsize=(6.8, 4.8))
+
+        reference_line = axis.loglog(
+            physical_k,
+            np.maximum(reference_center, eps),
+            label=f"test reference {aggregation}",
+        )[0]
+        axis.fill_between(
+            physical_k,
+            np.maximum(reference_low, eps),
+            np.maximum(reference_high, eps),
+            alpha=0.2,
+            color=reference_line.get_color(),
+            label="test reference 10-90%",
+        )
+
+        generated_line = axis.loglog(
+            physical_k,
+            np.maximum(generated_center, eps),
+            label=f"generated {aggregation}",
+        )[0]
+        axis.fill_between(
+            physical_k,
+            np.maximum(generated_low, eps),
+            np.maximum(generated_high, eps),
+            alpha=0.2,
+            color=generated_line.get_color(),
+            label="generated 10-90%",
+        )
+
+        axis.set_xlabel("k")
+        axis.set_ylabel(r"$E_{2D}(k)$")
+        axis.set_xlim(float(physical_k[0]), float(k_nyquist))
+        axis.legend()
+
+        secondary = axis.secondary_xaxis(
+            "top",
+            functions=(
+                lambda value: value / k_nyquist,
+                lambda value: value * k_nyquist,
+            ),
+        )
+        secondary.set_xlabel(r"$k/k_{Nyq}$")
+        axis.set_title(
+            "Velocity-based 2-D kinetic-energy spectrum\n"
+            f"{aggregation} with 10-90% snapshot interval"
+        )
+        figure.tight_layout()
+        figure.savefig(output_dir / f"energy_spectrum_{aggregation}.png", dpi=dpi)
+        plt.close(figure)
+
+
 def save_nearest_reference_field_examples(
     generated: np.ndarray,
     reference: np.ndarray,
