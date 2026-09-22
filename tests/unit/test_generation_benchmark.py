@@ -64,7 +64,8 @@ def test_velocity_energy_spectrum_recovers_resolved_tke_for_axis_mode() -> None:
     )
 
     expected_tke = 0.5 * np.mean(u**2)
-    assert float(np.sum(energy[0])) == pytest.approx(expected_tke)
+    delta_k = grid.k_nyquist_min / energy.shape[1]
+    assert float(np.sum(energy[0]) * delta_k) == pytest.approx(expected_tke)
 
 
 def test_nearest_reference_uses_unpaired_descriptor_distance() -> None:
