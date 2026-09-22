@@ -62,6 +62,7 @@ class DiTBlock(nn.Module):
         *,
         edge_index: torch.Tensor,
         batch_index: torch.Tensor | None,
+        attention_kwargs: Mapping[str, object] | None = None,
     ) -> torch.Tensor:
         graph_modulation = self.adaLN_modulation(condition_embedding)
         node_modulation = _broadcast_graph_features(
@@ -79,10 +80,12 @@ class DiTBlock(nn.Module):
         ) = node_modulation.chunk(6, dim=-1)
 
         attention_input = _modulate(self.norm1(inputs), shift_attn, scale_attn)
+        extra_attention_kwargs = {} if attention_kwargs is None else dict(attention_kwargs)
         hidden = inputs + gate_attn * self.attention(
             attention_input,
             edge_index=edge_index,
             batch_index=batch_index,
+            **extra_attention_kwargs,
         )
 
         mlp_input = _modulate(self.norm2(hidden), shift_mlp, scale_mlp)
