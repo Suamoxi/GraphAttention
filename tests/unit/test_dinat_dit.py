@@ -198,6 +198,88 @@ def test_dinat_dit_rejects_unknown_sparse_attention_backend() -> None:
         )
 
 
+def test_dinat_dit_torch_sparse_backend_matches_scatter() -> None:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    torch.manual_seed(23)
+    scatter = DiNATDiTMultiheadAttention(
+        8,
+        2,
+        2,
+        sparse_attention_backend="scatter",
+    ).to(device)
+    native = DiNATDiTMultiheadAttention(
+        8,
+        2,
+        2,
+        sparse_attention_backend="torch_sparse",
+    ).to(device)
+    native.load_state_dict(scatter.state_dict(), strict=True)
+
+    coords = torch.tensor(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ],
+        dtype=torch.float32,
+        device=device,
+    )
+    edge_index = torch.tensor(
+        [
+            [2, 0, 3, 1, 0, 2, 1, 3],
+            [0, 1, 1, 0, 2, 3, 3, 2],
+        ],
+        dtype=torch.long,
+        device=device,
+    )
+    displacement = edge_relative_displacement(coords, edge_index)
+    batch_index = torch.zeros(4, dtype=torch.long, device=device)
+
+    scatter_inputs = torch.randn(4, 8, device=device, requires_grad=True)
+    native_inputs = scatter_inputs.detach().clone().requires_grad_(True)
+
+    scatter_output = scatter(
+        scatter_inputs,
+        edge_index=edge_index,
+        batch_index=batch_index,
+        edge_displacement=displacement,
+    )
+    native_output = native(
+        native_inputs,
+        edge_index=edge_index,
+        batch_index=batch_index,
+        edge_displacement=displacement,
+    )
+
+    torch.testing.assert_close(native_output, scatter_output, rtol=1.0e-5, atol=1.0e-6)
+
+    scatter_output.square().sum().backward()
+    native_output.square().sum().backward()
+    torch.testing.assert_close(
+        native_inputs.grad,
+        scatter_inputs.grad,
+        rtol=1.0e-4,
+        atol=1.0e-5,
+    )
+
+    for (scatter_name, scatter_param), (native_name, native_param) in zip(
+        scatter.named_parameters(),
+        native.named_parameters(),
+        strict=True,
+    ):
+        assert scatter_name == native_name
+        assert scatter_param.grad is not None
+        assert native_param.grad is not None
+        torch.testing.assert_close(
+            native_param.grad,
+            scatter_param.grad,
+            rtol=1.0e-4,
+            atol=1.0e-5,
+        )
+
+
 def test_dinat_dit_dgl_backend_matches_scatter_when_available() -> None:
     try:
         import dgl.sparse  # noqa: F401

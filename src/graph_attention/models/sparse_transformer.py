@@ -2,11 +2,265 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import sqrt
 from operator import index as operator_index
 
 import torch
 from torch import nn
+
+
+@dataclass(frozen=True)
+class _TorchSparseTopology:
+    """CSR topology and transpose metadata for native sparse attention."""
+
+    num_nodes: int
+    crow_indices: torch.Tensor
+    col_indices: torch.Tensor
+    row_indices: torch.Tensor
+    edge_order: torch.Tensor
+    transpose_crow_indices: torch.Tensor
+    transpose_col_indices: torch.Tensor
+    transpose_order: torch.Tensor
+
+
+class _TorchSparseSDDMM(torch.autograd.Function):
+    """Sample QK^T on a CSR graph with sparse first-order backward."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        crow_indices: torch.Tensor,
+        col_indices: torch.Tensor,
+        transpose_crow_indices: torch.Tensor,
+        transpose_col_indices: torch.Tensor,
+        transpose_order: torch.Tensor,
+        scale: float,
+    ) -> torch.Tensor:
+        num_nodes, num_heads, _ = query.shape
+        pattern = torch.sparse_csr_tensor(
+            crow_indices,
+            col_indices,
+            query.new_ones(col_indices.numel()),
+            size=(num_nodes, num_nodes),
+            device=query.device,
+            dtype=query.dtype,
+        )
+
+        per_head = []
+        for head in range(num_heads):
+            sampled = torch.sparse.sampled_addmm(
+                pattern,
+                query[:, head, :],
+                key[:, head, :].transpose(0, 1),
+                beta=0.0,
+                alpha=float(scale),
+            )
+            per_head.append(sampled.values())
+        scores = torch.stack(per_head, dim=1)
+
+        ctx.save_for_backward(
+            query,
+            key,
+            crow_indices,
+            col_indices,
+            transpose_crow_indices,
+            transpose_col_indices,
+            transpose_order,
+        )
+        ctx.scale = float(scale)
+        return scores
+
+    @staticmethod
+    def backward(ctx, grad_scores: torch.Tensor):
+        (
+            query,
+            key,
+            crow_indices,
+            col_indices,
+            transpose_crow_indices,
+            transpose_col_indices,
+            transpose_order,
+        ) = ctx.saved_tensors
+        num_nodes, num_heads, _ = query.shape
+        grad_scores = grad_scores.contiguous()
+
+        grad_query = torch.zeros_like(query)
+        grad_key = torch.zeros_like(key)
+        for head in range(num_heads):
+            edge_grad = grad_scores[:, head]
+            grad_matrix = torch.sparse_csr_tensor(
+                crow_indices,
+                col_indices,
+                edge_grad,
+                size=(num_nodes, num_nodes),
+                device=query.device,
+                dtype=edge_grad.dtype,
+            )
+            grad_query[:, head, :] = (
+                torch.sparse.mm(grad_matrix, key[:, head, :]) * ctx.scale
+            )
+
+            transpose_matrix = torch.sparse_csr_tensor(
+                transpose_crow_indices,
+                transpose_col_indices,
+                edge_grad[transpose_order],
+                size=(num_nodes, num_nodes),
+                device=query.device,
+                dtype=edge_grad.dtype,
+            )
+            grad_key[:, head, :] = (
+                torch.sparse.mm(transpose_matrix, query[:, head, :]) * ctx.scale
+            )
+
+        return grad_query, grad_key, None, None, None, None, None, None
+
+
+class _TorchSparseSpMM(torch.autograd.Function):
+    """CSR attention-value product with sparse first-order backward."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        weights: torch.Tensor,
+        value: torch.Tensor,
+        crow_indices: torch.Tensor,
+        col_indices: torch.Tensor,
+        transpose_crow_indices: torch.Tensor,
+        transpose_col_indices: torch.Tensor,
+        transpose_order: torch.Tensor,
+    ) -> torch.Tensor:
+        num_nodes, num_heads, _ = value.shape
+        per_head = []
+        for head in range(num_heads):
+            attention = torch.sparse_csr_tensor(
+                crow_indices,
+                col_indices,
+                weights[:, head],
+                size=(num_nodes, num_nodes),
+                device=value.device,
+                dtype=weights.dtype,
+            )
+            per_head.append(torch.sparse.mm(attention, value[:, head, :]))
+        output = torch.stack(per_head, dim=1)
+
+        ctx.save_for_backward(
+            weights,
+            value,
+            crow_indices,
+            col_indices,
+            transpose_crow_indices,
+            transpose_col_indices,
+            transpose_order,
+        )
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        (
+            weights,
+            value,
+            crow_indices,
+            col_indices,
+            transpose_crow_indices,
+            transpose_col_indices,
+            transpose_order,
+        ) = ctx.saved_tensors
+        num_nodes, num_heads, _ = value.shape
+        grad_output = grad_output.contiguous()
+
+        pattern = torch.sparse_csr_tensor(
+            crow_indices,
+            col_indices,
+            value.new_ones(col_indices.numel()),
+            size=(num_nodes, num_nodes),
+            device=value.device,
+            dtype=value.dtype,
+        )
+        grad_weight_heads = []
+        grad_value = torch.zeros_like(value)
+        for head in range(num_heads):
+            sampled = torch.sparse.sampled_addmm(
+                pattern,
+                grad_output[:, head, :],
+                value[:, head, :].transpose(0, 1),
+                beta=0.0,
+                alpha=1.0,
+            )
+            grad_weight_heads.append(sampled.values())
+
+            transpose_attention = torch.sparse_csr_tensor(
+                transpose_crow_indices,
+                transpose_col_indices,
+                weights[:, head][transpose_order],
+                size=(num_nodes, num_nodes),
+                device=value.device,
+                dtype=weights.dtype,
+            )
+            grad_value[:, head, :] = torch.sparse.mm(
+                transpose_attention,
+                grad_output[:, head, :],
+            )
+
+        grad_weights = torch.stack(grad_weight_heads, dim=1)
+        return grad_weights, grad_value, None, None, None, None, None
+
+
+def _build_torch_sparse_topology(
+    edge_index: torch.Tensor,
+    *,
+    num_nodes: int,
+) -> _TorchSparseTopology:
+    """Convert source-target COO edges into target-source CSR plus transpose metadata."""
+
+    source = edge_index[0]
+    target = edge_index[1]
+    linear = target * num_nodes + source
+    edge_order = torch.argsort(linear)
+    sorted_linear = linear[edge_order]
+
+    if sorted_linear.numel() > 1:
+        has_duplicates = torch.any(sorted_linear[1:] == sorted_linear[:-1])
+        if bool(has_duplicates.item()):
+            raise ValueError(
+                "torch_sparse attention requires unique directed edges; "
+                "duplicate source-target pairs were found"
+            )
+
+    row_indices = target[edge_order]
+    col_indices = source[edge_order]
+    row_counts = torch.bincount(row_indices, minlength=num_nodes)
+    crow_indices = torch.cat(
+        (
+            torch.zeros(1, dtype=torch.long, device=edge_index.device),
+            row_counts.cumsum(dim=0),
+        )
+    )
+
+    transpose_linear = col_indices * num_nodes + row_indices
+    transpose_order = torch.argsort(transpose_linear)
+    transpose_rows = col_indices[transpose_order]
+    transpose_col_indices = row_indices[transpose_order]
+    transpose_counts = torch.bincount(transpose_rows, minlength=num_nodes)
+    transpose_crow_indices = torch.cat(
+        (
+            torch.zeros(1, dtype=torch.long, device=edge_index.device),
+            transpose_counts.cumsum(dim=0),
+        )
+    )
+
+    return _TorchSparseTopology(
+        num_nodes=num_nodes,
+        crow_indices=crow_indices,
+        col_indices=col_indices,
+        row_indices=row_indices,
+        edge_order=edge_order,
+        transpose_crow_indices=transpose_crow_indices,
+        transpose_col_indices=transpose_col_indices,
+        transpose_order=transpose_order,
+    )
 
 
 class SparseMultiheadAttention(nn.Module):
@@ -94,6 +348,24 @@ class SparseMultiheadAttention(nn.Module):
                 score_bias=score_bias,
                 sparse_adj=sparse_adj,
             )
+        if self.sparse_attention_backend == "torch_sparse":
+            topology = sparse_adj
+            if topology is None:
+                topology = _build_torch_sparse_topology(
+                    edge_index,
+                    num_nodes=num_nodes,
+                )
+            if not isinstance(topology, _TorchSparseTopology):
+                raise TypeError(
+                    "torch_sparse backend requires a _TorchSparseTopology"
+                )
+            return self._forward_torch_sparse_validated(
+                query,
+                key,
+                value,
+                topology,
+                score_bias=score_bias,
+            )
 
         source = edge_index[0]
         target = edge_index[1]
@@ -142,6 +414,79 @@ class SparseMultiheadAttention(nn.Module):
         aggregated.index_add_(0, target, messages)
 
         return self.out_proj(aggregated.reshape(num_nodes, self.hidden_dim))
+
+
+
+    def _forward_torch_sparse_validated(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        topology: _TorchSparseTopology,
+        *,
+        score_bias: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Native PyTorch CSR SDDMM-softmax-SpMM without E x H x D tensors."""
+
+        if query.dtype != torch.float32:
+            raise TypeError(
+                "the experimental torch_sparse attention backend currently requires float32"
+            )
+
+        scores = _TorchSparseSDDMM.apply(
+            query,
+            key,
+            topology.crow_indices,
+            topology.col_indices,
+            topology.transpose_crow_indices,
+            topology.transpose_col_indices,
+            topology.transpose_order,
+            self.scale,
+        )
+        if score_bias is not None:
+            scores = scores + score_bias[topology.edge_order].to(dtype=scores.dtype)
+
+        target = topology.row_indices
+        target_by_head = target[:, None].expand(-1, self.num_heads)
+        max_per_target = torch.full(
+            (topology.num_nodes, self.num_heads),
+            -torch.inf,
+            dtype=scores.dtype,
+            device=scores.device,
+        )
+        max_per_target.scatter_reduce_(
+            0,
+            target_by_head,
+            scores,
+            reduce="amax",
+            include_self=True,
+        )
+        exp_scores = torch.exp(scores - max_per_target[target])
+        denominator = torch.zeros(
+            (topology.num_nodes, self.num_heads),
+            dtype=scores.dtype,
+            device=scores.device,
+        )
+        denominator.scatter_add_(0, target_by_head, exp_scores)
+        weights = exp_scores / denominator[target]
+        weights = torch.nn.functional.dropout(
+            weights,
+            p=self.attention_dropout,
+            training=self.training,
+        )
+
+        aggregated = _TorchSparseSpMM.apply(
+            weights.to(dtype=value.dtype),
+            value,
+            topology.crow_indices,
+            topology.col_indices,
+            topology.transpose_crow_indices,
+            topology.transpose_col_indices,
+            topology.transpose_order,
+        )
+        return self.out_proj(
+            aggregated.reshape(topology.num_nodes, self.hidden_dim)
+        )
 
     def _forward_dgl_validated(
         self,
@@ -354,8 +699,10 @@ def _require_dgl_sparse():
 
 def _validate_sparse_attention_backend(value: str) -> str:
     backend = str(value)
-    if backend not in {"scatter", "dgl"}:
-        raise ValueError("sparse_attention_backend must be 'scatter' or 'dgl'")
+    if backend not in {"scatter", "torch_sparse", "dgl"}:
+        raise ValueError(
+            "sparse_attention_backend must be 'scatter', 'torch_sparse', or 'dgl'"
+        )
     return backend
 
 

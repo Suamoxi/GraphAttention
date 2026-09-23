@@ -18,7 +18,9 @@ from .geometric_transformer import (
     _validate_model_coords,
 )
 from .sparse_transformer import (
+    _TorchSparseTopology,
     _build_dgl_sparse_adjacency,
+    _build_torch_sparse_topology,
     _validate_edge_index,
     _validate_model_inputs,
 )
@@ -105,6 +107,38 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             coordinate_normalization_eps=coordinate_normalization_eps,
         )
         self.sparse_attention_backend = backend
+        self._torch_sparse_topology_cache: dict[
+            str,
+            tuple[torch.Tensor, int, _TorchSparseTopology],
+        ] = {}
+
+    def _cached_torch_sparse_topology(
+        self,
+        name: str,
+        edge_index: torch.Tensor,
+        *,
+        num_nodes: int,
+    ) -> _TorchSparseTopology:
+        version = int(edge_index._version)
+        cached = self._torch_sparse_topology_cache.get(name)
+        if (
+            cached is not None
+            and cached[0] is edge_index
+            and cached[1] == version
+            and cached[2].num_nodes == num_nodes
+        ):
+            return cached[2]
+
+        topology = _build_torch_sparse_topology(
+            edge_index,
+            num_nodes=num_nodes,
+        )
+        self._torch_sparse_topology_cache[name] = (
+            edge_index,
+            version,
+            topology,
+        )
+        return topology
 
     def forward(
         self,
@@ -183,6 +217,17 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
                 num_nodes=inputs.shape[0],
             )
             dilated_sparse_adj = _build_dgl_sparse_adjacency(
+                dilated_edge_index,
+                num_nodes=inputs.shape[0],
+            )
+        elif self.sparse_attention_backend == "torch_sparse":
+            local_sparse_adj = self._cached_torch_sparse_topology(
+                "local",
+                edge_index,
+                num_nodes=inputs.shape[0],
+            )
+            dilated_sparse_adj = self._cached_torch_sparse_topology(
+                "dilated",
                 dilated_edge_index,
                 num_nodes=inputs.shape[0],
             )
