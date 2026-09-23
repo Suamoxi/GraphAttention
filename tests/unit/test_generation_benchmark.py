@@ -14,6 +14,7 @@ from graph_attention.evaluation import (
 from graph_attention.evaluation.generation_benchmark import _fixed_mesh_samples
 from graph_attention.evaluation.nearest_reference import nearest_reference_diagnostics
 from graph_attention.evaluation.spectra import (
+    sample_radial_spectra,
     sample_velocity_energy_spectra,
     scatter_to_grid,
 )
@@ -42,6 +43,35 @@ def test_cartesian_grid_inference_handles_permuted_node_order() -> None:
     np.testing.assert_array_equal(field, np.arange(12).reshape(3, 4))
 
 
+def test_radial_spectra_drop_empty_low_k_shells() -> None:
+    nx = ny = 33
+    spacing = 1.7712747649056837e-05
+    x, y = np.meshgrid(
+        np.arange(nx) * spacing,
+        np.arange(ny) * spacing,
+        indexing="ij",
+    )
+    coords = np.column_stack((x.reshape(-1), y.reshape(-1))).astype(np.float64)
+    grid = infer_cartesian_grid_2d(coords, shape_hint=(nx, ny))
+
+    field = np.sin(2.0 * np.pi * np.arange(nx)[:, None] / nx)
+    sample = np.broadcast_to(field, (nx, ny)).reshape(-1)
+    samples = sample[None, :, None]
+
+    centers, power = sample_radial_spectra(
+        samples,
+        grid,
+        num_k_bins=24,
+        subtract_mean=True,
+    )
+
+    fundamental = 2.0 * np.pi / (nx * spacing)
+    assert centers[0] > 1.0e4
+    assert centers[0] - 0.5 * (grid.k_nyquist_min / 24.0) <= fundamental
+    assert fundamental < centers[0] + 0.5 * (grid.k_nyquist_min / 24.0)
+    assert power.shape[-1] == centers.size
+
+
 def test_velocity_energy_spectrum_recovers_resolved_tke_for_axis_mode() -> None:
     nx = ny = 8
     x, y = np.meshgrid(np.arange(nx), np.arange(ny), indexing="ij")
@@ -64,7 +94,7 @@ def test_velocity_energy_spectrum_recovers_resolved_tke_for_axis_mode() -> None:
     )
 
     expected_tke = 0.5 * np.mean(u**2)
-    delta_k = grid.k_nyquist_min / energy.shape[1]
+    delta_k = grid.k_nyquist_min / 8.0
     assert float(np.sum(energy[0]) * delta_k) == pytest.approx(expected_tke)
 
 
