@@ -216,6 +216,7 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
             eps=eps,
             lower_quantile=energy_lower_quantile,
             upper_quantile=energy_upper_quantile,
+            bin_width=grid.k_nyquist_min / float(cfg.spectra.num_k_bins),
         )
 
     nearest_rows: list[dict[str, Any]] = []
