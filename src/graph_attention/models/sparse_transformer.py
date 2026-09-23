@@ -100,7 +100,7 @@ class _TorchSparseSDDMM(torch.autograd.Function):
                 dtype=edge_grad.dtype,
             )
             grad_query[:, head, :] = (
-                torch.sparse.mm(grad_matrix, key[:, head, :]) * ctx.scale
+                torch.sparse.mm(grad_matrix, key[:, head, :].contiguous()) * ctx.scale
             )
 
             transpose_matrix = torch.sparse_csr_tensor(
@@ -112,7 +112,7 @@ class _TorchSparseSDDMM(torch.autograd.Function):
                 dtype=edge_grad.dtype,
             )
             grad_key[:, head, :] = (
-                torch.sparse.mm(transpose_matrix, query[:, head, :]) * ctx.scale
+                torch.sparse.mm(transpose_matrix, query[:, head, :].contiguous()) * ctx.scale
             )
 
         return grad_query, grad_key, None, None, None, None, None, None
@@ -416,8 +416,6 @@ class SparseMultiheadAttention(nn.Module):
         aggregated.index_add_(0, target, messages)
 
         return self.out_proj(aggregated.reshape(num_nodes, self.hidden_dim))
-
-
 
     def _forward_torch_sparse_validated(
         self,
