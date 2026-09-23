@@ -53,8 +53,8 @@ class _TorchSparseSDDMM(torch.autograd.Function):
         for head in range(num_heads):
             sampled = torch.sparse.sampled_addmm(
                 pattern,
-                query[:, head, :],
-                key[:, head, :].transpose(0, 1),
+                query[:, head, :].contiguous(),
+                key[:, head, :].transpose(0, 1).contiguous(),
                 beta=0.0,
                 alpha=float(scale),
             )
@@ -143,7 +143,9 @@ class _TorchSparseSpMM(torch.autograd.Function):
                 device=value.device,
                 dtype=weights.dtype,
             )
-            per_head.append(torch.sparse.mm(attention, value[:, head, :]))
+            per_head.append(
+                torch.sparse.mm(attention, value[:, head, :].contiguous())
+            )
         output = torch.stack(per_head, dim=1)
 
         ctx.save_for_backward(
@@ -184,8 +186,8 @@ class _TorchSparseSpMM(torch.autograd.Function):
         for head in range(num_heads):
             sampled = torch.sparse.sampled_addmm(
                 pattern,
-                grad_output[:, head, :],
-                value[:, head, :].transpose(0, 1),
+                grad_output[:, head, :].contiguous(),
+                value[:, head, :].transpose(0, 1).contiguous(),
                 beta=0.0,
                 alpha=1.0,
             )
@@ -201,7 +203,7 @@ class _TorchSparseSpMM(torch.autograd.Function):
             )
             grad_value[:, head, :] = torch.sparse.mm(
                 transpose_attention,
-                grad_output[:, head, :],
+                grad_output[:, head, :].contiguous(),
             )
 
         grad_weights = torch.stack(grad_weight_heads, dim=1)
