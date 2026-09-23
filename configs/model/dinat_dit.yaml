@@ -15,3 +15,4 @@ coordinate_normalization_eps: 1.0e-8
 use_sdpa: true
 qkv_bias: true
 out_proj_bias: false
+sparse_attention_backend: scatter  # scatter | dgl

@@ -17,7 +17,11 @@ from .geometric_transformer import (
     GeometricSparseMultiheadAttention,
     _validate_model_coords,
 )
-from .sparse_transformer import _validate_edge_index, _validate_model_inputs
+from .sparse_transformer import (
+    _build_dgl_sparse_adjacency,
+    _validate_edge_index,
+    _validate_model_inputs,
+)
 
 _DILATED_TOPOLOGY_NAME = "dilated"
 
@@ -32,9 +36,15 @@ class DiNATDiTMultiheadAttention(GeometricSparseMultiheadAttention):
         edge_index: torch.Tensor,
         batch_index: torch.Tensor | None,
         edge_displacement: torch.Tensor,
+        sparse_adj: object | None = None,
     ) -> torch.Tensor:
         del batch_index
-        return super().forward(inputs, edge_index, edge_displacement)
+        return super().forward(
+            inputs,
+            edge_index,
+            edge_displacement,
+            sparse_adj=sparse_adj,
+        )
 
 
 class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
@@ -63,10 +73,12 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         use_sdpa: bool = True,
         qkv_bias: bool = True,
         out_proj_bias: bool = False,
+        sparse_attention_backend: str = "scatter",
     ) -> None:
         # Sparse geometric attention does not use dense SDPA, but this argument
         # keeps the same public configuration contract as the other DiT models.
         del use_sdpa
+        backend = str(sparse_attention_backend)
         super().__init__(
             in_channels=in_channels,
             out_channels=out_channels,
@@ -81,6 +93,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
                 dropout=dropout,
                 qkv_bias=qkv_bias,
                 out_proj_bias=out_proj_bias,
+                sparse_attention_backend=backend,
             ),
             uses_local_edges=False,
             mlp_ratio=mlp_ratio,
@@ -91,6 +104,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             coordinate_normalization=coordinate_normalization,
             coordinate_normalization_eps=coordinate_normalization_eps,
         )
+        self.sparse_attention_backend = backend
 
     def forward(
         self,
@@ -161,22 +175,40 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             dilated_edge_index,
         )
 
+        local_sparse_adj = None
+        dilated_sparse_adj = None
+        if self.sparse_attention_backend == "dgl":
+            local_sparse_adj = _build_dgl_sparse_adjacency(
+                edge_index,
+                num_nodes=inputs.shape[0],
+            )
+            dilated_sparse_adj = _build_dgl_sparse_adjacency(
+                dilated_edge_index,
+                num_nodes=inputs.shape[0],
+            )
+
         for layer_index, block in enumerate(self.blocks):
             if layer_index % 2 == 0:
                 layer_edge_index = edge_index
                 layer_displacement = local_displacement
+                layer_sparse_adj = local_sparse_adj
             else:
                 layer_edge_index = dilated_edge_index
                 layer_displacement = dilated_displacement
+                layer_sparse_adj = dilated_sparse_adj
+
+            attention_kwargs: dict[str, object] = {
+                "edge_displacement": layer_displacement,
+            }
+            if layer_sparse_adj is not None:
+                attention_kwargs["sparse_adj"] = layer_sparse_adj
 
             hidden = block(
                 hidden,
                 condition_embedding,
                 edge_index=layer_edge_index,
                 batch_index=batch_index,
-                attention_kwargs={
-                    "edge_displacement": layer_displacement,
-                },
+                attention_kwargs=attention_kwargs,
             )
 
         return self.final_layer(

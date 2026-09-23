@@ -48,8 +48,15 @@ _GIB = float(1024**3)
 def main() -> None:
     args = _parse_args()
     run_specs = _parse_run_specs(args.run)
+    backend_specs = _parse_run_specs(args.attention_backend or [])
     if len(run_specs) < 2:
         raise ValueError("benchmark requires at least two --run LABEL=RUN_DIR entries")
+    unknown_backend_labels = sorted(set(backend_specs) - set(run_specs))
+    if unknown_backend_labels:
+        raise ValueError(
+            "--attention-backend labels must also be present in --run: "
+            f"{unknown_backend_labels}"
+        )
 
     device = torch.device(args.device)
     if device.type != "cuda":
@@ -97,6 +104,7 @@ def main() -> None:
             generation_repeats=args.generation_repeats,
             sampling_steps=args.sampling_steps,
             sampling_seed=args.sampling_seed,
+            sparse_attention_backend=backend_specs.get(label),
         )
         results.append(result)
         print(json.dumps(result, indent=2))
@@ -130,6 +138,7 @@ def main() -> None:
             "sampling_solver": "heun",
             "sampling_method": "flow_ode",
             "sampling_seed": args.sampling_seed,
+            "attention_backend_overrides": backend_specs,
         },
         "results": results,
         "relative_to_first": _relative_results(results),
@@ -159,6 +168,15 @@ def _parse_args() -> argparse.Namespace:
         action="append",
         required=True,
         help="Run specification LABEL=RUN_DIR. Repeat once per model.",
+    )
+    parser.add_argument(
+        "--attention-backend",
+        action="append",
+        default=None,
+        help=(
+            "Optional LABEL=BACKEND override for a run. "
+            "Used to benchmark the same DiNAT checkpoint with scatter or dgl."
+        ),
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--checkpoint", default="best.pt")
@@ -326,8 +344,17 @@ def _benchmark_run(
     generation_repeats: int,
     sampling_steps: int,
     sampling_seed: int,
+    sparse_attention_backend: str | None,
 ) -> dict[str, Any]:
     cfg = OmegaConf.load(run_dir / "resolved_config.yaml")
+    if sparse_attention_backend is not None:
+        OmegaConf.update(
+            cfg,
+            "model.sparse_attention_backend",
+            sparse_attention_backend,
+            merge=False,
+            force_add=True,
+        )
     manifest = json.loads((run_dir / "dataset_split_manifest.json").read_text())
     standardizers = _load_standardizers(run_dir / "standardizers.pt")
     checkpoint = torch.load(
@@ -477,6 +504,11 @@ def _benchmark_run(
         "model_target": str(cfg.model._target_),
         "model_parameters": parameter_count,
         "initialization": initialization,
+        "sparse_attention_backend": getattr(
+            model,
+            "sparse_attention_backend",
+            None,
+        ),
         "batch_size": test_scaled.num_graphs,
         "nodes_per_sample": sorted({int(value) for value in node_counts}),
         "nodes_per_batch": int(test_scaled.inputs.shape[0]),
@@ -803,6 +835,7 @@ def _write_results_csv(path: Path, results: list[dict[str, Any]]) -> None:
                 "run_name": result["run_name"],
                 "model": result["model"],
                 "model_parameters": result["model_parameters"],
+                "sparse_attention_backend": result["sparse_attention_backend"],
                 "batch_size": result["batch_size"],
                 "nodes_per_sample": (
                     nodes_per_sample[0] if len(nodes_per_sample) == 1 else str(nodes_per_sample)

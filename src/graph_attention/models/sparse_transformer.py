@@ -20,6 +20,7 @@ class SparseMultiheadAttention(nn.Module):
         dropout: float = 0.0,
         qkv_bias: bool = True,
         out_proj_bias: bool = False,
+        sparse_attention_backend: str = "scatter",
     ) -> None:
         super().__init__()
         self.hidden_dim = _positive_count(hidden_dim, "hidden_dim")
@@ -32,6 +33,9 @@ class SparseMultiheadAttention(nn.Module):
         self.attention_dropout = float(dropout)
         if not 0.0 <= self.attention_dropout < 1.0:
             raise ValueError("dropout must lie in [0, 1)")
+        self.sparse_attention_backend = _validate_sparse_attention_backend(
+            sparse_attention_backend
+        )
         self.qkv = nn.Linear(
             self.hidden_dim,
             3 * self.hidden_dim,
@@ -58,6 +62,7 @@ class SparseMultiheadAttention(nn.Module):
         edge_index: torch.Tensor,
         *,
         score_bias: torch.Tensor | None = None,
+        sparse_adj: object | None = None,
     ) -> torch.Tensor:
         num_nodes = inputs.shape[0]
         _validate_score_bias(
@@ -79,6 +84,16 @@ class SparseMultiheadAttention(nn.Module):
             if score_bias is not None:
                 zero_message = zero_message + score_bias.sum().to(zero_message.dtype) * 0.0
             return self.out_proj(zero_message)
+
+        if self.sparse_attention_backend == "dgl":
+            return self._forward_dgl_validated(
+                query,
+                key,
+                value,
+                edge_index,
+                score_bias=score_bias,
+                sparse_adj=sparse_adj,
+            )
 
         source = edge_index[0]
         target = edge_index[1]
@@ -126,6 +141,63 @@ class SparseMultiheadAttention(nn.Module):
         aggregated = torch.zeros_like(query)
         aggregated.index_add_(0, target, messages)
 
+        return self.out_proj(aggregated.reshape(num_nodes, self.hidden_dim))
+
+    def _forward_dgl_validated(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        edge_index: torch.Tensor,
+        *,
+        score_bias: torch.Tensor | None,
+        sparse_adj: object | None,
+    ) -> torch.Tensor:
+        """DGL sparse SDDMM-softmax-SPMM without edge-expanded Q/K/V tensors."""
+
+        if query.dtype != torch.float32:
+            raise TypeError(
+                "the experimental DGL sparse attention backend currently requires float32"
+            )
+
+        dglsp = _require_dgl_sparse()
+        num_nodes = query.shape[0]
+        if sparse_adj is None:
+            sparse_adj = _build_dgl_sparse_adjacency(
+                edge_index,
+                num_nodes=num_nodes,
+            )
+
+        # DGL bsddmm batches over the last dimension. Rows are target/query
+        # nodes and columns are source/key nodes, matching the scatter backend.
+        query_dgl = (query.transpose(1, 2) * self.scale).contiguous()
+        key_dgl = key.transpose(1, 2).contiguous()
+        value_dgl = value.transpose(1, 2).contiguous()
+
+        scores = dglsp.bsddmm(
+            sparse_adj,
+            query_dgl,
+            key_dgl.transpose(0, 1).contiguous(),
+        )
+        if score_bias is not None:
+            bias_sparse = dglsp.spmatrix(
+                torch.stack((edge_index[1], edge_index[0]), dim=0),
+                score_bias.to(dtype=scores.val.dtype),
+                shape=(num_nodes, num_nodes),
+            )
+            scores = scores + bias_sparse
+
+        weights = scores.softmax()
+        if self.attention_dropout > 0.0:
+            dropped_values = torch.nn.functional.dropout(
+                weights.val,
+                p=self.attention_dropout,
+                training=self.training,
+            )
+            weights = dglsp.val_like(weights, dropped_values)
+
+        aggregated = dglsp.bspmm(weights, value_dgl)
+        aggregated = aggregated.transpose(1, 2).contiguous()
         return self.out_proj(aggregated.reshape(num_nodes, self.hidden_dim))
 
 
@@ -255,6 +327,36 @@ def _append_conditioning(
         if int(batch_index.max()) >= conditioning.shape[0]:
             raise ValueError("batch_index references a graph outside conditioning")
     return torch.cat((inputs, conditioning[batch_index]), dim=1)
+
+
+def _build_dgl_sparse_adjacency(
+    edge_index: torch.Tensor,
+    *,
+    num_nodes: int,
+) -> object:
+    """Build target-by-source DGL sparse adjacency for graph attention."""
+
+    dglsp = _require_dgl_sparse()
+    indices = torch.stack((edge_index[1], edge_index[0]), dim=0)
+    return dglsp.spmatrix(indices, shape=(num_nodes, num_nodes))
+
+
+def _require_dgl_sparse():
+    try:
+        import dgl.sparse as dglsp
+    except Exception as exc:
+        raise RuntimeError(
+            "sparse_attention_backend='dgl' requires a working DGL sparse "
+            "installation compatible with the active PyTorch/CUDA environment"
+        ) from exc
+    return dglsp
+
+
+def _validate_sparse_attention_backend(value: str) -> str:
+    backend = str(value)
+    if backend not in {"scatter", "dgl"}:
+        raise ValueError("sparse_attention_backend must be 'scatter' or 'dgl'")
+    return backend
 
 
 def _validate_model_inputs(

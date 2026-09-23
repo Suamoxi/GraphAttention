@@ -166,8 +166,14 @@ def _instantiate_matched_dit(
         return local, metadata
 
     geometry_seed = seed + 1
+    sparse_attention_backend = str(
+        model_cfg.get("sparse_attention_backend", "scatter")
+    )
     torch.manual_seed(geometry_seed)
-    dinat_dit = AlternatingDilatedGeometricDiT(**common)
+    dinat_dit = AlternatingDilatedGeometricDiT(
+        **common,
+        sparse_attention_backend=sparse_attention_backend,
+    )
     incompatible = dinat_dit.load_state_dict(full_reference.state_dict(), strict=False)
     if incompatible.unexpected_keys:
         raise RuntimeError(
@@ -188,6 +194,7 @@ def _instantiate_matched_dit(
             "geometry_parameter_seed": geometry_seed,
             "geometry_parameter_names": expected_geometry_keys,
             "layer_topology_schedule": "local_exact2hop_alternating_local_first",
+            "sparse_attention_backend": sparse_attention_backend,
         }
     )
     return dinat_dit, metadata

@@ -1,3 +1,4 @@
+import pytest
 import torch
 from omegaconf import OmegaConf
 
@@ -185,3 +186,96 @@ def test_dinat_dit_uses_adaln_zero_output_initialization() -> None:
     )
 
     torch.testing.assert_close(output, torch.zeros_like(output), rtol=0.0, atol=0.0)
+
+
+def test_dinat_dit_rejects_unknown_sparse_attention_backend() -> None:
+    with pytest.raises(ValueError, match="sparse_attention_backend"):
+        DiNATDiTMultiheadAttention(
+            8,
+            2,
+            2,
+            sparse_attention_backend="unknown",
+        )
+
+
+def test_dinat_dit_dgl_backend_matches_scatter_when_available() -> None:
+    try:
+        import dgl.sparse  # noqa: F401
+    except Exception as exc:
+        pytest.skip(f"DGL sparse backend unavailable: {exc}")
+
+    torch.manual_seed(17)
+    scatter = DiNATDiTMultiheadAttention(
+        8,
+        2,
+        2,
+        sparse_attention_backend="scatter",
+    )
+    dgl = DiNATDiTMultiheadAttention(
+        8,
+        2,
+        2,
+        sparse_attention_backend="dgl",
+    )
+    dgl.load_state_dict(scatter.state_dict(), strict=True)
+
+    coords = torch.tensor(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    edge_index = torch.tensor(
+        [
+            [0, 1, 2, 3, 0, 2, 1, 3],
+            [1, 0, 3, 2, 2, 0, 3, 1],
+        ],
+        dtype=torch.long,
+    )
+    displacement = edge_relative_displacement(coords, edge_index)
+    batch_index = torch.zeros(4, dtype=torch.long)
+
+    scatter_inputs = torch.randn(4, 8, requires_grad=True)
+    dgl_inputs = scatter_inputs.detach().clone().requires_grad_(True)
+
+    scatter_output = scatter(
+        scatter_inputs,
+        edge_index=edge_index,
+        batch_index=batch_index,
+        edge_displacement=displacement,
+    )
+    dgl_output = dgl(
+        dgl_inputs,
+        edge_index=edge_index,
+        batch_index=batch_index,
+        edge_displacement=displacement,
+    )
+
+    torch.testing.assert_close(dgl_output, scatter_output, rtol=1.0e-5, atol=1.0e-6)
+
+    scatter_output.square().sum().backward()
+    dgl_output.square().sum().backward()
+    torch.testing.assert_close(
+        dgl_inputs.grad,
+        scatter_inputs.grad,
+        rtol=1.0e-4,
+        atol=1.0e-5,
+    )
+
+    for (scatter_name, scatter_param), (dgl_name, dgl_param) in zip(
+        scatter.named_parameters(),
+        dgl.named_parameters(),
+        strict=True,
+    ):
+        assert scatter_name == dgl_name
+        assert scatter_param.grad is not None
+        assert dgl_param.grad is not None
+        torch.testing.assert_close(
+            dgl_param.grad,
+            scatter_param.grad,
+            rtol=1.0e-4,
+            atol=1.0e-5,
+        )

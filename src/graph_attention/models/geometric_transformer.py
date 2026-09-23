@@ -30,6 +30,7 @@ class GeometricSparseMultiheadAttention(SparseMultiheadAttention):
         dropout: float = 0.0,
         qkv_bias: bool = True,
         out_proj_bias: bool = False,
+        sparse_attention_backend: str = "scatter",
     ) -> None:
         super().__init__(
             hidden_dim=hidden_dim,
@@ -37,6 +38,7 @@ class GeometricSparseMultiheadAttention(SparseMultiheadAttention):
             dropout=dropout,
             qkv_bias=qkv_bias,
             out_proj_bias=out_proj_bias,
+            sparse_attention_backend=sparse_attention_backend,
         )
         self.spatial_dim = _positive_count(spatial_dim, "spatial_dim")
         self.geometry_mlp = nn.Sequential(
@@ -50,6 +52,7 @@ class GeometricSparseMultiheadAttention(SparseMultiheadAttention):
         inputs: torch.Tensor,
         edge_index: torch.Tensor,
         edge_displacement: torch.Tensor,
+        sparse_adj: object | None = None,
     ) -> torch.Tensor:
         _validate_hidden_inputs(
             inputs,
@@ -64,16 +67,28 @@ class GeometricSparseMultiheadAttention(SparseMultiheadAttention):
             dtype=inputs.dtype,
             device=inputs.device,
         )
-        return self._forward_with_geometry_validated(inputs, edge_index, edge_displacement)
+        return self._forward_with_geometry_validated(
+            inputs,
+            edge_index,
+            edge_displacement,
+            sparse_adj=sparse_adj,
+        )
 
     def _forward_with_geometry_validated(
         self,
         inputs: torch.Tensor,
         edge_index: torch.Tensor,
         edge_displacement: torch.Tensor,
+        *,
+        sparse_adj: object | None = None,
     ) -> torch.Tensor:
         score_bias = self.geometry_mlp(edge_displacement)
-        return self._forward_validated(inputs, edge_index, score_bias=score_bias)
+        return self._forward_validated(
+            inputs,
+            edge_index,
+            score_bias=score_bias,
+            sparse_adj=sparse_adj,
+        )
 
 
 class GeometricSparseGraphTransformerBlock(nn.Module):
