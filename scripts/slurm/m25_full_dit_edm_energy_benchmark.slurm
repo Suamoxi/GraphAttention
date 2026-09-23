@@ -3,6 +3,7 @@
 #SBATCH --time=00:30:00
 #SBATCH --partition=grace
 #SBATCH --cpus-per-task=4
+#SBATCH --gres=gpu:1
 #SBATCH --output=/scratch/coop/theret/GraphAttention/%x_%j.out
 #SBATCH --error=/scratch/coop/theret/GraphAttention/%x_%j.err
 
