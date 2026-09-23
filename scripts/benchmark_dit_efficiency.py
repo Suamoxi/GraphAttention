@@ -24,7 +24,7 @@ import shutil
 import statistics
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import torch
 from hydra.utils import instantiate
@@ -531,7 +531,6 @@ def _benchmark_training(
 
     optimizer.zero_grad(set_to_none=True)
     gc.collect()
-    torch.cuda.empty_cache()
     torch.cuda.synchronize(device)
     baseline = _cuda_memory(device)
     torch.cuda.reset_peak_memory_stats(device)
@@ -581,7 +580,6 @@ def _benchmark_forward(
         torch.cuda.synchronize(device)
 
         gc.collect()
-        torch.cuda.empty_cache()
         torch.cuda.synchronize(device)
         baseline = _cuda_memory(device)
         torch.cuda.reset_peak_memory_stats(device)
@@ -633,7 +631,6 @@ def _benchmark_generation(
     torch.cuda.synchronize(device)
 
     gc.collect()
-    torch.cuda.empty_cache()
     torch.cuda.synchronize(device)
     baseline = _cuda_memory(device)
     torch.cuda.reset_peak_memory_stats(device)
