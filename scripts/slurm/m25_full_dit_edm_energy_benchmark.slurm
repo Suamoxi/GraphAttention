@@ -2,6 +2,7 @@
 #SBATCH --job-name=m25_edm_energy_bench
 #SBATCH --time=00:30:00
 #SBATCH --partition=grace
+#SBATCH --gres=gpu:0
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --output=/scratch/coop/theret/GraphAttention/%x_%j.out
