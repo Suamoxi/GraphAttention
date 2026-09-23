@@ -126,7 +126,7 @@ def sample_radial_spectra(
     if bins < 1:
         raise ValueError("num_k_bins must be positive")
 
-    centers, valid, bin_index = _radial_bins(grid, bins)
+    centers, valid, bin_index, active_bins = _radial_bins(grid, bins)
     power = np.zeros((values.shape[0], values.shape[2], bins), dtype=np.float64)
     for sample_index, sample in enumerate(values):
         for channel in range(values.shape[2]):
@@ -140,7 +140,7 @@ def sample_radial_spectra(
                 weights=mode_power[valid],
                 minlength=bins,
             )[:bins]
-    return centers, power
+    return centers[active_bins], power[..., active_bins]
 
 
 def sample_velocity_energy_spectra(
@@ -196,7 +196,7 @@ def sample_velocity_energy_spectra(
     bins = int(num_k_bins)
     if bins < 1:
         raise ValueError("num_k_bins must be positive")
-    centers, valid, bin_index = _radial_bins(grid, bins)
+    centers, valid, bin_index, active_bins = _radial_bins(grid, bins)
     spectrum = np.zeros((values.shape[0], bins), dtype=np.float64)
     num_grid_points = float(expected_nodes)
     delta_k = float(grid.k_nyquist_min) / float(bins)
@@ -216,7 +216,7 @@ def sample_velocity_energy_spectra(
         )[:bins]
         spectrum[sample_index] = shell_energy / delta_k
 
-    return centers, spectrum
+    return centers[active_bins], spectrum[:, active_bins]
 
 
 def energy_spectrum_population_rows(
@@ -331,6 +331,7 @@ def energy_spectral_band_rows(
     eps: float,
     lower_quantile: float = 0.10,
     upper_quantile: float = 0.90,
+    bin_width: float,
 ) -> list[dict[str, float | str]]:
     """Summarize per-snapshot integrated energy in normalized wavenumber bands."""
 
@@ -343,7 +344,9 @@ def energy_spectral_band_rows(
         raise ValueError("energy spectra do not match k centers")
 
     fraction = centers / float(k_nyquist)
-    delta_k = float(k_nyquist) / float(centers.size)
+    delta_k = float(bin_width)
+    if not np.isfinite(delta_k) or delta_k <= 0.0:
+        raise ValueError("energy-spectrum bin_width must be finite and positive")
     rows: list[dict[str, float | str]] = []
     for band_name, (lower, upper) in bands.items():
         mask = (fraction >= lower) & (fraction < upper)
@@ -455,7 +458,7 @@ def spectral_band_rows(
 def _radial_bins(
     grid: CartesianGrid2D,
     num_k_bins: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     nx, ny = grid.shape
     dx, dy = grid.spacing
     kx = 2.0 * np.pi * np.fft.fftfreq(nx, d=dx)
@@ -466,7 +469,11 @@ def _radial_bins(
     valid = (kmag > 0.0) & (kmag <= grid.k_nyquist_min)
     raw_bin = np.searchsorted(edges, kmag[valid], side="right") - 1
     bin_index = np.clip(raw_bin, 0, num_k_bins - 1)
-    return centers, valid, bin_index
+    mode_count = np.bincount(bin_index, minlength=num_k_bins)[:num_k_bins]
+    active_bins = mode_count > 0
+    if not np.any(active_bins):
+        raise ValueError("radial spectrum contains no non-zero Fourier modes")
+    return centers, valid, bin_index, active_bins
 
 
 def _unique_axis_values(values: np.ndarray, tolerance: float) -> np.ndarray:
