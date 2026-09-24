@@ -252,7 +252,7 @@ def save_energy_spectrum_population_plots(
     reference_high = np.quantile(reference, upper_quantile, axis=0)
     variability_label = (
         "snapshot variability band "
-        f"({_ordinal_percentile(lower_quantile)}\\N{EN DASH}"
+        f"({_ordinal_percentile(lower_quantile)}\N{EN DASH}"
         f"{_ordinal_percentile(upper_quantile)} percentile)"
     )
 
