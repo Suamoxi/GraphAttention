@@ -41,16 +41,31 @@ def _load_generation(path: Path) -> tuple[np.ndarray, np.ndarray, tuple[str, ...
     )
 
 
-def _load_energy_summary(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _load_energy_summary(path: Path) -> dict[str, np.ndarray]:
     with path.open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     if not rows:
         raise ValueError(f"empty energy-spectrum summary: {path}")
-    return (
-        np.asarray([float(row["k"]) for row in rows], dtype=np.float64),
-        np.asarray([float(row["generated_mean"]) for row in rows], dtype=np.float64),
-        np.asarray([float(row["reference_mean"]) for row in rows], dtype=np.float64),
-    )
+
+    return {
+        "k": np.asarray([float(row["k"]) for row in rows], dtype=np.float64),
+        "generated_mean": np.asarray(
+            [float(row["generated_mean"]) for row in rows],
+            dtype=np.float64,
+        ),
+        "reference_mean": np.asarray(
+            [float(row["reference_mean"]) for row in rows],
+            dtype=np.float64,
+        ),
+        "generated_median": np.asarray(
+            [float(row["generated_median"]) for row in rows],
+            dtype=np.float64,
+        ),
+        "reference_median": np.asarray(
+            [float(row["reference_median"]) for row in rows],
+            dtype=np.float64,
+        ),
+    }
 
 
 def main() -> None:
@@ -86,47 +101,77 @@ def main() -> None:
 
     assert reference is not None
     assert channel_names is not None
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    pdf_dir = args.output_dir / "pdf"
 
     save_model_marginal_comparison(
         reference,
         generated_by_model,
         channel_names,
-        args.output_dir / "full_dit_pdf_comparison.png",
+        pdf_dir,
         bins=args.bins,
         dpi=args.dpi,
     )
 
-    energy_by_model: dict[str, np.ndarray] = {}
-    k_reference: np.ndarray | None = None
-    target_energy: np.ndarray | None = None
+    energy_payloads: dict[str, dict[str, np.ndarray]] = {}
     for label, path in (
         ("EDM", args.edm_energy_summary),
         ("DDPM", args.ddpm_energy_summary),
         ("Flow Matching (t-scale=1000)", args.flow_energy_summary),
     ):
-        k_values, generated_energy, reference_energy = _load_energy_summary(path)
-        if k_reference is None:
-            k_reference = k_values
-            target_energy = reference_energy
-        else:
-            np.testing.assert_allclose(k_values, k_reference, rtol=0.0, atol=0.0)
-            np.testing.assert_allclose(reference_energy, target_energy, rtol=1.0e-12, atol=1.0e-14)
-        energy_by_model[label] = generated_energy
+        energy_payloads[label] = _load_energy_summary(path)
 
-    assert k_reference is not None
-    assert target_energy is not None
+    k_reference = energy_payloads["EDM"]["k"]
+    reference_mean = energy_payloads["EDM"]["reference_mean"]
+    reference_median = energy_payloads["EDM"]["reference_median"]
+
+    for label, payload in energy_payloads.items():
+        np.testing.assert_allclose(payload["k"], k_reference, rtol=0.0, atol=0.0)
+        np.testing.assert_allclose(
+            payload["reference_mean"],
+            reference_mean,
+            rtol=1.0e-12,
+            atol=1.0e-14,
+            err_msg=f"{label} mean reference spectrum differs",
+        )
+        np.testing.assert_allclose(
+            payload["reference_median"],
+            reference_median,
+            rtol=1.0e-12,
+            atol=1.0e-14,
+            err_msg=f"{label} median reference spectrum differs",
+        )
+
+    generated_mean = {
+        label: payload["generated_mean"] for label, payload in energy_payloads.items()
+    }
+    generated_median = {
+        label: payload["generated_median"] for label, payload in energy_payloads.items()
+    }
+
     save_energy_spectrum_comparison(
         k_reference,
-        target_energy,
-        energy_by_model,
-        args.output_dir / "full_dit_energy_spectrum_comparison.png",
+        reference_mean,
+        generated_mean,
+        args.output_dir / "energy_spectrum_comparison_mean.png",
+        aggregation="mean",
+        eps=1.0e-30,
+        dpi=args.dpi,
+    )
+    save_energy_spectrum_comparison(
+        k_reference,
+        reference_median,
+        generated_median,
+        args.output_dir / "energy_spectrum_comparison_median.png",
+        aggregation="median",
         eps=1.0e-30,
         dpi=args.dpi,
     )
 
-    print(args.output_dir / "full_dit_pdf_comparison.png")
-    print(args.output_dir / "full_dit_energy_spectrum_comparison.png")
+    print(pdf_dir)
+    print(args.output_dir / "energy_spectrum_comparison_mean.png")
+    print(args.output_dir / "energy_spectrum_comparison_median.png")
 
 
 if __name__ == "__main__":
