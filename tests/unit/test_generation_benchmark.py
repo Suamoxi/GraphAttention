@@ -13,6 +13,11 @@ from graph_attention.evaluation import (
 )
 from graph_attention.evaluation.generation_benchmark import _fixed_mesh_samples
 from graph_attention.evaluation.nearest_reference import nearest_reference_diagnostics
+from graph_attention.evaluation.plotting import (
+    _display_name,
+    _ordinal_percentile,
+    save_model_marginal_comparison,
+)
 from graph_attention.evaluation.spectra import (
     sample_radial_spectra,
     sample_velocity_energy_spectra,
@@ -279,3 +284,41 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
 
     with pytest.raises(FileExistsError, match="overwrite=true"):
         run_generation_benchmark(cfg)
+
+
+def test_plotting_uses_explicit_cfd_variable_names() -> None:
+    assert _display_name("rho.value") == "Density rho"
+    assert _display_name("rhou.x") == "X-momentum rhou"
+    assert _display_name("rhov.y") == "Y-momentum rhov"
+    assert _display_name("rhow.z") == "Z-momentum rhow"
+    assert _display_name("rhoE.value") == "Total energy rhoE"
+    assert _ordinal_percentile(0.10) == "10th"
+    assert _ordinal_percentile(0.90) == "90th"
+
+
+def test_model_pdf_comparison_writes_one_plot_per_variable(tmp_path: Path) -> None:
+    channel_names = ("rho.value", "rhou.x", "rhov.y", "rhow.z", "rhoE.value")
+    reference = np.arange(2 * 4 * 5, dtype=np.float64).reshape(2, 4, 5)
+    generated = {
+        "EDM": reference + 0.1,
+        "DDPM": reference - 0.2,
+        "Flow Matching (t-scale=1000)": reference + 0.3,
+    }
+    output_dir = tmp_path / "pdf"
+
+    save_model_marginal_comparison(
+        reference,
+        generated,
+        channel_names,
+        output_dir,
+        bins=8,
+        dpi=72,
+    )
+
+    assert sorted(path.name for path in output_dir.glob("*.png")) == [
+        "pdf_Density_rho.png",
+        "pdf_Total_energy_rhoE.png",
+        "pdf_X-momentum_rhou.png",
+        "pdf_Y-momentum_rhov.png",
+        "pdf_Z-momentum_rhow.png",
+    ]
