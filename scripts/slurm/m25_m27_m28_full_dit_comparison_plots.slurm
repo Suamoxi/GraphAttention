@@ -14,8 +14,8 @@ IMAGE=/softs/local_arm/singularity/images/pyg25.03.sif
 PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
 RUN_ROOT=/scratch/coop/theret/GraphAttention_runs
 
-EDM_GEN_NAME=edm_karras_heun_steps18_sigmin0p004_sigmax160_rho7_seed5678
-DDPM_GEN_NAME=linear_ddpm_ancestral_start1000_steps1000_eta1_seed5678
+EDM_GEN_NAME=edm_karras_heun_steps50_sigmin0p004_sigmax160_rho7_seed5678
+DDPM_GEN_NAME=linear_ddpm_reverse_sde_euler_maruyama_steps50_denoise_eps0p001_seed5678
 FLOW_GEN_NAME=flow_heun_steps50_seed5678
 
 EDM_GEN=${RUN_ROOT}/m25_full_dit_edm_1000e_h128_l10_h4/generations/${EDM_GEN_NAME}
