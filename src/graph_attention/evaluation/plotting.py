@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 from pathlib import Path
 
@@ -10,10 +9,22 @@ import numpy as np
 
 from .spectra import CartesianGrid2D, scatter_to_grid
 
-_LINEWIDTH = 2.4
-_LABEL_FONTSIZE = 14
-_TICK_FONTSIZE = 12
-_LEGEND_FONTSIZE = 11
+_LINEWIDTH = 3.0
+_LABEL_FONTSIZE = 18
+_TICK_FONTSIZE = 16
+_LEGEND_FONTSIZE = 14
+_TITLE_FONTSIZE = 18
+_SPINE_WIDTH = 1.5
+_TICK_WIDTH = 1.5
+_TICK_LENGTH = 6
+
+_CHANNEL_DISPLAY_NAMES = {
+    "rho": "Density rho",
+    "rhou": "X-momentum rhou",
+    "rhov": "Y-momentum rhov",
+    "rhow": "Z-momentum rhow",
+    "rhoE": "Total energy rhoE",
+}
 
 
 def save_marginal_plots(
@@ -25,19 +36,23 @@ def save_marginal_plots(
     bins: int,
     dpi: int,
 ) -> None:
-    """Save pooled generated/reference marginal histograms."""
+    """Save one pooled generated/reference PDF figure per CFD variable."""
+
+    if bins < 2:
+        raise ValueError("bins must be at least 2")
 
     plt = _pyplot()
     output_dir.mkdir(parents=True, exist_ok=True)
-    for channel, name in enumerate(channel_names):
-        figure, axis = plt.subplots(figsize=(6.4, 4.2))
+    for channel, raw_name in enumerate(channel_names):
+        name = _display_name(raw_name)
+        figure, axis = plt.subplots(figsize=(7.0, 5.0))
         axis.hist(
             reference[..., channel].reshape(-1),
             bins=bins,
             density=True,
             histtype="step",
             linewidth=_LINEWIDTH,
-            label="test reference",
+            label="Test reference",
         )
         axis.hist(
             generated[..., channel].reshape(-1),
@@ -45,8 +60,9 @@ def save_marginal_plots(
             density=True,
             histtype="step",
             linewidth=_LINEWIDTH,
-            label="generated",
+            label="Generated",
         )
+        axis.set_title(f"PDF - {name}", fontsize=_TITLE_FONTSIZE)
         axis.set_xlabel(name, fontsize=_LABEL_FONTSIZE)
         axis.set_ylabel("PDF", fontsize=_LABEL_FONTSIZE)
         _style_axis(axis)
@@ -60,17 +76,18 @@ def save_model_marginal_comparison(
     reference: np.ndarray,
     generated_by_model: dict[str, np.ndarray],
     channel_names: tuple[str, ...],
-    output_path: Path,
+    output_dir: Path,
     *,
     bins: int,
     dpi: int,
 ) -> None:
-    """Save one multi-panel PDF comparison for several generative models."""
+    """Save one PDF comparison figure per CFD variable for several models."""
 
     if bins < 2:
         raise ValueError("bins must be at least 2")
     if not generated_by_model:
         raise ValueError("at least one generated model population is required")
+
     reference_values = np.asarray(reference, dtype=np.float64)
     if reference_values.ndim != 3:
         raise ValueError("reference must have shape [S, N, C]")
@@ -92,20 +109,10 @@ def save_model_marginal_comparison(
         populations[label] = array
 
     plt = _pyplot()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    channel_count = len(channel_names)
-    column_count = min(3, max(channel_count, 1))
-    row_count = math.ceil(channel_count / column_count)
-    figure, axes = plt.subplots(
-        row_count,
-        column_count,
-        figsize=(4.8 * column_count, 3.8 * row_count),
-        squeeze=False,
-    )
-    flat_axes = axes.reshape(-1)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    for channel, name in enumerate(channel_names):
-        axis = flat_axes[channel]
+    for channel, raw_name in enumerate(channel_names):
+        name = _display_name(raw_name)
         arrays = [
             reference_values[..., channel].reshape(-1),
             *(values[..., channel].reshape(-1) for values in populations.values()),
@@ -119,6 +126,8 @@ def save_model_marginal_comparison(
 
         edges = np.linspace(lower, upper, bins + 1, dtype=np.float64)
         centers = 0.5 * (edges[:-1] + edges[1:])
+
+        figure, axis = plt.subplots(figsize=(7.0, 5.0))
         reference_pdf, _ = np.histogram(arrays[0], bins=edges, density=True)
         axis.plot(
             centers,
@@ -131,25 +140,14 @@ def save_model_marginal_comparison(
             density, _ = np.histogram(values, bins=edges, density=True)
             axis.plot(centers, density, linewidth=_LINEWIDTH, label=label)
 
+        axis.set_title(f"PDF comparison - {name}", fontsize=_TITLE_FONTSIZE)
         axis.set_xlabel(name, fontsize=_LABEL_FONTSIZE)
         axis.set_ylabel("PDF", fontsize=_LABEL_FONTSIZE)
         _style_axis(axis)
-
-    for axis in flat_axes[channel_count:]:
-        axis.set_axis_off()
-
-    handles, labels = flat_axes[0].get_legend_handles_labels()
-    figure.legend(
-        handles,
-        labels,
-        loc="lower center",
-        ncol=len(labels),
-        fontsize=_LEGEND_FONTSIZE,
-        frameon=False,
-    )
-    figure.tight_layout(rect=(0.0, 0.08, 1.0, 1.0))
-    figure.savefig(output_path, dpi=dpi)
-    plt.close(figure)
+        axis.legend(fontsize=_LEGEND_FONTSIZE)
+        figure.tight_layout()
+        figure.savefig(output_dir / f"pdf_{_safe_name(name)}.png", dpi=dpi)
+        plt.close(figure)
 
 
 def save_spectrum_plots(
@@ -168,7 +166,8 @@ def save_spectrum_plots(
     plt = _pyplot()
     output_dir.mkdir(parents=True, exist_ok=True)
     physical_k = np.asarray(k_centers, dtype=np.float64)
-    for channel, name in enumerate(channel_names):
+    for channel, raw_name in enumerate(channel_names):
+        name = _display_name(raw_name)
         reference_channel = np.asarray(reference_power[channel], dtype=np.float64)
         generated_channel = np.asarray(generated_power[channel], dtype=np.float64)
         ratio = np.divide(
@@ -178,27 +177,27 @@ def save_spectrum_plots(
             where=reference_channel > eps,
         )
 
-        figure, axes = plt.subplots(2, 1, figsize=(6.4, 7.0), sharex=True)
+        figure, axes = plt.subplots(2, 1, figsize=(7.0, 7.8), sharex=True)
         axes[0].loglog(
             physical_k,
             np.maximum(reference_channel, eps),
             linewidth=_LINEWIDTH,
-            label="test reference",
+            label="Test reference",
         )
         axes[0].loglog(
             physical_k,
             np.maximum(generated_channel, eps),
             linewidth=_LINEWIDTH,
-            label="generated",
+            label="Generated",
         )
-        axes[0].set_ylabel("radial shell power", fontsize=_LABEL_FONTSIZE)
+        axes[0].set_ylabel("Radial shell power", fontsize=_LABEL_FONTSIZE)
         _style_axis(axes[0])
         axes[0].legend(fontsize=_LEGEND_FONTSIZE)
 
         axes[1].semilogx(physical_k, ratio, linewidth=_LINEWIDTH)
-        axes[1].axhline(1.0, linewidth=1.5, linestyle="--")
+        axes[1].axhline(1.0, linewidth=1.8, linestyle="--")
         axes[1].set_xlabel(r"Wavenumber $k$", fontsize=_LABEL_FONTSIZE)
-        axes[1].set_ylabel("generated / reference", fontsize=_LABEL_FONTSIZE)
+        axes[1].set_ylabel("Generated / reference", fontsize=_LABEL_FONTSIZE)
         axes[1].set_xlim(float(physical_k[0]), float(k_nyquist))
         _style_axis(axes[1])
 
@@ -214,10 +213,10 @@ def save_spectrum_plots(
             axis="x",
             which="both",
             labelsize=_TICK_FONTSIZE,
-            width=1.4,
-            length=5,
+            width=_TICK_WIDTH,
+            length=_TICK_LENGTH,
         )
-        figure.suptitle(name, fontsize=_LABEL_FONTSIZE)
+        figure.suptitle(name, fontsize=_TITLE_FONTSIZE)
         figure.tight_layout()
         figure.savefig(output_dir / f"{_safe_name(name)}.png", dpi=dpi)
         plt.close(figure)
@@ -235,12 +234,7 @@ def save_energy_spectrum_population_plots(
     lower_quantile: float = 0.10,
     upper_quantile: float = 0.90,
 ) -> None:
-    """Plot generated and test energy-spectrum populations on shared axes.
-
-    Two figures are written: one using the population mean as the central
-    curve and one using the population median. Both show the 10--90% snapshot
-    interval for each population.
-    """
+    """Plot energy-spectrum populations with explicit snapshot-variability bands."""
 
     plt = _pyplot()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -256,19 +250,24 @@ def save_energy_spectrum_population_plots(
     generated_high = np.quantile(generated, upper_quantile, axis=0)
     reference_low = np.quantile(reference, lower_quantile, axis=0)
     reference_high = np.quantile(reference, upper_quantile, axis=0)
+    variability_label = (
+        "snapshot variability band "
+        f"({_ordinal_percentile(lower_quantile)}-"
+        f"{_ordinal_percentile(upper_quantile)} percentile)"
+    )
 
     aggregations = {
         "mean": (np.mean(generated, axis=0), np.mean(reference, axis=0)),
         "median": (np.median(generated, axis=0), np.median(reference, axis=0)),
     }
     for aggregation, (generated_center, reference_center) in aggregations.items():
-        figure, axis = plt.subplots(figsize=(6.8, 4.8))
+        figure, axis = plt.subplots(figsize=(7.4, 5.4))
 
         reference_line = axis.loglog(
             physical_k,
             np.maximum(reference_center, eps),
             linewidth=_LINEWIDTH,
-            label=f"test reference {aggregation}",
+            label=f"Test reference {aggregation}",
         )[0]
         axis.fill_between(
             physical_k,
@@ -276,14 +275,14 @@ def save_energy_spectrum_population_plots(
             np.maximum(reference_high, eps),
             alpha=0.2,
             color=reference_line.get_color(),
-            label="test reference 10-90%",
+            label=f"Test reference {variability_label}",
         )
 
         generated_line = axis.loglog(
             physical_k,
             np.maximum(generated_center, eps),
             linewidth=_LINEWIDTH,
-            label=f"generated {aggregation}",
+            label=f"Generated {aggregation}",
         )[0]
         axis.fill_between(
             physical_k,
@@ -291,7 +290,7 @@ def save_energy_spectrum_population_plots(
             np.maximum(generated_high, eps),
             alpha=0.2,
             color=generated_line.get_color(),
-            label="generated 10-90%",
+            label=f"Generated {variability_label}",
         )
 
         axis.set_xlabel(r"Wavenumber $k$", fontsize=_LABEL_FONTSIZE)
@@ -312,13 +311,13 @@ def save_energy_spectrum_population_plots(
             axis="x",
             which="both",
             labelsize=_TICK_FONTSIZE,
-            width=1.4,
-            length=5,
+            width=_TICK_WIDTH,
+            length=_TICK_LENGTH,
         )
         axis.set_title(
             "Velocity-based 2-D kinetic-energy spectrum\n"
-            f"{aggregation} with 10-90% snapshot interval",
-            fontsize=_LABEL_FONTSIZE,
+            f"{aggregation.capitalize()} with {variability_label}",
+            fontsize=_TITLE_FONTSIZE,
         )
         figure.tight_layout()
         figure.savefig(output_dir / f"energy_spectrum_{aggregation}.png", dpi=dpi)
@@ -331,10 +330,14 @@ def save_energy_spectrum_comparison(
     generated_energy_by_model: dict[str, np.ndarray],
     output_path: Path,
     *,
+    aggregation: str,
     eps: float,
     dpi: int,
 ) -> None:
-    """Save one mean energy-spectrum comparison in physical wavenumber space."""
+    """Save one cross-model energy-spectrum comparison in physical wavenumber space."""
+
+    if aggregation not in {"mean", "median"}:
+        raise ValueError("aggregation must be 'mean' or 'median'")
 
     physical_k = np.asarray(k_centers, dtype=np.float64)
     reference = np.asarray(reference_energy, dtype=np.float64)
@@ -349,7 +352,7 @@ def save_energy_spectrum_comparison(
 
     plt = _pyplot()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    figure, axis = plt.subplots(figsize=(7.2, 5.2))
+    figure, axis = plt.subplots(figsize=(7.4, 5.4))
     axis.loglog(
         physical_k,
         np.maximum(reference, eps),
@@ -370,6 +373,10 @@ def save_energy_spectrum_comparison(
             label=label,
         )
 
+    axis.set_title(
+        f"Energy spectrum comparison - {aggregation}",
+        fontsize=_TITLE_FONTSIZE,
+    )
     axis.set_xlabel(r"Wavenumber $k$", fontsize=_LABEL_FONTSIZE)
     axis.set_ylabel(r"$E_{2D}(k)$", fontsize=_LABEL_FONTSIZE)
     axis.set_xlim(float(physical_k[0]), float(physical_k[-1]))
@@ -406,13 +413,14 @@ def save_nearest_reference_field_examples(
         sample_dir = output_dir / f"generated_{sample_index:04d}"
         sample_dir.mkdir(parents=True, exist_ok=True)
         for channel in range(channel_count):
-            name = channel_names[channel]
+            raw_name = channel_names[channel]
+            name = _display_name(raw_name)
             generated_field = scatter_to_grid(generated[sample_index, :, channel], grid)
             reference_field = scatter_to_grid(reference[reference_index, :, channel], grid)
             lower = float(min(np.min(reference_field), np.min(generated_field)))
             upper = float(max(np.max(reference_field), np.max(generated_field)))
 
-            figure, axes = plt.subplots(1, 2, figsize=(8.2, 3.8))
+            figure, axes = plt.subplots(1, 2, figsize=(9.4, 4.3))
             generated_image = axes[0].imshow(
                 generated_field,
                 origin="lower",
@@ -421,8 +429,8 @@ def save_nearest_reference_field_examples(
                 cmap="RdBu_r",
             )
             axes[0].set_title(
-                f"generated\nkey={generated_ids[sample_index]}",
-                fontsize=_LABEL_FONTSIZE,
+                f"Generated\nkey={generated_ids[sample_index]}",
+                fontsize=_TITLE_FONTSIZE,
             )
             reference_image = axes[1].imshow(
                 reference_field,
@@ -432,8 +440,8 @@ def save_nearest_reference_field_examples(
                 cmap="RdBu_r",
             )
             axes[1].set_title(
-                f"nearest test\n{reference_ids[reference_index]}",
-                fontsize=_LABEL_FONTSIZE,
+                f"Nearest test\n{reference_ids[reference_index]}",
+                fontsize=_TITLE_FONTSIZE,
             )
             for axis in axes:
                 _style_axis(axis)
@@ -449,16 +457,36 @@ def save_nearest_reference_field_examples(
                 fraction=0.046,
                 pad=0.04,
             )
-            generated_colorbar.ax.tick_params(labelsize=_TICK_FONTSIZE, width=1.2)
-            reference_colorbar.ax.tick_params(labelsize=_TICK_FONTSIZE, width=1.2)
+            generated_colorbar.ax.tick_params(
+                labelsize=_TICK_FONTSIZE,
+                width=_TICK_WIDTH,
+            )
+            reference_colorbar.ax.tick_params(
+                labelsize=_TICK_FONTSIZE,
+                width=_TICK_WIDTH,
+            )
             figure.suptitle(
                 f"{name} | descriptor distance="
                 f"{float(nearest_reference_distances[sample_index]):.4f}",
-                fontsize=_LABEL_FONTSIZE,
+                fontsize=_TITLE_FONTSIZE,
             )
             figure.tight_layout()
             figure.savefig(sample_dir / f"{_safe_name(name)}.png", dpi=dpi)
             plt.close(figure)
+
+
+def _display_name(name: str) -> str:
+    base_name = name.split(".", maxsplit=1)[0]
+    return _CHANNEL_DISPLAY_NAMES.get(base_name, name)
+
+
+def _ordinal_percentile(quantile: float) -> str:
+    percentile = int(round(100.0 * quantile))
+    if 10 <= percentile % 100 <= 20:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(percentile % 10, "th")
+    return f"{percentile}{suffix}"
 
 
 def _style_axis(axis) -> None:
@@ -466,12 +494,17 @@ def _style_axis(axis) -> None:
         axis="both",
         which="major",
         labelsize=_TICK_FONTSIZE,
-        width=1.4,
-        length=5,
+        width=_TICK_WIDTH,
+        length=_TICK_LENGTH,
     )
-    axis.tick_params(axis="both", which="minor", width=1.2, length=3)
+    axis.tick_params(
+        axis="both",
+        which="minor",
+        width=max(_TICK_WIDTH - 0.2, 1.0),
+        length=max(_TICK_LENGTH - 2, 3),
+    )
     for spine in axis.spines.values():
-        spine.set_linewidth(1.2)
+        spine.set_linewidth(_SPINE_WIDTH)
 
 
 def _safe_name(value: str) -> str:
