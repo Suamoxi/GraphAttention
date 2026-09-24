@@ -56,6 +56,12 @@ do
     }
 done
 
+if [ -d "$OUTPUT_DIR" ]; then
+    echo "Replacing existing comparison plot directory:"
+    echo "  $OUTPUT_DIR"
+    rm -rf "$OUTPUT_DIR"
+fi
+
 singularity exec \
     -B /home \
     -B /scratch \
@@ -71,12 +77,25 @@ singularity exec \
         --bins 128 \
         --dpi 220
 
-test -s "${OUTPUT_DIR}/full_dit_pdf_comparison.png"
-test -s "${OUTPUT_DIR}/full_dit_energy_spectrum_comparison.png"
+for file in \
+    "${OUTPUT_DIR}/pdf/pdf_Density_rho.png" \
+    "${OUTPUT_DIR}/pdf/pdf_X-momentum_rhou.png" \
+    "${OUTPUT_DIR}/pdf/pdf_Y-momentum_rhov.png" \
+    "${OUTPUT_DIR}/pdf/pdf_Z-momentum_rhow.png" \
+    "${OUTPUT_DIR}/pdf/pdf_Total_energy_rhoE.png" \
+    "${OUTPUT_DIR}/energy_spectrum_comparison_mean.png" \
+    "${OUTPUT_DIR}/energy_spectrum_comparison_median.png"
+do
+    test -s "$file" || {
+        echo "ERROR: expected plot was not generated: $file"
+        exit 1
+    }
+done
 
 echo
-echo "PDF comparison:"
-echo "  ${OUTPUT_DIR}/full_dit_pdf_comparison.png"
-echo "Energy spectrum comparison:"
-echo "  ${OUTPUT_DIR}/full_dit_energy_spectrum_comparison.png"
+echo "PDF comparisons:"
+echo "  ${OUTPUT_DIR}/pdf/"
+echo "Energy spectrum comparisons:"
+echo "  ${OUTPUT_DIR}/energy_spectrum_comparison_mean.png"
+echo "  ${OUTPUT_DIR}/energy_spectrum_comparison_median.png"
 echo "============================================================"
