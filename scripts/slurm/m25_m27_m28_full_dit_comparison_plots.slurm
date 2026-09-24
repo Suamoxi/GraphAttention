@@ -41,7 +41,13 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     exit 1
 fi
 
-for file in     "${EDM_GEN}/generated_test.pt"     "${DDPM_GEN}/generated_test.pt"     "${FLOW_GEN}/generated_test.pt"     "${EDM_BENCH}/energy_spectrum_summary.csv"     "${DDPM_BENCH}/energy_spectrum_summary.csv"     "${FLOW_BENCH}/energy_spectrum_summary.csv"
+for file in \
+    "${EDM_GEN}/generated_test.pt" \
+    "${DDPM_GEN}/generated_test.pt" \
+    "${FLOW_GEN}/generated_test.pt" \
+    "${EDM_BENCH}/energy_spectrum_summary.csv" \
+    "${DDPM_BENCH}/energy_spectrum_summary.csv" \
+    "${FLOW_BENCH}/energy_spectrum_summary.csv"
 do
     test -s "$file" || {
         echo "ERROR: missing required artifact: $file"
@@ -49,7 +55,20 @@ do
     }
 done
 
-singularity exec     -B /home     -B /scratch     "$IMAGE"     "$PYTHON" -u -m scripts.plot_full_dit_comparison         --edm-generation "${EDM_GEN}/generated_test.pt"         --ddpm-generation "${DDPM_GEN}/generated_test.pt"         --flow-generation "${FLOW_GEN}/generated_test.pt"         --edm-energy-summary "${EDM_BENCH}/energy_spectrum_summary.csv"         --ddpm-energy-summary "${DDPM_BENCH}/energy_spectrum_summary.csv"         --flow-energy-summary "${FLOW_BENCH}/energy_spectrum_summary.csv"         --output-dir "$OUTPUT_DIR"         --bins 128         --dpi 220
+singularity exec \
+    -B /home \
+    -B /scratch \
+    "$IMAGE" \
+    "$PYTHON" -u -m scripts.plot_full_dit_comparison \
+        --edm-generation "${EDM_GEN}/generated_test.pt" \
+        --ddpm-generation "${DDPM_GEN}/generated_test.pt" \
+        --flow-generation "${FLOW_GEN}/generated_test.pt" \
+        --edm-energy-summary "${EDM_BENCH}/energy_spectrum_summary.csv" \
+        --ddpm-energy-summary "${DDPM_BENCH}/energy_spectrum_summary.csv" \
+        --flow-energy-summary "${FLOW_BENCH}/energy_spectrum_summary.csv" \
+        --output-dir "$OUTPUT_DIR" \
+        --bins 128 \
+        --dpi 220
 
 test -s "${OUTPUT_DIR}/full_dit_pdf_comparison.png"
 test -s "${OUTPUT_DIR}/full_dit_energy_spectrum_comparison.png"
