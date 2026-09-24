@@ -72,7 +72,7 @@ def main() -> None:
     for label, path in (
         ("EDM", args.edm_generation),
         ("DDPM", args.ddpm_generation),
-        ("Flow Matching", args.flow_generation),
+        ("Flow Matching (t-scale=1000)", args.flow_generation),
     ):
         generated, current_reference, current_names = _load_generation(path)
         if reference is None:
@@ -103,7 +103,7 @@ def main() -> None:
     for label, path in (
         ("EDM", args.edm_energy_summary),
         ("DDPM", args.ddpm_energy_summary),
-        ("Flow Matching", args.flow_energy_summary),
+        ("Flow Matching (t-scale=1000)", args.flow_energy_summary),
     ):
         k_values, generated_energy, reference_energy = _load_energy_summary(path)
         if k_reference is None:
