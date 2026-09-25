@@ -250,12 +250,6 @@ def save_energy_spectrum_population_plots(
     generated_high = np.quantile(generated, upper_quantile, axis=0)
     reference_low = np.quantile(reference, lower_quantile, axis=0)
     reference_high = np.quantile(reference, upper_quantile, axis=0)
-    variability_label = (
-        "snapshot variability band "
-        f"({_ordinal_percentile(lower_quantile)}\N{EN DASH}"
-        f"{_ordinal_percentile(upper_quantile)} percentile)"
-    )
-
     aggregations = {
         "mean": (np.mean(generated, axis=0), np.mean(reference, axis=0)),
         "median": (np.median(generated, axis=0), np.median(reference, axis=0)),
