@@ -275,7 +275,7 @@ def save_energy_spectrum_population_plots(
             np.maximum(reference_high, eps),
             alpha=0.2,
             color=reference_line.get_color(),
-            label=f"Test reference {variability_label}",
+            label="Variability band",
         )
 
         generated_line = axis.loglog(
@@ -290,7 +290,7 @@ def save_energy_spectrum_population_plots(
             np.maximum(generated_high, eps),
             alpha=0.2,
             color=generated_line.get_color(),
-            label=f"Generated {variability_label}",
+            label="Variability band",
         )
 
         axis.set_xlabel(r"Wavenumber $k$", fontsize=_LABEL_FONTSIZE)
@@ -316,7 +316,7 @@ def save_energy_spectrum_population_plots(
         )
         axis.set_title(
             "Velocity-based 2-D kinetic-energy spectrum\n"
-            f"{aggregation.capitalize()} with {variability_label}",
+            f"{aggregation.capitalize()}",
             fontsize=_TITLE_FONTSIZE,
         )
         figure.tight_layout()
@@ -429,7 +429,7 @@ def save_nearest_reference_field_examples(
                 cmap="RdBu_r",
             )
             axes[0].set_title(
-                f"Generated\nkey={generated_ids[sample_index]}",
+                f"Generated snapshot\nkey={generated_ids[sample_index]}",
                 fontsize=_TITLE_FONTSIZE,
             )
             reference_image = axes[1].imshow(
@@ -440,7 +440,7 @@ def save_nearest_reference_field_examples(
                 cmap="RdBu_r",
             )
             axes[1].set_title(
-                f"Nearest test\n{reference_ids[reference_index]}",
+                f"Test reference\n{reference_ids[reference_index]}",
                 fontsize=_TITLE_FONTSIZE,
             )
             for axis in axes:
@@ -457,6 +457,8 @@ def save_nearest_reference_field_examples(
                 fraction=0.046,
                 pad=0.04,
             )
+            generated_colorbar.set_label(name, fontsize=_LABEL_FONTSIZE)
+            reference_colorbar.set_label(name, fontsize=_LABEL_FONTSIZE)
             generated_colorbar.ax.tick_params(
                 labelsize=_TICK_FONTSIZE,
                 width=_TICK_WIDTH,
