@@ -26,6 +26,13 @@ _CHANNEL_DISPLAY_NAMES = {
     "rhoE": "Total energy rhoE",
 }
 
+_COMPARISON_LINE_STYLES = {
+    "Test reference": {"color": "black", "linestyle": "-", "linewidth": _LINEWIDTH + 0.4},
+    "EDM": {"linestyle": "--", "linewidth": _LINEWIDTH},
+    "DDPM": {"linestyle": "-.", "linewidth": _LINEWIDTH},
+    "Flow Matching": {"linestyle": ":", "linewidth": _LINEWIDTH + 0.2},
+}
+
 
 def save_marginal_plots(
     generated: np.ndarray,
@@ -132,13 +139,17 @@ def save_model_marginal_comparison(
         axis.plot(
             centers,
             reference_pdf,
-            linewidth=_LINEWIDTH + 0.4,
-            color="black",
             label="Test reference",
+            **_comparison_style("Test reference"),
         )
         for (label, _), values in zip(populations.items(), arrays[1:], strict=True):
             density, _ = np.histogram(values, bins=edges, density=True)
-            axis.plot(centers, density, linewidth=_LINEWIDTH, label=label)
+            axis.plot(
+                centers,
+                density,
+                label=label,
+                **_comparison_style(label),
+            )
 
         axis.set_title(f"PDF comparison - {name}", fontsize=_TITLE_FONTSIZE)
         axis.set_xlabel(name, fontsize=_LABEL_FONTSIZE)
@@ -350,9 +361,8 @@ def save_energy_spectrum_comparison(
     axis.loglog(
         physical_k,
         np.maximum(reference, eps),
-        linewidth=_LINEWIDTH + 0.4,
-        color="black",
         label="Test reference",
+        **_comparison_style("Test reference"),
     )
     for label, values in generated_energy_by_model.items():
         energy = np.asarray(values, dtype=np.float64)
@@ -363,8 +373,8 @@ def save_energy_spectrum_comparison(
         axis.loglog(
             physical_k,
             np.maximum(energy, eps),
-            linewidth=_LINEWIDTH,
             label=label,
+            **_comparison_style(label),
         )
 
     axis.set_title(
@@ -469,6 +479,10 @@ def save_nearest_reference_field_examples(
             figure.tight_layout()
             figure.savefig(sample_dir / f"{_safe_name(name)}.png", dpi=dpi)
             plt.close(figure)
+
+
+def _comparison_style(label: str) -> dict[str, object]:
+    return dict(_COMPARISON_LINE_STYLES.get(label, {"linewidth": _LINEWIDTH}))
 
 
 def _display_name(name: str) -> str:
