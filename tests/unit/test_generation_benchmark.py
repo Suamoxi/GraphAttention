@@ -14,6 +14,7 @@ from graph_attention.evaluation import (
 from graph_attention.evaluation.generation_benchmark import _fixed_mesh_samples
 from graph_attention.evaluation.nearest_reference import nearest_reference_diagnostics
 from graph_attention.evaluation.plotting import (
+    _comparison_style,
     _display_name,
     _ordinal_percentile,
     save_model_marginal_comparison,
@@ -302,7 +303,7 @@ def test_model_pdf_comparison_writes_one_plot_per_variable(tmp_path: Path) -> No
     generated = {
         "EDM": reference + 0.1,
         "DDPM": reference - 0.2,
-        "Flow Matching (t-scale=1000)": reference + 0.3,
+        "Flow Matching": reference + 0.3,
     }
     output_dir = tmp_path / "pdf"
 
@@ -322,3 +323,18 @@ def test_model_pdf_comparison_writes_one_plot_per_variable(tmp_path: Path) -> No
         "pdf_Y-momentum_rhov.png",
         "pdf_Z-momentum_rhow.png",
     ]
+
+
+def test_comparison_models_use_distinct_line_styles() -> None:
+    styles = {
+        label: _comparison_style(label)["linestyle"]
+        for label in ("Test reference", "EDM", "DDPM", "Flow Matching")
+    }
+
+    assert styles == {
+        "Test reference": "-",
+        "EDM": "--",
+        "DDPM": "-.",
+        "Flow Matching": ":",
+    }
+    assert len(set(styles.values())) == len(styles)
