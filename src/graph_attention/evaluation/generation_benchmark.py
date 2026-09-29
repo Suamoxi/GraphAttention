@@ -426,6 +426,77 @@ def empirical_wasserstein_1(left: np.ndarray, right: np.ndarray) -> float:
     return float(np.mean(np.abs(np.sort(lhs) - np.sort(rhs))))
 
 
+def standardized_wasserstein_rows(
+    generated: np.ndarray,
+    reference: np.ndarray,
+    channel_names: tuple[str, ...],
+    mean: np.ndarray,
+    scale: np.ndarray,
+) -> list[dict[str, float | str]]:
+    """Compute per-channel W1 before and after frozen training standardization."""
+
+    generated_values = np.asarray(generated, dtype=np.float64)
+    reference_values = np.asarray(reference, dtype=np.float64)
+    training_mean = np.asarray(mean, dtype=np.float64).reshape(-1)
+    training_scale = np.asarray(scale, dtype=np.float64).reshape(-1)
+
+    if generated_values.shape != reference_values.shape:
+        raise ValueError("generated and reference arrays must have identical shape")
+    if generated_values.ndim < 2:
+        raise ValueError("generated and reference arrays must end with a channel dimension")
+
+    channel_count = generated_values.shape[-1]
+    if len(channel_names) != channel_count:
+        raise ValueError("channel_names do not match the final array dimension")
+    if training_mean.shape != (channel_count,) or training_scale.shape != (channel_count,):
+        raise ValueError("training mean/scale must contain one value per channel")
+    if not np.isfinite(generated_values).all() or not np.isfinite(reference_values).all():
+        raise ValueError("generated/reference values must be finite")
+    if not np.isfinite(training_mean).all() or not np.isfinite(training_scale).all():
+        raise ValueError("training mean/scale must be finite")
+    if np.any(training_scale <= 0.0):
+        raise ValueError("training scale must be strictly positive")
+
+    rows: list[dict[str, float | str]] = []
+    for channel, name in enumerate(channel_names):
+        generated_channel = generated_values[..., channel].reshape(-1)
+        reference_channel = reference_values[..., channel].reshape(-1)
+        generated_standardized = (
+            generated_channel - training_mean[channel]
+        ) / training_scale[channel]
+        reference_standardized = (
+            reference_channel - training_mean[channel]
+        ) / training_scale[channel]
+
+        wasserstein_nondimensional = empirical_wasserstein_1(
+            generated_channel,
+            reference_channel,
+        )
+        wasserstein_standardized = empirical_wasserstein_1(
+            generated_standardized,
+            reference_standardized,
+        )
+        expected_standardized = wasserstein_nondimensional / training_scale[channel]
+        if not np.isclose(
+            wasserstein_standardized,
+            expected_standardized,
+            rtol=1.0e-12,
+            atol=1.0e-14,
+        ):
+            raise RuntimeError("standardized Wasserstein scaling consistency check failed")
+
+        rows.append(
+            {
+                "channel": name,
+                "training_mean": float(training_mean[channel]),
+                "training_scale": float(training_scale[channel]),
+                "wasserstein_1_nondimensional": wasserstein_nondimensional,
+                "wasserstein_1_standardized": wasserstein_standardized,
+            }
+        )
+    return rows
+
+
 def _load_generation_artifact(path: Path) -> dict[str, Any]:
     payload = torch.load(path, map_location="cpu", weights_only=True)
     if not isinstance(payload, dict):
