@@ -11,7 +11,10 @@ from graph_attention.evaluation import (
     infer_cartesian_grid_2d,
     run_generation_benchmark,
 )
-from graph_attention.evaluation.generation_benchmark import _fixed_mesh_samples
+from graph_attention.evaluation.generation_benchmark import (
+    _fixed_mesh_samples,
+    standardized_wasserstein_rows,
+)
 from graph_attention.evaluation.nearest_reference import nearest_reference_diagnostics
 from graph_attention.evaluation.plotting import (
     _comparison_style,
@@ -338,3 +341,28 @@ def test_comparison_models_use_distinct_line_styles() -> None:
         "Flow Matching": ":",
     }
     assert len(set(styles.values())) == len(styles)
+
+
+def test_standardized_wasserstein_removes_channel_scale_difference() -> None:
+    reference = np.array(
+        [
+            [0.0, 0.0],
+            [2.0, 20.0],
+            [4.0, 40.0],
+        ],
+        dtype=np.float64,
+    )
+    generated = reference + np.array([2.0, 20.0])
+
+    rows = standardized_wasserstein_rows(
+        generated,
+        reference,
+        ("a", "b"),
+        mean=np.array([10.0, -5.0]),
+        scale=np.array([2.0, 20.0]),
+    )
+
+    assert rows[0]["wasserstein_1_nondimensional"] == pytest.approx(2.0)
+    assert rows[1]["wasserstein_1_nondimensional"] == pytest.approx(20.0)
+    assert rows[0]["wasserstein_1_standardized"] == pytest.approx(1.0)
+    assert rows[1]["wasserstein_1_standardized"] == pytest.approx(1.0)
