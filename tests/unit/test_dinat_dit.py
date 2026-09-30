@@ -405,7 +405,6 @@ def test_torch_sparse_sddmm_matches_edge_gather() -> None:
         topology.crow_indices,
         topology.row_indices,
         topology.col_indices,
-        topology.transpose_order,
         scale,
     )
 
@@ -456,10 +455,8 @@ def test_torch_sparse_spmm_matches_index_add() -> None:
     actual = _TorchSparseSpMM.apply(
         weights,
         value,
-        topology.crow_indices,
         topology.row_indices,
         topology.col_indices,
-        topology.transpose_order,
     )
 
     torch.testing.assert_close(actual, expected, rtol=1.0e-5, atol=1.0e-6)
