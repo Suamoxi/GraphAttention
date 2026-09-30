@@ -458,9 +458,8 @@ def test_torch_sparse_spmm_matches_index_add() -> None:
         weights,
         value,
         topology.crow_indices,
+        topology.row_indices,
         topology.col_indices,
-        topology.transpose_crow_indices,
-        topology.transpose_col_indices,
         topology.transpose_order,
     )
 
