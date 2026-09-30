@@ -132,6 +132,94 @@ class AVBPSampleSpec:
             raise ValueError("AVBPSampleSpec.case_id must be a non-empty string when provided")
 
 
+class AVBPDirectoryHDF5Dataset(AVBPHDF5Dataset):
+    """Discover fixed-mesh AVBP snapshots from one directory.
+
+    This is the common fixed-mesh 3-D case: every snapshot shares one AVBP mesh
+    file and one optional case definition. Snapshot file stems become stable
+    sample IDs, avoiding an eager pass through all HDF5 snapshots just to
+    discover identifiers.
+    """
+
+    def __init__(
+        self,
+        snapshot_dir: str | Path,
+        mesh_file: str | Path,
+        *,
+        snapshot_pattern: str = "*.h5",
+        mesh_id: str = "fixed_avbp_mesh",
+        case_file: str | Path | None = None,
+        case_id: str | None = None,
+        field_names: Sequence[str] = _DEFAULT_FIELDS,
+        coord_paths: Sequence[str] = _DEFAULT_COORD_PATHS,
+        connectivity_path: str = _DEFAULT_CONNECTIVITY_PATH,
+        connectivity_indexing: str = "auto",
+        catalog: FieldCatalog | None = None,
+    ) -> None:
+        directory = Path(snapshot_dir).expanduser().resolve()
+        if not directory.is_dir():
+            raise NotADirectoryError(
+                f"snapshot_dir is not an accessible directory: {directory}"
+            )
+        mesh_path = Path(mesh_file).expanduser().resolve()
+        if not mesh_path.is_file():
+            raise FileNotFoundError(f"mesh_file is not an accessible file: {mesh_path}")
+        if not isinstance(snapshot_pattern, str) or not snapshot_pattern.strip():
+            raise ValueError("snapshot_pattern must be a non-empty string")
+        if not isinstance(mesh_id, str) or not mesh_id.strip():
+            raise ValueError("mesh_id must be a non-empty string")
+        if (case_file is None) != (case_id is None):
+            raise ValueError("case_file and case_id must either both be set or both be omitted")
+        if case_id is not None and (not isinstance(case_id, str) or not case_id.strip()):
+            raise ValueError("case_id must be a non-empty string when provided")
+
+        files = tuple(
+            sorted(path for path in directory.glob(snapshot_pattern) if path.is_file())
+        )
+        if not files:
+            raise FileNotFoundError(
+                f"no snapshot files matched pattern '{snapshot_pattern}' in '{directory}'"
+            )
+        sample_ids = tuple(path.stem for path in files)
+        if len(set(sample_ids)) != len(sample_ids):
+            raise ValueError("snapshot file stems must be unique sample IDs")
+
+        case_files: dict[str, str | Path] = {}
+        if case_id is not None:
+            assert case_file is not None
+            case_path = Path(case_file).expanduser().resolve()
+            if not case_path.is_file():
+                raise FileNotFoundError(
+                    f"case_file is not an accessible file: {case_path}"
+                )
+            case_files[case_id] = case_path
+
+        samples = [
+            AVBPSampleSpec(
+                sample_id=sample_id,
+                snapshot_file=path,
+                mesh_id=mesh_id,
+                mesh_file=mesh_path,
+                case_id=case_id,
+            )
+            for sample_id, path in zip(sample_ids, files, strict=True)
+        ]
+        super().__init__(
+            samples=samples,
+            case_files=case_files,
+            field_names=field_names,
+            coord_paths=coord_paths,
+            connectivity_path=connectivity_path,
+            connectivity_indexing=connectivity_indexing,
+            catalog=catalog,
+        )
+        self.files = files
+        self.sample_ids = sample_ids
+        self.snapshot_dir = directory
+        self.mesh_file = mesh_path
+        self.case_file = None if case_file is None else Path(case_file).expanduser().resolve()
+
+
 class AVBPHDF5Dataset(Dataset[Sample]):
     """Read explicitly paired AVBP snapshots, meshes, and declared case references.
 
