@@ -8,6 +8,11 @@ from graph_attention.models.dinat_dit import (
     AlternatingDilatedGeometricDiT,
     DiNATDiTMultiheadAttention,
 )
+from graph_attention.models.sparse_transformer import (
+    _TorchSparseSDDMM,
+    _TorchSparseSpMM,
+    _build_torch_sparse_topology,
+)
 from graph_attention.models.geometric_transformer import GeometricSparseMultiheadAttention
 from graph_attention.tasks import EDMDenoisingTask
 from graph_attention.training.model_factory import instantiate_controlled_model
@@ -361,3 +366,177 @@ def test_dinat_dit_dgl_backend_matches_scatter_when_available() -> None:
             rtol=1.0e-4,
             atol=1.0e-5,
         )
+
+
+def test_torch_sparse_sddmm_matches_edge_gather() -> None:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.manual_seed(101)
+
+    num_nodes = 4
+    num_heads = 2
+    head_dim = 4
+    scale = head_dim ** -0.5
+    edge_index = torch.tensor(
+        [
+            [2, 0, 3, 1, 0, 2, 1, 3],
+            [0, 1, 1, 0, 2, 3, 3, 2],
+        ],
+        dtype=torch.long,
+        device=device,
+    )
+    query = torch.randn(
+        num_nodes,
+        num_heads,
+        head_dim,
+        dtype=torch.float32,
+        device=device,
+    )
+    key = torch.randn_like(query)
+    topology = _build_torch_sparse_topology(edge_index, num_nodes=num_nodes)
+
+    source = edge_index[0]
+    target = edge_index[1]
+    expected_unsorted = (query[target] * key[source]).sum(dim=-1) * scale
+    expected = expected_unsorted[topology.edge_order]
+
+    actual = _TorchSparseSDDMM.apply(
+        query,
+        key,
+        topology.crow_indices,
+        topology.col_indices,
+        topology.transpose_crow_indices,
+        topology.transpose_col_indices,
+        topology.transpose_order,
+        scale,
+    )
+
+    torch.testing.assert_close(actual, expected, rtol=1.0e-5, atol=1.0e-6)
+
+
+def test_torch_sparse_spmm_matches_index_add() -> None:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.manual_seed(102)
+
+    num_nodes = 4
+    num_heads = 2
+    head_dim = 4
+    edge_index = torch.tensor(
+        [
+            [2, 0, 3, 1, 0, 2, 1, 3],
+            [0, 1, 1, 0, 2, 3, 3, 2],
+        ],
+        dtype=torch.long,
+        device=device,
+    )
+    topology = _build_torch_sparse_topology(edge_index, num_nodes=num_nodes)
+    value = torch.randn(
+        num_nodes,
+        num_heads,
+        head_dim,
+        dtype=torch.float32,
+        device=device,
+    )
+    weights = torch.rand(
+        edge_index.shape[1],
+        num_heads,
+        dtype=torch.float32,
+        device=device,
+    )
+
+    source = edge_index[0]
+    target = edge_index[1]
+    unsorted_weights = torch.empty_like(weights)
+    unsorted_weights[topology.edge_order] = weights
+    expected = torch.zeros_like(value)
+    expected.index_add_(
+        0,
+        target,
+        unsorted_weights.unsqueeze(-1) * value[source],
+    )
+
+    actual = _TorchSparseSpMM.apply(
+        weights,
+        value,
+        topology.crow_indices,
+        topology.col_indices,
+        topology.transpose_crow_indices,
+        topology.transpose_col_indices,
+        topology.transpose_order,
+    )
+
+    torch.testing.assert_close(actual, expected, rtol=1.0e-5, atol=1.0e-6)
+
+
+def test_torch_sparse_attention_softmax_matches_scatter() -> None:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.manual_seed(103)
+
+    num_nodes = 4
+    num_heads = 2
+    edge_index = torch.tensor(
+        [
+            [2, 0, 3, 1, 0, 2, 1, 3],
+            [0, 1, 1, 0, 2, 3, 3, 2],
+        ],
+        dtype=torch.long,
+        device=device,
+    )
+    topology = _build_torch_sparse_topology(edge_index, num_nodes=num_nodes)
+    scores_unsorted = torch.randn(
+        edge_index.shape[1],
+        num_heads,
+        dtype=torch.float32,
+        device=device,
+    )
+
+    target = edge_index[1]
+    target_by_head = target[:, None].expand(-1, num_heads)
+    scatter_max = torch.full(
+        (num_nodes, num_heads),
+        -torch.inf,
+        dtype=torch.float32,
+        device=device,
+    )
+    scatter_max.scatter_reduce_(
+        0,
+        target_by_head,
+        scores_unsorted,
+        reduce="amax",
+        include_self=True,
+    )
+    scatter_exp = torch.exp(scores_unsorted - scatter_max[target])
+    scatter_den = torch.zeros(
+        (num_nodes, num_heads),
+        dtype=torch.float32,
+        device=device,
+    )
+    scatter_den.scatter_add_(0, target_by_head, scatter_exp)
+    expected_unsorted = scatter_exp / scatter_den[target]
+    expected = expected_unsorted[topology.edge_order]
+
+    scores = scores_unsorted[topology.edge_order]
+    sorted_target = topology.row_indices
+    sorted_target_by_head = sorted_target[:, None].expand(-1, num_heads)
+    sparse_max = torch.full(
+        (num_nodes, num_heads),
+        -torch.inf,
+        dtype=torch.float32,
+        device=device,
+    )
+    sparse_max.scatter_reduce_(
+        0,
+        sorted_target_by_head,
+        scores,
+        reduce="amax",
+        include_self=True,
+    )
+    sparse_exp = torch.exp(scores - sparse_max[sorted_target])
+    sparse_den = torch.zeros(
+        (num_nodes, num_heads),
+        dtype=torch.float32,
+        device=device,
+    )
+    sparse_den.scatter_add_(0, sorted_target_by_head, sparse_exp)
+    actual = sparse_exp / sparse_den[sorted_target]
+
+    torch.testing.assert_close(actual, expected, rtol=1.0e-6, atol=1.0e-7)
