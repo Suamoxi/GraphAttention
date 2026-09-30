@@ -123,101 +123,61 @@ class _TorchSparseSDDMM(torch.autograd.Function):
 
 
 class _TorchSparseSpMM(torch.autograd.Function):
-    """COO attention-value product with sparse first-order backward."""
+    """Memory-bounded attention-value aggregation without full E x H x D tensors."""
+
+    _EDGE_CHUNK_SIZE = 65536
 
     @staticmethod
     def forward(
         ctx,
         weights: torch.Tensor,
         value: torch.Tensor,
-        crow_indices: torch.Tensor,
         row_indices: torch.Tensor,
         col_indices: torch.Tensor,
-        transpose_order: torch.Tensor,
     ) -> torch.Tensor:
-        num_nodes, num_heads, _ = value.shape
-        indices = torch.stack((row_indices, col_indices), dim=0)
-        per_head = []
-        for head in range(num_heads):
-            attention = torch.sparse_coo_tensor(
-                indices,
-                weights[:, head],
-                size=(num_nodes, num_nodes),
-                device=value.device,
-                dtype=weights.dtype,
-                is_coalesced=True,
-            )
-            per_head.append(
-                torch.sparse.mm(attention, value[:, head, :].contiguous())
-            )
-        output = torch.stack(per_head, dim=1)
+        num_nodes, _, _ = value.shape
+        output = torch.zeros_like(value)
+        chunk_size = _TorchSparseSpMM._EDGE_CHUNK_SIZE
 
-        ctx.save_for_backward(
-            weights,
-            value,
-            crow_indices,
-            row_indices,
-            col_indices,
-            transpose_order,
-        )
+        for start in range(0, weights.shape[0], chunk_size):
+            stop = min(start + chunk_size, weights.shape[0])
+            source = col_indices[start:stop]
+            target = row_indices[start:stop]
+            messages = (
+                weights[start:stop].to(dtype=value.dtype).unsqueeze(-1)
+                * value[source]
+            )
+            output.index_add_(0, target, messages)
+
+        ctx.save_for_backward(weights, value, row_indices, col_indices)
         return output
 
     @staticmethod
     def backward(ctx, grad_output: torch.Tensor):
-        (
-            weights,
-            value,
-            crow_indices,
-            row_indices,
-            col_indices,
-            transpose_order,
-        ) = ctx.saved_tensors
-        num_nodes, num_heads, _ = value.shape
+        weights, value, row_indices, col_indices = ctx.saved_tensors
         grad_output = grad_output.contiguous()
-
-        pattern = torch.sparse_csr_tensor(
-            crow_indices,
-            col_indices,
-            value.new_ones(col_indices.numel()),
-            size=(num_nodes, num_nodes),
-            device=value.device,
-            dtype=value.dtype,
-        )
-        transpose_indices = torch.stack(
-            (
-                col_indices[transpose_order],
-                row_indices[transpose_order],
-            ),
-            dim=0,
-        )
-
-        grad_weight_heads = []
+        grad_weights = torch.empty_like(weights)
         grad_value = torch.zeros_like(value)
-        for head in range(num_heads):
-            sampled = torch.sparse.sampled_addmm(
-                pattern,
-                grad_output[:, head, :].contiguous(),
-                value[:, head, :].transpose(0, 1).contiguous(),
-                beta=0.0,
-                alpha=1.0,
-            )
-            grad_weight_heads.append(sampled.values())
+        chunk_size = _TorchSparseSpMM._EDGE_CHUNK_SIZE
 
-            transpose_attention = torch.sparse_coo_tensor(
-                transpose_indices,
-                weights[:, head][transpose_order],
-                size=(num_nodes, num_nodes),
-                device=value.device,
-                dtype=weights.dtype,
-                is_coalesced=True,
-            )
-            grad_value[:, head, :] = torch.sparse.mm(
-                transpose_attention,
-                grad_output[:, head, :].contiguous(),
-            )
+        for start in range(0, weights.shape[0], chunk_size):
+            stop = min(start + chunk_size, weights.shape[0])
+            source = col_indices[start:stop]
+            target = row_indices[start:stop]
+            output_grad = grad_output[target]
+            source_value = value[source]
 
-        grad_weights = torch.stack(grad_weight_heads, dim=1)
-        return grad_weights, grad_value, None, None, None, None
+            grad_weights[start:stop] = (
+                output_grad.to(dtype=source_value.dtype) * source_value
+            ).sum(dim=-1).to(dtype=weights.dtype)
+
+            value_messages = (
+                weights[start:stop].to(dtype=grad_output.dtype).unsqueeze(-1)
+                * output_grad
+            )
+            grad_value.index_add_(0, source, value_messages)
+
+        return grad_weights, grad_value, None, None
 
 def _build_torch_sparse_topology(
     edge_index: torch.Tensor,
@@ -435,7 +395,7 @@ class SparseMultiheadAttention(nn.Module):
         *,
         score_bias: torch.Tensor | None,
     ) -> torch.Tensor:
-        """Native CSR SDDMM + COO SpMM attention without E x H x D tensors."""
+        """Native CSR SDDMM + chunked aggregation without full E x H x D tensors."""
 
         if query.dtype != torch.float32:
             raise TypeError(
@@ -486,10 +446,8 @@ class SparseMultiheadAttention(nn.Module):
         aggregated = _TorchSparseSpMM.apply(
             weights.to(dtype=value.dtype),
             value,
-            topology.crow_indices,
             topology.row_indices,
             topology.col_indices,
-            topology.transpose_order,
         )
         return self.out_proj(
             aggregated.reshape(topology.num_nodes, self.hidden_dim)
