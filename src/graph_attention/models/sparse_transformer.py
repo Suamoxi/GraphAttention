@@ -119,7 +119,7 @@ class _TorchSparseSDDMM(torch.autograd.Function):
 
 
 class _TorchSparseSpMM(torch.autograd.Function):
-    """CSR attention-value product with sparse first-order backward."""
+    """COO attention-value product with sparse first-order backward."""
 
     @staticmethod
     def forward(
@@ -127,21 +127,21 @@ class _TorchSparseSpMM(torch.autograd.Function):
         weights: torch.Tensor,
         value: torch.Tensor,
         crow_indices: torch.Tensor,
+        row_indices: torch.Tensor,
         col_indices: torch.Tensor,
-        transpose_crow_indices: torch.Tensor,
-        transpose_col_indices: torch.Tensor,
         transpose_order: torch.Tensor,
     ) -> torch.Tensor:
         num_nodes, num_heads, _ = value.shape
+        indices = torch.stack((row_indices, col_indices), dim=0)
         per_head = []
         for head in range(num_heads):
-            attention = torch.sparse_csr_tensor(
-                crow_indices,
-                col_indices,
+            attention = torch.sparse_coo_tensor(
+                indices,
                 weights[:, head],
                 size=(num_nodes, num_nodes),
                 device=value.device,
                 dtype=weights.dtype,
+                is_coalesced=True,
             )
             per_head.append(
                 torch.sparse.mm(attention, value[:, head, :].contiguous())
@@ -152,9 +152,8 @@ class _TorchSparseSpMM(torch.autograd.Function):
             weights,
             value,
             crow_indices,
+            row_indices,
             col_indices,
-            transpose_crow_indices,
-            transpose_col_indices,
             transpose_order,
         )
         return output
@@ -165,9 +164,8 @@ class _TorchSparseSpMM(torch.autograd.Function):
             weights,
             value,
             crow_indices,
+            row_indices,
             col_indices,
-            transpose_crow_indices,
-            transpose_col_indices,
             transpose_order,
         ) = ctx.saved_tensors
         num_nodes, num_heads, _ = value.shape
@@ -181,6 +179,14 @@ class _TorchSparseSpMM(torch.autograd.Function):
             device=value.device,
             dtype=value.dtype,
         )
+        transpose_indices = torch.stack(
+            (
+                col_indices[transpose_order],
+                row_indices[transpose_order],
+            ),
+            dim=0,
+        )
+
         grad_weight_heads = []
         grad_value = torch.zeros_like(value)
         for head in range(num_heads):
@@ -193,13 +199,13 @@ class _TorchSparseSpMM(torch.autograd.Function):
             )
             grad_weight_heads.append(sampled.values())
 
-            transpose_attention = torch.sparse_csr_tensor(
-                transpose_crow_indices,
-                transpose_col_indices,
+            transpose_attention = torch.sparse_coo_tensor(
+                transpose_indices,
                 weights[:, head][transpose_order],
                 size=(num_nodes, num_nodes),
                 device=value.device,
                 dtype=weights.dtype,
+                is_coalesced=True,
             )
             grad_value[:, head, :] = torch.sparse.mm(
                 transpose_attention,
@@ -207,8 +213,7 @@ class _TorchSparseSpMM(torch.autograd.Function):
             )
 
         grad_weights = torch.stack(grad_weight_heads, dim=1)
-        return grad_weights, grad_value, None, None, None, None, None
-
+        return grad_weights, grad_value, None, None, None, None
 
 def _build_torch_sparse_topology(
     edge_index: torch.Tensor,
@@ -479,9 +484,8 @@ class SparseMultiheadAttention(nn.Module):
             weights.to(dtype=value.dtype),
             value,
             topology.crow_indices,
+            topology.row_indices,
             topology.col_indices,
-            topology.transpose_crow_indices,
-            topology.transpose_col_indices,
             topology.transpose_order,
         )
         return self.out_proj(
