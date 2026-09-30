@@ -40,7 +40,7 @@ class GraphTaskCollator:
         self.attention_specifications = dict(
             geometry_cfg.get("attention_edge_indices", {})
         )
-        self._prepared_mesh_cache: dict[int, Sample] = {}
+        self._prepared_mesh_cache: dict[int, Any] = {}
         self._attention_topology_cache: dict[int, dict[str, torch.Tensor]] = {}
 
     def __call__(self, samples: list[Sample]) -> NodeRegressionBatch:
@@ -88,20 +88,12 @@ class GraphTaskCollator:
         """Reuse geometry derived from a shared immutable mesh within one worker."""
 
         original_mesh_key = id(sample.mesh)
-        cached = self._prepared_mesh_cache.get(original_mesh_key)
-        if cached is not None:
-            return Sample(
-                sample_id=sample.sample_id,
-                mesh=cached.mesh,
-                fields=sample.fields,
-                reference_scales=sample.reference_scales,
-                metadata=sample.metadata,
-                case_id=sample.case_id,
-                regime_parameters=sample.regime_parameters,
-            )
+        cached_mesh = self._prepared_mesh_cache.get(original_mesh_key)
+        if cached_mesh is not None:
+            return replace(sample, mesh=cached_mesh)
 
         prepared = _sample_with_graph_connectivity(sample)
-        self._prepared_mesh_cache[original_mesh_key] = prepared
+        self._prepared_mesh_cache[original_mesh_key] = prepared.mesh
         return prepared
 
 
