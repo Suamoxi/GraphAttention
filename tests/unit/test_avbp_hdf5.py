@@ -5,7 +5,12 @@ import numpy as np
 import pytest
 import torch
 
-from graph_attention.data import AVBP_FIELD_CATALOG, AVBPHDF5Dataset, AVBPSampleSpec
+from graph_attention.data import (
+    AVBP_FIELD_CATALOG,
+    AVBPDirectoryHDF5Dataset,
+    AVBPHDF5Dataset,
+    AVBPSampleSpec,
+)
 
 
 def _cube_coords() -> np.ndarray:
@@ -316,3 +321,32 @@ def test_auto_indexing_rejects_ambiguous_connectivity(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="indexing is ambiguous"):
         dataset[0]
+
+
+
+def test_avbp_directory_reader_discovers_fixed_mesh_snapshots(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    mesh_path = tmp_path / "mesh.h5"
+    _write_mesh(mesh_path)
+    _write_snapshot(snapshot_dir / "solut_0002.h5")
+    _write_snapshot(snapshot_dir / "solut_0001.h5")
+    (snapshot_dir / "ignore.txt").write_text("not a snapshot")
+
+    dataset = AVBPDirectoryHDF5Dataset(
+        snapshot_dir=snapshot_dir,
+        mesh_file=mesh_path,
+        snapshot_pattern="solut_*.h5",
+        mesh_id="hit-3d",
+    )
+
+    assert dataset.sample_ids == ("solut_0001", "solut_0002")
+    assert tuple(path.name for path in dataset.files) == (
+        "solut_0001.h5",
+        "solut_0002.h5",
+    )
+    first = dataset[0]
+    second = dataset[1]
+    assert first.mesh is second.mesh
+    assert first.mesh.spatial_dim == 3
+    assert first.mesh.mesh_id == "hit-3d"
