@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
 from graph_attention.data import SyntheticMeshDataset
-from graph_attention.tasks import DiffusionDenoisingTask, EDMDenoisingTask, VPSDEDenoisingTask
+from graph_attention.objectives import sample_reduced_mse
+from graph_attention.tasks import (
+    DiffusionDenoisingTask,
+    EDMDenoisingTask,
+    NodeRegressionTask,
+    VPSDEDenoisingTask,
+)
 from graph_attention.training import train_equal_sample_optimizer_step
 from scripts.train_generative import (
     _DDPMAdapter,
+    _accumulated_optimizer_step,
     _EDMAdapter,
     _GenericTaskAdapter,
     _forward_model,
@@ -149,3 +157,73 @@ def test_vp_sde_uses_generic_task_adapter_without_runner_changes() -> None:
     assert step_loss == float(losses.mean.detach().cpu())
     assert step_loss_sum == float(losses.loss_sum.detach().cpu())
     torch.testing.assert_close(adapter_model.weight, reference_model.weight, rtol=0.0, atol=0.0)
+
+
+
+class _IdentityTrainingTask(NodeRegressionTask):
+    def make_training_problem(
+        self,
+        batch,
+        *,
+        generator: torch.Generator | None = None,
+    ):
+        del generator
+        return batch
+
+
+class _IdentityStandardizers:
+    def transform(self, batch):
+        return batch
+
+
+class _MSEAdapter:
+    def loss(self, model: torch.nn.Module, problem):
+        predictions = _forward_model(model, problem)
+        return sample_reduced_mse(
+            predictions,
+            problem.targets,
+            problem.ptr,
+            node_weights=problem.node_weights,
+        )
+
+
+def test_gradient_accumulation_matches_one_equal_sample_large_batch_step() -> None:
+    dataset = SyntheticMeshDataset(num_samples=4, spatial_dim=2, seed=37)
+    task = _IdentityTrainingTask(input_fields=("rho",), target_fields=("rho",))
+
+    full_batch = task.pack_and_prepare(
+        [dataset[index] for index in range(4)],
+        dataset.field_catalog,
+    )
+    microbatches = [
+        task.pack_and_prepare([dataset[0]], dataset.field_catalog),
+        task.pack_and_prepare([dataset[1], dataset[2]], dataset.field_catalog),
+        task.pack_and_prepare([dataset[3]], dataset.field_catalog),
+    ]
+
+    reference = _ScalarModel()
+    accumulated = _ScalarModel()
+    accumulated.load_state_dict(reference.state_dict())
+    reference_optimizer = torch.optim.SGD(reference.parameters(), lr=0.05)
+    accumulated_optimizer = torch.optim.SGD(accumulated.parameters(), lr=0.05)
+
+    reference_optimizer.zero_grad(set_to_none=True)
+    reference_loss = _MSEAdapter().loss(reference, full_batch)
+    reference_loss.mean.backward()
+    reference_optimizer.step()
+
+    step_loss, loss_sum, sample_count = _accumulated_optimizer_step(
+        _MSEAdapter(),
+        accumulated,
+        accumulated_optimizer,
+        microbatches,
+        task=task,
+        standardizers=_IdentityStandardizers(),
+        device=torch.device("cpu"),
+        training_generator=torch.Generator().manual_seed(1),
+    )
+
+    torch.testing.assert_close(accumulated.weight, reference.weight)
+    assert sample_count == 4
+    assert step_loss == pytest.approx(float(reference_loss.mean.detach()))
+    assert loss_sum == pytest.approx(float(reference_loss.loss_sum.detach()))
