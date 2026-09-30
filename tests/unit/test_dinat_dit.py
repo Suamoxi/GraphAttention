@@ -593,3 +593,65 @@ def test_dinat_dit_torch_sparse_backend_supports_inference_mode_tensors() -> Non
     assert first.shape == inputs.shape
     assert torch.isfinite(first).all()
     torch.testing.assert_close(second, first, rtol=0.0, atol=0.0)
+
+
+def test_dinat_dit_torch_sparse_cache_survives_inference_then_training() -> None:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = AlternatingDilatedGeometricDiT(
+        in_channels=3,
+        out_channels=3,
+        hidden_dim=8,
+        num_heads=2,
+        num_layers=2,
+        spatial_dim=2,
+        mlp_ratio=2,
+        conditioning_channels=1,
+        condition_embed_dim=8,
+        sparse_attention_backend="torch_sparse",
+    ).to(device)
+
+    inputs = torch.randn(4, 3, device=device)
+    coords = torch.tensor(
+        [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]],
+        dtype=torch.float32,
+        device=device,
+    )
+    batch_index = torch.zeros(4, dtype=torch.long, device=device)
+    conditioning = torch.tensor([[0.25]], dtype=torch.float32, device=device)
+    local = torch.tensor(
+        [[0, 1, 2, 3, 0, 2, 1, 3], [1, 0, 3, 2, 2, 0, 3, 1]],
+        dtype=torch.long,
+        device=device,
+    )
+    dilated = torch.tensor(
+        [[0, 3, 1, 2], [3, 0, 2, 1]],
+        dtype=torch.long,
+        device=device,
+    )
+
+    model.eval()
+    with torch.inference_mode():
+        inference_output = model(
+            inputs,
+            edge_index=local,
+            coords=coords,
+            batch_index=batch_index,
+            conditioning=conditioning,
+            attention_edge_indices={"dilated": dilated},
+        )
+    assert torch.isfinite(inference_output).all()
+
+    model.train()
+    train_inputs = inputs.detach().clone().requires_grad_(True)
+    training_output = model(
+        train_inputs,
+        edge_index=local,
+        coords=coords,
+        batch_index=batch_index,
+        conditioning=conditioning,
+        attention_edge_indices={"dilated": dilated},
+    )
+    training_output.square().sum().backward()
+
+    assert train_inputs.grad is not None
+    assert torch.isfinite(train_inputs.grad).all()
