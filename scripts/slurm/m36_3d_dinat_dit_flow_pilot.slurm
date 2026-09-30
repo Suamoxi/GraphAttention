@@ -58,6 +58,7 @@ singularity exec --nv \
         tests/unit/test_dinat_dit.py::test_torch_sparse_attention_softmax_matches_scatter \
         tests/unit/test_dinat_dit.py::test_torch_sparse_spmm_matches_index_add \
         tests/unit/test_dinat_dit.py::test_dinat_dit_torch_sparse_backend_matches_scatter \
+        tests/unit/test_dinat_dit.py::test_dinat_dit_torch_sparse_backend_supports_inference_mode_tensors \
         -q
 
 singularity exec --nv \
