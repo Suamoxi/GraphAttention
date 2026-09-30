@@ -25,7 +25,7 @@ class _TorchSparseTopology:
 
 
 class _TorchSparseSDDMM(torch.autograd.Function):
-    """Sample QK^T on a CSR graph with sparse first-order backward."""
+    """Sample QK^T on a CSR graph with COO sparse first-order backward."""
 
     @staticmethod
     def forward(
@@ -33,9 +33,8 @@ class _TorchSparseSDDMM(torch.autograd.Function):
         query: torch.Tensor,
         key: torch.Tensor,
         crow_indices: torch.Tensor,
+        row_indices: torch.Tensor,
         col_indices: torch.Tensor,
-        transpose_crow_indices: torch.Tensor,
-        transpose_col_indices: torch.Tensor,
         transpose_order: torch.Tensor,
         scale: float,
     ) -> torch.Tensor:
@@ -64,10 +63,8 @@ class _TorchSparseSDDMM(torch.autograd.Function):
         ctx.save_for_backward(
             query,
             key,
-            crow_indices,
+            row_indices,
             col_indices,
-            transpose_crow_indices,
-            transpose_col_indices,
             transpose_order,
         )
         ctx.scale = float(scale)
@@ -78,44 +75,51 @@ class _TorchSparseSDDMM(torch.autograd.Function):
         (
             query,
             key,
-            crow_indices,
+            row_indices,
             col_indices,
-            transpose_crow_indices,
-            transpose_col_indices,
             transpose_order,
         ) = ctx.saved_tensors
         num_nodes, num_heads, _ = query.shape
         grad_scores = grad_scores.contiguous()
 
+        indices = torch.stack((row_indices, col_indices), dim=0)
+        transpose_indices = torch.stack(
+            (
+                col_indices[transpose_order],
+                row_indices[transpose_order],
+            ),
+            dim=0,
+        )
+
         grad_query = torch.zeros_like(query)
         grad_key = torch.zeros_like(key)
         for head in range(num_heads):
             edge_grad = grad_scores[:, head]
-            grad_matrix = torch.sparse_csr_tensor(
-                crow_indices,
-                col_indices,
+            grad_matrix = torch.sparse_coo_tensor(
+                indices,
                 edge_grad,
                 size=(num_nodes, num_nodes),
                 device=query.device,
                 dtype=edge_grad.dtype,
+                is_coalesced=True,
             )
             grad_query[:, head, :] = (
                 torch.sparse.mm(grad_matrix, key[:, head, :].contiguous()) * ctx.scale
             )
 
-            transpose_matrix = torch.sparse_csr_tensor(
-                transpose_crow_indices,
-                transpose_col_indices,
+            transpose_matrix = torch.sparse_coo_tensor(
+                transpose_indices,
                 edge_grad[transpose_order],
                 size=(num_nodes, num_nodes),
                 device=query.device,
                 dtype=edge_grad.dtype,
+                is_coalesced=True,
             )
             grad_key[:, head, :] = (
                 torch.sparse.mm(transpose_matrix, query[:, head, :].contiguous()) * ctx.scale
             )
 
-        return grad_query, grad_key, None, None, None, None, None, None
+        return grad_query, grad_key, None, None, None, None, None
 
 
 class _TorchSparseSpMM(torch.autograd.Function):
@@ -431,7 +435,7 @@ class SparseMultiheadAttention(nn.Module):
         *,
         score_bias: torch.Tensor | None,
     ) -> torch.Tensor:
-        """Native PyTorch CSR SDDMM-softmax-SpMM without E x H x D tensors."""
+        """Native CSR SDDMM + COO SpMM attention without E x H x D tensors."""
 
         if query.dtype != torch.float32:
             raise TypeError(
@@ -442,9 +446,8 @@ class SparseMultiheadAttention(nn.Module):
             query,
             key,
             topology.crow_indices,
+            topology.row_indices,
             topology.col_indices,
-            topology.transpose_crow_indices,
-            topology.transpose_col_indices,
             topology.transpose_order,
             self.scale,
         )
