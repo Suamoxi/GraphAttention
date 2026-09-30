@@ -1,6 +1,6 @@
 """Data ownership layer: what exists in the CFD source."""
 
-from .avbp import AVBP_FIELD_CATALOG, AVBPHDF5Dataset, AVBPSampleSpec
+from .avbp import AVBP_FIELD_CATALOG, AVBPDirectoryHDF5Dataset, AVBPHDF5Dataset, AVBPSampleSpec
 from .case_definition import CaseDefinition, load_case_definition, load_case_definitions
 from .collate import MicrobatchBudget, PackedBatch, pack_samples, partition_samples_by_budget
 from .contracts import (
@@ -23,6 +23,7 @@ from .synthetic import SyntheticMeshDataset
 
 __all__ = [
     "AVBP_FIELD_CATALOG",
+    "AVBPDirectoryHDF5Dataset",
     "AVBPHDF5Dataset",
     "AVBPSampleSpec",
     "CaseDefinition",
