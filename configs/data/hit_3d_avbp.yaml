@@ -1,0 +1,19 @@
+_target_: graph_attention.data.AVBPDirectoryHDF5Dataset
+snapshot_dir: /scratch/coop/theret/HIT_LES_FORCED/RUN/SOLUT
+mesh_file: /scratch/coop/theret/HIT_LES_FORCED/MESH/mesh.mesh.h5
+snapshot_pattern: "*.h5"
+mesh_id: HIT_LES_FORCED:3d_fixed_mesh
+case_file: ${hydra:runtime.cwd}/cases/HIT_LES_FORCED.yaml
+case_id: HIT_LES_FORCED
+field_names:
+  - rho
+  - rhou
+  - rhov
+  - rhow
+  - rhoE
+coord_paths:
+  - Coordinates/x
+  - Coordinates/y
+  - Coordinates/z
+connectivity_path: Connectivity/hex->node
+connectivity_indexing: auto
