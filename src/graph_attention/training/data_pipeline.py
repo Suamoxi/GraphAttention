@@ -9,7 +9,7 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader, Dataset, Subset
 
-from graph_attention.data import PackedBatch, Sample
+from graph_attention.data import Mesh, PackedBatch, Sample
 from graph_attention.geometry import (
     build_attention_edge_indices,
     cartesian_4_neighbor_edge_index,
@@ -40,7 +40,7 @@ class GraphTaskCollator:
         self.attention_specifications = dict(
             geometry_cfg.get("attention_edge_indices", {})
         )
-        self._prepared_mesh_cache: dict[int, Any] = {}
+        self._prepared_mesh_cache: dict[int, Mesh] = {}
         self._attention_topology_cache: dict[int, dict[str, torch.Tensor]] = {}
 
     def __call__(self, samples: list[Sample]) -> NodeRegressionBatch:
