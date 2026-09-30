@@ -58,6 +58,10 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     max_epochs = _positive_int(settings.max_epochs, "generative.max_epochs")
     batch_size = _positive_int(settings.batch_size, "generative.batch_size")
     num_workers = _positive_int(settings.num_workers, "generative.num_workers", allow_zero=True)
+    gradient_accumulation_steps = _positive_int(
+        settings.get("gradient_accumulation_steps", 1),
+        "generative.gradient_accumulation_steps",
+    )
 
     device = torch.device(str(settings.device))
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -189,20 +193,48 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
             train_loss_sum = 0.0
             train_samples = 0
 
-            for host_batch in train_loader:
-                batch = task_batch_to_device(host_batch, device=device, dtype=torch.float32)
-                scaled = device_standardizers.transform(batch)
-                problem = task.make_training_problem(scaled, generator=training_generator)
-                step_loss, step_loss_sum, step_samples = adapter.optimizer_step(
-                    model,
-                    optimizer,
-                    problem,
-                )
+            if gradient_accumulation_steps == 1:
+                for host_batch in train_loader:
+                    batch = task_batch_to_device(host_batch, device=device, dtype=torch.float32)
+                    scaled = device_standardizers.transform(batch)
+                    problem = task.make_training_problem(scaled, generator=training_generator)
+                    step_loss, step_loss_sum, step_samples = adapter.optimizer_step(
+                        model,
+                        optimizer,
+                        problem,
+                    )
 
-                train_loss_sum += step_loss_sum
-                train_samples += step_samples
-                tensorboard.add_scalar(f"{metric}/train_step", step_loss, global_step)
-                global_step += 1
+                    train_loss_sum += step_loss_sum
+                    train_samples += step_samples
+                    tensorboard.add_scalar(f"{metric}/train_step", step_loss, global_step)
+                    global_step += 1
+            else:
+                pending_host_batches: list[Any] = []
+                for batch_index, host_batch in enumerate(train_loader):
+                    pending_host_batches.append(host_batch)
+                    is_last = batch_index + 1 == len(train_loader)
+                    if (
+                        len(pending_host_batches) < gradient_accumulation_steps
+                        and not is_last
+                    ):
+                        continue
+
+                    step_loss, step_loss_sum, step_samples = _accumulated_optimizer_step(
+                        adapter,
+                        model,
+                        optimizer,
+                        pending_host_batches,
+                        task=task,
+                        standardizers=device_standardizers,
+                        device=device,
+                        training_generator=training_generator,
+                    )
+                    pending_host_batches.clear()
+
+                    train_loss_sum += step_loss_sum
+                    train_samples += step_samples
+                    tensorboard.add_scalar(f"{metric}/train_step", step_loss, global_step)
+                    global_step += 1
 
             validation_loss = _evaluate(
                 model,
@@ -312,10 +344,65 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         "device": str(device),
         "dtype": "float32",
         "seed": seed,
+        "batch_size": batch_size,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "nominal_effective_batch_size": batch_size * gradient_accumulation_steps,
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
     return summary
+
+
+
+def _accumulated_optimizer_step(
+    adapter: "_TaskAdapter",
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    host_batches: list[Any],
+    *,
+    task: NodeRegressionTask,
+    standardizers: Any,
+    device: torch.device,
+    training_generator: torch.Generator,
+) -> tuple[float, float, int]:
+    """Accumulate exact equal-sample gradients across computational microbatches."""
+
+    if not host_batches:
+        raise ValueError("gradient accumulation requires at least one microbatch")
+
+    optimizer.zero_grad(set_to_none=True)
+    loss_sum_value = 0.0
+    sample_count = 0
+    try:
+        for host_batch in host_batches:
+            batch = task_batch_to_device(host_batch, device=device, dtype=torch.float32)
+            scaled = standardizers.transform(batch)
+            problem = task.make_training_problem(
+                scaled,
+                generator=training_generator,
+            )
+            aggregate = adapter.loss(model, problem)
+            aggregate.loss_sum.backward()
+            loss_sum_value += float(aggregate.loss_sum.detach().cpu())
+            sample_count += aggregate.sample_count
+
+        if sample_count <= 0:
+            raise ValueError("gradient accumulation observed no physical samples")
+
+        inverse_sample_count = 1.0 / sample_count
+        for parameter in model.parameters():
+            if parameter.grad is not None:
+                parameter.grad.mul_(inverse_sample_count)
+        optimizer.step()
+    except Exception:
+        optimizer.zero_grad(set_to_none=True)
+        raise
+
+    return (
+        loss_sum_value / sample_count,
+        loss_sum_value,
+        sample_count,
+    )
 
 
 def _evaluate(
