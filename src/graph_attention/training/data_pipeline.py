@@ -40,21 +40,27 @@ class GraphTaskCollator:
         self.attention_specifications = dict(
             geometry_cfg.get("attention_edge_indices", {})
         )
+        self._prepared_mesh_cache: dict[int, Sample] = {}
+        self._attention_topology_cache: dict[int, dict[str, torch.Tensor]] = {}
 
     def __call__(self, samples: list[Sample]) -> NodeRegressionBatch:
         prepared_samples: list[Sample] = []
         per_sample_attention: list[dict[str, torch.Tensor]] = []
 
         for sample in samples:
-            prepared = _sample_with_graph_connectivity(sample)
+            prepared = self._sample_with_graph_connectivity_cached(sample)
             prepared_samples.append(prepared)
-            per_sample_attention.append(
-                build_attention_edge_indices(
+
+            mesh_key = id(prepared.mesh)
+            cached_attention = self._attention_topology_cache.get(mesh_key)
+            if cached_attention is None:
+                cached_attention = build_attention_edge_indices(
                     prepared.mesh.edge_index,
                     prepared.mesh.num_nodes,
                     self.attention_specifications,
                 )
-            )
+                self._attention_topology_cache[mesh_key] = cached_attention
+            per_sample_attention.append(cached_attention)
 
         batch = self.task.pack_and_prepare(prepared_samples, self.catalog)
         if not self.attention_specifications:
@@ -76,6 +82,27 @@ class GraphTaskCollator:
                 else torch.empty((2, 0), dtype=torch.long)
             )
         return replace(batch, attention_edge_indices=packed_attention)
+
+
+    def _sample_with_graph_connectivity_cached(self, sample: Sample) -> Sample:
+        """Reuse geometry derived from a shared immutable mesh within one worker."""
+
+        original_mesh_key = id(sample.mesh)
+        cached = self._prepared_mesh_cache.get(original_mesh_key)
+        if cached is not None:
+            return Sample(
+                sample_id=sample.sample_id,
+                mesh=cached.mesh,
+                fields=sample.fields,
+                reference_scales=sample.reference_scales,
+                metadata=sample.metadata,
+                case_id=sample.case_id,
+                regime_parameters=sample.regime_parameters,
+            )
+
+        prepared = _sample_with_graph_connectivity(sample)
+        self._prepared_mesh_cache[original_mesh_key] = prepared
+        return prepared
 
 
 def make_loader(
