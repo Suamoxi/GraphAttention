@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -174,8 +175,16 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     tensorboard_dir = output_dir / "tensorboard"
     global_step = 0
 
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    fit_start = time.perf_counter()
+
     with SummaryWriter(log_dir=str(tensorboard_dir)) as tensorboard:
         for epoch in range(max_epochs):
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            epoch_start = time.perf_counter()
             model.train()
             train_loss_sum = 0.0
             train_samples = 0
@@ -204,11 +213,15 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
                 device=device,
             )
             train_loss = train_loss_sum / train_samples
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            epoch_compute_seconds = time.perf_counter() - epoch_start
             history.append(
                 {
                     "epoch": epoch,
                     f"train_{metric}": train_loss,
                     f"validation_{metric}": validation_loss,
+                    "epoch_compute_seconds": epoch_compute_seconds,
                 }
             )
 
@@ -222,7 +235,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
             tensorboard.flush()
             print(
                 f"epoch={epoch:04d} train_{metric}={train_loss:.8e} "
-                f"validation_{metric}={validation_loss:.8e}"
+                f"validation_{metric}={validation_loss:.8e} "
+                f"compute_seconds={epoch_compute_seconds:.3f}"
             )
 
             checkpoint = adapter.checkpoint_payload(
@@ -239,6 +253,16 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
                 best_validation = validation_loss
                 best_epoch = epoch
                 torch.save(checkpoint, best_path)
+
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    fit_wall_seconds = time.perf_counter() - fit_start
+    if device.type == "cuda":
+        fit_peak_allocated_gib = torch.cuda.max_memory_allocated(device) / float(1024**3)
+        fit_peak_reserved_gib = torch.cuda.max_memory_reserved(device) / float(1024**3)
+    else:
+        fit_peak_allocated_gib = None
+        fit_peak_reserved_gib = None
 
     best = torch.load(best_path, map_location=device, weights_only=True)
     model.load_state_dict(best["model_state_dict"])
@@ -265,6 +289,12 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         f"best_validation_{metric}": best_validation,
         f"test_{metric}_at_best_validation": test_loss,
         "tensorboard_log_dir": tensorboard_dir.name,
+        "fit_wall_seconds": fit_wall_seconds,
+        "mean_epoch_compute_seconds": (
+            sum(float(row["epoch_compute_seconds"]) for row in history) / len(history)
+        ),
+        "fit_peak_allocated_gib": fit_peak_allocated_gib,
+        "fit_peak_reserved_gib": fit_peak_reserved_gib,
         "num_samples": len(dataset),
         "num_train_samples": len(train_indices),
         "num_validation_samples": len(validation_indices),
@@ -659,7 +689,12 @@ def _write_history(
     with path.open("w", newline="") as stream:
         writer = csv.DictWriter(
             stream,
-            fieldnames=("epoch", f"train_{metric}", f"validation_{metric}"),
+            fieldnames=(
+                "epoch",
+                f"train_{metric}",
+                f"validation_{metric}",
+                "epoch_compute_seconds",
+            ),
         )
         writer.writeheader()
         writer.writerows(rows)
