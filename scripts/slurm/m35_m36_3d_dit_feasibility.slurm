@@ -39,6 +39,7 @@ singularity exec --nv \
         tests/unit/test_generative_data_pipeline.py::test_collator_reuses_fixed_mesh_connectivity_and_attention_topology \
         tests/unit/test_generative_training_adapters.py::test_gradient_accumulation_matches_one_equal_sample_large_batch_step \
         tests/unit/test_dinat_dit.py::test_dinat_dit_torch_sparse_backend_matches_scatter \
+        tests/unit/test_dinat_dit.py::test_dinat_dit_torch_sparse_backend_supports_inference_mode_tensors \
         -q
 
 echo
