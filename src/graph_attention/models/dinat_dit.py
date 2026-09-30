@@ -28,6 +28,22 @@ from .sparse_transformer import (
 _DILATED_TOPOLOGY_NAME = "dilated"
 
 
+def _tensor_version_or_none(tensor: torch.Tensor) -> int | None:
+    """Return the mutation version when available.
+
+    Tensors created inside torch.inference_mode() intentionally do not track
+    version counters. Sparse topology inputs are treated as immutable in that
+    mode, so object identity remains sufficient for within-forward cache reuse.
+    """
+
+    try:
+        return int(tensor._version)
+    except RuntimeError as exc:
+        if "Inference tensors do not track version counter" not in str(exc):
+            raise
+        return None
+
+
 class DiNATDiTMultiheadAttention(GeometricSparseMultiheadAttention):
     """M12 geometric sparse attention with the DiT block call signature."""
 
@@ -109,7 +125,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         self.sparse_attention_backend = backend
         self._torch_sparse_topology_cache: dict[
             str,
-            tuple[torch.Tensor, int, _TorchSparseTopology],
+            tuple[torch.Tensor, int | None, _TorchSparseTopology],
         ] = {}
 
     def _cached_torch_sparse_topology(
@@ -119,7 +135,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         *,
         num_nodes: int,
     ) -> _TorchSparseTopology:
-        version = int(edge_index._version)
+        version = _tensor_version_or_none(edge_index)
         cached = self._torch_sparse_topology_cache.get(name)
         if (
             cached is not None
