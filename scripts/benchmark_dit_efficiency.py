@@ -175,7 +175,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional LABEL=BACKEND override for a run. "
-            "Used to benchmark the same DiNAT checkpoint with scatter or dgl."
+            "Used to benchmark the same DiNAT checkpoint with scatter, torch_sparse, or dgl."
         ),
     )
     parser.add_argument("--output-dir", required=True)
@@ -800,10 +800,19 @@ def _relative_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     metric_paths = {
         "forward_mean_time": ("forward", "mean_seconds"),
         "forward_peak_memory": ("forward", "peak_allocated_gib"),
+        "forward_incremental_peak_memory": ("forward", "incremental_peak_allocated_gib"),
         "training_step_mean_time": ("training_step", "mean_seconds"),
         "training_peak_memory": ("training_step", "peak_allocated_gib"),
+        "training_incremental_peak_memory": (
+            "training_step",
+            "incremental_peak_allocated_gib",
+        ),
         "generation_time_per_sample": ("generation", "seconds_per_sample"),
         "generation_peak_memory": ("generation", "peak_allocated_gib"),
+        "generation_incremental_peak_memory": (
+            "generation",
+            "incremental_peak_allocated_gib",
+        ),
     }
     for result in results[1:]:
         ratios: dict[str, float] = {}
@@ -848,12 +857,18 @@ def _write_results_csv(path: Path, results: list[dict[str, Any]]) -> None:
                 "forward_mean_ms": result["forward"]["mean_ms"],
                 "forward_samples_per_second": result["forward"]["samples_per_second"],
                 "forward_peak_allocated_gib": result["forward"]["peak_allocated_gib"],
+                "forward_incremental_peak_allocated_gib": result["forward"][
+                    "incremental_peak_allocated_gib"
+                ],
                 "training_step_mean_ms": result["training_step"]["mean_ms"],
                 "training_samples_per_second": result["training_step"][
                     "samples_per_second"
                 ],
                 "training_peak_allocated_gib": result["training_step"][
                     "peak_allocated_gib"
+                ],
+                "training_incremental_peak_allocated_gib": result["training_step"][
+                    "incremental_peak_allocated_gib"
                 ],
                 "generation_mean_seconds": result["generation"]["mean_seconds"],
                 "generation_seconds_per_sample": result["generation"][
@@ -864,6 +879,9 @@ def _write_results_csv(path: Path, results: list[dict[str, Any]]) -> None:
                 ],
                 "generation_peak_allocated_gib": result["generation"][
                     "peak_allocated_gib"
+                ],
+                "generation_incremental_peak_allocated_gib": result["generation"][
+                    "incremental_peak_allocated_gib"
                 ],
                 "generation_model_evaluations_per_sample": result["generation"][
                     "model_evaluations_per_sample"
@@ -878,10 +896,22 @@ def _write_comparison_csv(path: Path, results: list[dict[str, Any]]) -> None:
     metrics: dict[str, tuple[str, str]] = {
         "forward_mean_seconds": ("forward", "mean_seconds"),
         "forward_peak_allocated_gib": ("forward", "peak_allocated_gib"),
+        "forward_incremental_peak_allocated_gib": (
+            "forward",
+            "incremental_peak_allocated_gib",
+        ),
         "training_step_mean_seconds": ("training_step", "mean_seconds"),
         "training_peak_allocated_gib": ("training_step", "peak_allocated_gib"),
+        "training_incremental_peak_allocated_gib": (
+            "training_step",
+            "incremental_peak_allocated_gib",
+        ),
         "generation_seconds_per_sample": ("generation", "seconds_per_sample"),
         "generation_peak_allocated_gib": ("generation", "peak_allocated_gib"),
+        "generation_incremental_peak_allocated_gib": (
+            "generation",
+            "incremental_peak_allocated_gib",
+        ),
     }
     rows: list[dict[str, Any]] = []
     for contender in results[1:]:
