@@ -145,10 +145,14 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         ):
             return cached[2]
 
-        topology = _build_torch_sparse_topology(
-            edge_index,
-            num_nodes=num_nodes,
-        )
+        # Always build cached topology tensors outside inference mode. Otherwise an
+        # inference-first forward can cache inference tensors and a later training
+        # forward on the same edge_index cannot save them for backward.
+        with torch.inference_mode(False):
+            topology = _build_torch_sparse_topology(
+                edge_index,
+                num_nodes=num_nodes,
+            )
         self._torch_sparse_topology_cache[name] = (
             edge_index,
             version,
