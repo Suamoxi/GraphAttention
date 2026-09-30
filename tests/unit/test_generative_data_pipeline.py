@@ -103,3 +103,60 @@ def test_fixed_grid_collation_matches_previous_shared_topology_construction() ->
     )["dilated"]
     expected_dilated = torch.cat((one_dilated, one_dilated + num_nodes), dim=1)
     torch.testing.assert_close(batch.attention_edge_indices["dilated"], expected_dilated)
+
+
+
+def test_collator_reuses_fixed_mesh_connectivity_and_attention_topology() -> None:
+    coords = torch.tensor(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    shared_mesh = Mesh(
+        coords=coords,
+        edge_index=torch.empty((2, 0), dtype=torch.long),
+        mesh_id="shared-hex",
+        cell_connectivity=torch.arange(8, dtype=torch.long).reshape(1, 8),
+    )
+    catalog = FieldCatalog(
+        (
+            FieldSpec(
+                name="rho",
+                support=FieldSupport.NODE,
+                role=FieldRole.PRIMARY_STATE,
+            ),
+        )
+    )
+    samples = [
+        Sample(
+            sample_id=f"volume_{index}",
+            mesh=shared_mesh,
+            fields={"rho": torch.arange(8, dtype=torch.float32) + index},
+        )
+        for index in range(2)
+    ]
+    task = DiffusionDenoisingTask(state_fields=("rho",), timesteps=10)
+    collator = GraphTaskCollator(
+        task,
+        catalog,
+        {"attention_edge_indices": {"dilated": "exact_two_hop"}},
+    )
+
+    first = collator([samples[0]])
+    second = collator([samples[1]])
+
+    assert len(collator._prepared_mesh_cache) == 1
+    assert len(collator._attention_topology_cache) == 1
+    torch.testing.assert_close(first.edge_index, second.edge_index)
+    torch.testing.assert_close(
+        first.attention_edge_indices["dilated"],
+        second.attention_edge_indices["dilated"],
+    )
