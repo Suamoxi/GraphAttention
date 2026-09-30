@@ -59,12 +59,15 @@ for run_dir in "$M29_RUN" "$M33_RUN"; do
 done
 
 echo
-echo "===== Native sparse correctness test on allocated GPU ====="
+echo "===== Native sparse primitive tests on allocated GPU ====="
 singularity exec --nv \
     -B /home \
     -B /scratch \
     "$IMAGE" \
     "$PYTHON" -m pytest \
+        tests/unit/test_dinat_dit.py::test_torch_sparse_sddmm_matches_edge_gather \
+        tests/unit/test_dinat_dit.py::test_torch_sparse_attention_softmax_matches_scatter \
+        tests/unit/test_dinat_dit.py::test_torch_sparse_spmm_matches_index_add \
         tests/unit/test_dinat_dit.py::test_dinat_dit_torch_sparse_backend_matches_scatter \
         -q
 
