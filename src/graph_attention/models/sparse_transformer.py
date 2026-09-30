@@ -25,7 +25,9 @@ class _TorchSparseTopology:
 
 
 class _TorchSparseSDDMM(torch.autograd.Function):
-    """Sample QK^T on a CSR graph with COO sparse first-order backward."""
+    """CSR SDDMM forward with memory-bounded edgewise first-order backward."""
+
+    _EDGE_CHUNK_SIZE = 65536
 
     @staticmethod
     def forward(
@@ -35,7 +37,6 @@ class _TorchSparseSDDMM(torch.autograd.Function):
         crow_indices: torch.Tensor,
         row_indices: torch.Tensor,
         col_indices: torch.Tensor,
-        transpose_order: torch.Tensor,
         scale: float,
     ) -> torch.Tensor:
         num_nodes, num_heads, _ = query.shape
@@ -60,66 +61,31 @@ class _TorchSparseSDDMM(torch.autograd.Function):
             per_head.append(sampled.values())
         scores = torch.stack(per_head, dim=1)
 
-        ctx.save_for_backward(
-            query,
-            key,
-            row_indices,
-            col_indices,
-            transpose_order,
-        )
+        ctx.save_for_backward(query, key, row_indices, col_indices)
         ctx.scale = float(scale)
         return scores
 
     @staticmethod
     def backward(ctx, grad_scores: torch.Tensor):
-        (
-            query,
-            key,
-            row_indices,
-            col_indices,
-            transpose_order,
-        ) = ctx.saved_tensors
-        num_nodes, num_heads, _ = query.shape
+        query, key, row_indices, col_indices = ctx.saved_tensors
         grad_scores = grad_scores.contiguous()
-
-        indices = torch.stack((row_indices, col_indices), dim=0)
-        transpose_indices = torch.stack(
-            (
-                col_indices[transpose_order],
-                row_indices[transpose_order],
-            ),
-            dim=0,
-        )
-
         grad_query = torch.zeros_like(query)
         grad_key = torch.zeros_like(key)
-        for head in range(num_heads):
-            edge_grad = grad_scores[:, head]
-            grad_matrix = torch.sparse_coo_tensor(
-                indices,
-                edge_grad,
-                size=(num_nodes, num_nodes),
-                device=query.device,
-                dtype=edge_grad.dtype,
-                is_coalesced=True,
-            )
-            grad_query[:, head, :] = (
-                torch.sparse.mm(grad_matrix, key[:, head, :].contiguous()) * ctx.scale
-            )
+        chunk_size = _TorchSparseSDDMM._EDGE_CHUNK_SIZE
 
-            transpose_matrix = torch.sparse_coo_tensor(
-                transpose_indices,
-                edge_grad[transpose_order],
-                size=(num_nodes, num_nodes),
-                device=query.device,
-                dtype=edge_grad.dtype,
-                is_coalesced=True,
-            )
-            grad_key[:, head, :] = (
-                torch.sparse.mm(transpose_matrix, query[:, head, :].contiguous()) * ctx.scale
-            )
+        for start in range(0, grad_scores.shape[0], chunk_size):
+            stop = min(start + chunk_size, grad_scores.shape[0])
+            target = row_indices[start:stop]
+            source = col_indices[start:stop]
+            edge_grad = grad_scores[start:stop].unsqueeze(-1)
 
-        return grad_query, grad_key, None, None, None, None, None
+            query_messages = edge_grad * key[source] * ctx.scale
+            key_messages = edge_grad * query[target] * ctx.scale
+
+            grad_query.index_add_(0, target, query_messages)
+            grad_key.index_add_(0, source, key_messages)
+
+        return grad_query, grad_key, None, None, None, None
 
 
 class _TorchSparseSpMM(torch.autograd.Function):
@@ -408,7 +374,6 @@ class SparseMultiheadAttention(nn.Module):
             topology.crow_indices,
             topology.row_indices,
             topology.col_indices,
-            topology.transpose_order,
             self.scale,
         )
         if score_bias is not None:
