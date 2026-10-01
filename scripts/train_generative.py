@@ -347,6 +347,11 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
                 f"compute_seconds={epoch_compute_seconds:.3f}"
             )
 
+            is_best = validation_loss < best_validation
+            if is_best:
+                best_validation = validation_loss
+                best_epoch = epoch
+
             checkpoint = adapter.checkpoint_payload(
                 model,
                 optimizer,
@@ -356,18 +361,44 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
                 initialization=initialization,
                 noise_seed=noise_seed,
             )
+            session_wall_seconds = time.perf_counter() - fit_start
+            checkpoint["history"] = history
+            checkpoint["global_step"] = global_step
+            checkpoint["training_generator_state"] = training_generator.get_state()
+            loader_generator = getattr(train_loader, "generator", None)
+            if loader_generator is not None:
+                checkpoint["train_loader_generator_state"] = loader_generator.get_state()
+            checkpoint["fit_wall_seconds_completed"] = (
+                completed_fit_wall_seconds + session_wall_seconds
+            )
+            if device.type == "cuda":
+                checkpoint["fit_peak_allocated_gib_completed"] = max(
+                    prior_peak_allocated_gib,
+                    torch.cuda.max_memory_allocated(device) / float(1024**3),
+                )
+                checkpoint["fit_peak_reserved_gib_completed"] = max(
+                    prior_peak_reserved_gib,
+                    torch.cuda.max_memory_reserved(device) / float(1024**3),
+                )
+
             torch.save(checkpoint, last_path)
-            if validation_loss < best_validation:
-                best_validation = validation_loss
-                best_epoch = epoch
+            if is_best:
                 torch.save(checkpoint, best_path)
+            _write_history(output_dir / "history.csv", history, metric)
 
     if device.type == "cuda":
         torch.cuda.synchronize(device)
-    fit_wall_seconds = time.perf_counter() - fit_start
+    session_fit_wall_seconds = time.perf_counter() - fit_start
+    fit_wall_seconds = completed_fit_wall_seconds + session_fit_wall_seconds
     if device.type == "cuda":
-        fit_peak_allocated_gib = torch.cuda.max_memory_allocated(device) / float(1024**3)
-        fit_peak_reserved_gib = torch.cuda.max_memory_reserved(device) / float(1024**3)
+        fit_peak_allocated_gib = max(
+            prior_peak_allocated_gib,
+            torch.cuda.max_memory_allocated(device) / float(1024**3),
+        )
+        fit_peak_reserved_gib = max(
+            prior_peak_reserved_gib,
+            torch.cuda.max_memory_reserved(device) / float(1024**3),
+        )
     else:
         fit_peak_allocated_gib = None
         fit_peak_reserved_gib = None
