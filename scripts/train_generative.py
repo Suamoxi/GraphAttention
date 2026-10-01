@@ -31,7 +31,12 @@ from graph_attention.tasks import (
     NodeRegressionBatch,
     NodeRegressionTask,
 )
-from graph_attention.training import fit_train_standardizers, train_equal_sample_optimizer_step
+from graph_attention.training import (
+    ChannelStandardizer,
+    TaskStandardizers,
+    fit_train_standardizers,
+    train_equal_sample_optimizer_step,
+)
 from graph_attention.training.data_pipeline import (
     GraphTaskCollator,
     dataset_group_ids,
@@ -62,6 +67,7 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         settings.get("gradient_accumulation_steps", 1),
         "generative.gradient_accumulation_steps",
     )
+    resume = bool(settings.get("resume", False))
 
     device = torch.device(str(settings.device))
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -73,7 +79,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     if not isinstance(run_name, str) or not run_name.strip():
         raise ValueError("run_name must be set explicitly for a generative run")
     output_dir = Path(str(settings.output_root)).expanduser().resolve() / run_name
-    if output_dir.exists():
+    resume_existing = resume and output_dir.exists()
+    if output_dir.exists() and not resume:
         raise FileExistsError(f"generative output directory already exists: {output_dir}")
 
     repo_root = Path(__file__).resolve().parents[1]
