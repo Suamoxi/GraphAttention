@@ -195,6 +195,65 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     last_path = output_dir / "last.pt"
     tensorboard_dir = output_dir / "tensorboard"
     global_step = 0
+    start_epoch = 0
+    completed_fit_wall_seconds = 0.0
+    prior_peak_allocated_gib = 0.0
+    prior_peak_reserved_gib = 0.0
+
+    if resume_existing:
+        if not last_path.is_file():
+            raise FileNotFoundError(
+                f"resume requested but checkpoint is missing: {last_path}"
+            )
+        checkpoint = torch.load(last_path, map_location=device, weights_only=True)
+        if checkpoint.get("model_class") != type(model).__name__:
+            raise RuntimeError(
+                "resume checkpoint model class does not match configured model"
+            )
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        initialization = checkpoint.get("initialization", initialization)
+        start_epoch = int(checkpoint["epoch"]) + 1
+        history = list(checkpoint.get("history", []))
+        if history and int(history[-1]["epoch"]) != start_epoch - 1:
+            raise RuntimeError("resume checkpoint history does not end at checkpoint epoch")
+        global_step = int(
+            checkpoint.get(
+                "global_step",
+                start_epoch
+                * ((len(train_loader) + gradient_accumulation_steps - 1)
+                   // gradient_accumulation_steps),
+            )
+        )
+        generator_state = checkpoint.get("training_generator_state")
+        if generator_state is not None:
+            training_generator.set_state(generator_state)
+        loader_generator_state = checkpoint.get("train_loader_generator_state")
+        if loader_generator_state is not None:
+            loader_generator = getattr(train_loader, "generator", None)
+            if loader_generator is None:
+                raise RuntimeError("train loader does not expose its saved generator")
+            loader_generator.set_state(loader_generator_state)
+        completed_fit_wall_seconds = float(
+            checkpoint.get("fit_wall_seconds_completed", 0.0)
+        )
+        prior_peak_allocated_gib = float(
+            checkpoint.get("fit_peak_allocated_gib_completed", 0.0)
+        )
+        prior_peak_reserved_gib = float(
+            checkpoint.get("fit_peak_reserved_gib_completed", 0.0)
+        )
+        if not best_path.is_file():
+            raise FileNotFoundError(
+                f"resume requested but best checkpoint is missing: {best_path}"
+            )
+        best_checkpoint = torch.load(best_path, map_location="cpu", weights_only=True)
+        best_validation = float(best_checkpoint[f"validation_{metric}"])
+        best_epoch = int(best_checkpoint["epoch"])
+        print(
+            f"resuming run at epoch={start_epoch} global_step={global_step} "
+            f"best_epoch={best_epoch} best_validation={best_validation:.8e}"
+        )
 
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -202,7 +261,7 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     fit_start = time.perf_counter()
 
     with SummaryWriter(log_dir=str(tensorboard_dir)) as tensorboard:
-        for epoch in range(max_epochs):
+        for epoch in range(start_epoch, max_epochs):
             if device.type == "cuda":
                 torch.cuda.synchronize(device)
             epoch_start = time.perf_counter()
