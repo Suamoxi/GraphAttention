@@ -115,26 +115,36 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     validation_indices = [index_by_id[sample_id] for sample_id in split.validation_ids]
     test_indices = [index_by_id[sample_id] for sample_id in split.test_ids]
 
-    standardizers = fit_train_standardizers(
-        task,
-        (dataset[index] for index in train_indices),
-        dataset.field_catalog,
-        split,
-    )
+    if resume_existing:
+        standardizers = _load_standardizers(output_dir / "standardizers.pt")
+        if tuple(standardizers.train_sample_ids) != tuple(split.train_ids):
+            raise RuntimeError("resume split does not match saved standardizers")
+        if standardizers.physical_nondimensionalization != task.physical_nondimensionalization:
+            raise RuntimeError(
+                "resume physical nondimensionalization does not match saved standardizers"
+            )
+    else:
+        standardizers = fit_train_standardizers(
+            task,
+            (dataset[index] for index in train_indices),
+            dataset.field_catalog,
+            split,
+        )
     _validate_generative_standardizers(standardizers)
 
-    output_dir.mkdir(parents=True, exist_ok=False)
-    OmegaConf.save(cfg, output_dir / "resolved_config.yaml", resolve=True)
-    _write_dataset_artifacts(
-        output_dir,
-        dataset=dataset,
-        sample_ids=sample_ids,
-        group_ids=group_ids,
-        group_key=group_key,
-        split=split,
-        runtime_provenance=runtime_provenance,
-        standardizers=standardizers,
-    )
+    if not resume_existing:
+        output_dir.mkdir(parents=True, exist_ok=False)
+        OmegaConf.save(cfg, output_dir / "resolved_config.yaml", resolve=True)
+        _write_dataset_artifacts(
+            output_dir,
+            dataset=dataset,
+            sample_ids=sample_ids,
+            group_ids=group_ids,
+            group_key=group_key,
+            split=split,
+            runtime_provenance=runtime_provenance,
+            standardizers=standardizers,
+        )
 
     collator = GraphTaskCollator(task, dataset.field_catalog, cfg.geometry)
     train_loader = make_loader(
