@@ -69,6 +69,8 @@ def _attempt(
     host_batch = None
     batch = None
     problem = None
+    predictions = None
+    aggregate = None
     try:
         samples = [dataset[index] for index in range(batch_size)]
         host_batch = collator(samples)
@@ -109,6 +111,8 @@ def _attempt(
             "error": str(exc),
         }
     finally:
+        aggregate = None
+        predictions = None
         optimizer = None
         model = None
         problem = None
