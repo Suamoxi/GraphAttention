@@ -381,9 +381,9 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
                     torch.cuda.max_memory_reserved(device) / float(1024**3),
                 )
 
-            torch.save(checkpoint, last_path)
+            _atomic_torch_save(checkpoint, last_path)
             if is_best:
-                torch.save(checkpoint, best_path)
+                _atomic_torch_save(checkpoint, best_path)
             _write_history(output_dir / "history.csv", history, metric)
 
     if device.type == "cuda":
@@ -797,6 +797,14 @@ def _validate_generative_standardizers(standardizers: Any) -> None:
         raise RuntimeError("generative input/target means must be identical")
     if not torch.equal(standardizers.inputs.scale, standardizers.targets.scale):
         raise RuntimeError("generative input/target scales must be identical")
+
+
+def _atomic_torch_save(payload: Any, path: Path) -> None:
+    """Replace a checkpoint atomically so wall-time termination cannot corrupt the prior file."""
+
+    temporary = path.with_name(path.name + ".tmp")
+    torch.save(payload, temporary)
+    temporary.replace(path)
 
 
 def _load_standardizers(path: Path) -> TaskStandardizers:
