@@ -799,6 +799,33 @@ def _validate_generative_standardizers(standardizers: Any) -> None:
         raise RuntimeError("generative input/target scales must be identical")
 
 
+def _load_standardizers(path: Path) -> TaskStandardizers:
+    """Load frozen train-only scaling without rescanning the full dataset."""
+
+    if not path.is_file():
+        raise FileNotFoundError(f"saved standardizers are missing: {path}")
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    inputs = payload["inputs"]
+    targets = payload["targets"]
+    return TaskStandardizers(
+        inputs=ChannelStandardizer(
+            channel_names=tuple(inputs["channel_names"]),
+            mean=inputs["mean"],
+            scale=inputs["scale"],
+        ),
+        targets=ChannelStandardizer(
+            channel_names=tuple(targets["channel_names"]),
+            mean=targets["mean"],
+            scale=targets["scale"],
+        ),
+        train_sample_ids=tuple(payload["train_sample_ids"]),
+        physical_nondimensionalization=bool(
+            payload["physical_nondimensionalization"]
+        ),
+        weighting=str(payload["weighting"]),
+    )
+
+
 def _write_dataset_artifacts(
     output_dir: Path,
     *,
