@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=m37_3d_dinat_1000e
-#SBATCH --time=7-00:00:00
+#SBATCH --time=12:00:00
 #SBATCH --partition=grace
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
@@ -51,15 +51,20 @@ singularity exec --nv \
         -q
 
 echo
-echo "===== Find maximum NAT microbatch ====="
-singularity exec --nv \
-    -B /home \
-    -B /scratch \
-    "$IMAGE" \
-    "$PYTHON" -u scripts/probe_3d_max_batch.py \
-        --model dinat \
-        --max-batch 64 \
-        --output "$PROBE_JSON"
+if [ ! -s "$PROBE_JSON" ]; then
+    echo "===== Find maximum NAT microbatch ====="
+    singularity exec --nv \
+        -B /home \
+        -B /scratch \
+        "$IMAGE" \
+        "$PYTHON" -u scripts/probe_3d_max_batch.py \
+            --model dinat \
+            --max-batch 64 \
+            --output "$PROBE_JSON"
+else
+    echo "===== Reuse existing NAT max-batch probe ====="
+    cat "$PROBE_JSON"
+fi
 
 BATCH=$(singularity exec \
     -B /home \
@@ -71,9 +76,8 @@ RUN_NAME="m37_3d_dinat_dit_flow_1000e_h128_l10_h4_b${BATCH}"
 RUN_DIR="${RUN_ROOT}/${RUN_NAME}"
 
 echo "Selected NAT batch size: ${BATCH}"
-if [ -e "$RUN_DIR" ]; then
-    echo "ERROR: run directory already exists: $RUN_DIR"
-    exit 1
+if [ -d "$RUN_DIR" ]; then
+    echo "Existing run found; resuming from last completed epoch."
 fi
 
 echo
@@ -103,6 +107,7 @@ singularity exec --nv \
         model.sparse_attention_backend=torch_sparse \
         generative.batch_size="$BATCH" \
         generative.gradient_accumulation_steps=1 \
+        generative.resume=true \
         generative.num_workers=4 \
         generative.max_epochs=1000 \
         generative.device=cuda
