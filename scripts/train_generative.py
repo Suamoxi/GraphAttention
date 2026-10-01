@@ -205,7 +205,7 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
             raise FileNotFoundError(
                 f"resume requested but checkpoint is missing: {last_path}"
             )
-        checkpoint = torch.load(last_path, map_location=device, weights_only=True)
+        checkpoint = torch.load(last_path, map_location="cpu", weights_only=True)
         if checkpoint.get("model_class") != type(model).__name__:
             raise RuntimeError(
                 "resume checkpoint model class does not match configured model"
