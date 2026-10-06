@@ -50,7 +50,6 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
     checkpoint_path = run_dir / str(cfg.checkpoint)
     for path, label in (
         (source_config_path, "resolved_config.yaml"),
-        (source_summary_path, "summary.json"),
         (manifest_path, "dataset_split_manifest.json"),
         (standardizers_path, "standardizers.pt"),
         (checkpoint_path, "checkpoint"),
@@ -59,7 +58,11 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
             raise FileNotFoundError(f"source generative {label} does not exist: {path}")
 
     source_cfg = OmegaConf.load(source_config_path)
-    source_summary = json.loads(source_summary_path.read_text())
+    source_summary = (
+        json.loads(source_summary_path.read_text())
+        if source_summary_path.is_file()
+        else {}
+    )
     manifest = json.loads(manifest_path.read_text())
     seed = _nonnegative_int(source_cfg.seed, "source seed")
 
@@ -120,9 +123,11 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
     model, _ = instantiate_controlled_model(source_cfg.model, model_probe, seed=seed)
     model = model.to(device=device, dtype=torch.float32)
 
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
     if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
         raise ValueError("generative checkpoint does not contain model_state_dict")
+    checkpoint_epoch = checkpoint.get("epoch")
+    checkpoint_validation = checkpoint.get("validation_loss")
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
     sampler = task.sampler_name(
@@ -170,6 +175,13 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
         "source_run_name": run_dir.name,
         "source_run_dir": str(run_dir),
         "source_checkpoint": checkpoint_path.name,
+        "source_checkpoint_epoch": (
+            int(checkpoint_epoch) if checkpoint_epoch is not None else None
+        ),
+        "source_checkpoint_validation_loss": (
+            float(checkpoint_validation) if checkpoint_validation is not None else None
+        ),
+        "source_training_complete": source_summary_path.is_file(),
         "source_best_epoch": source_summary.get("best_epoch"),
         "task": source_summary.get("task", type(task).__name__),
         "model": type(model).__name__,
