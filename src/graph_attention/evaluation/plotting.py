@@ -244,6 +244,7 @@ def save_energy_spectrum_population_plots(
     dpi: int,
     lower_quantile: float = 0.10,
     upper_quantile: float = 0.90,
+    dimension_label: str = "2-D",
 ) -> None:
     """Plot energy-spectrum populations with explicit snapshot-variability bands."""
 
@@ -299,7 +300,8 @@ def save_energy_spectrum_population_plots(
         )
 
         axis.set_xlabel(r"Wavenumber $k$", fontsize=_LABEL_FONTSIZE)
-        axis.set_ylabel(r"$E_{2D}(k)$", fontsize=_LABEL_FONTSIZE)
+        energy_symbol = r"$E_{3D}(k)$" if dimension_label == "3-D" else r"$E_{2D}(k)$"
+        axis.set_ylabel(energy_symbol, fontsize=_LABEL_FONTSIZE)
         axis.set_xlim(float(physical_k[0]), float(k_nyquist))
         _style_axis(axis)
         axis.legend(fontsize=_LEGEND_FONTSIZE)
@@ -320,7 +322,7 @@ def save_energy_spectrum_population_plots(
             length=_TICK_LENGTH,
         )
         axis.set_title(
-            "Velocity-based 2-D kinetic-energy spectrum\n"
+            f"Velocity-based {dimension_label} kinetic-energy spectrum\n"
             f"{aggregation.capitalize()}",
             fontsize=_TITLE_FONTSIZE,
         )
