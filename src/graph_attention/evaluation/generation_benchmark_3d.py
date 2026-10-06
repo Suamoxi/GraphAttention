@@ -309,6 +309,17 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
                 "set plots.fields=false"
             )
 
+    energy_summary = _energy_spectrum_summary(
+        energy_summary_rows,
+        energy_band_rows,
+        enabled=True,
+        lower_quantile=energy_lower,
+        upper_quantile=energy_upper,
+    )
+    energy_summary["definition"] = (
+        "velocity_based_3d_volume_specific_kinetic_energy_spectrum"
+    )
+
     summary = {
         "benchmark": "generation_distribution_3d_v1",
         "run_name": run_dir.name,
@@ -347,13 +358,7 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
         "nearest_reference": nearest_summary,
         "channel_summary": _channel_summary(channel_rows, band_rows),
         "physical_summary": _physical_summary(physical_rows),
-        "energy_spectrum": _energy_spectrum_summary(
-            energy_summary_rows,
-            energy_band_rows,
-            enabled=True,
-            lower_quantile=energy_lower,
-            upper_quantile=energy_upper,
-        ),
+        "energy_spectrum": energy_summary,
         "standardized_wasserstein": {
             str(row["channel"]): _finite_or_none(
                 float(row["wasserstein_1_standardized"])
