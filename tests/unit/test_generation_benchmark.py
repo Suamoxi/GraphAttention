@@ -9,6 +9,7 @@ from omegaconf import OmegaConf
 from graph_attention.evaluation import (
     empirical_wasserstein_1,
     infer_cartesian_grid_2d,
+    infer_cartesian_grid_3d,
     run_generation_benchmark,
 )
 from graph_attention.evaluation.generation_benchmark import (
@@ -50,6 +51,96 @@ def test_cartesian_grid_inference_handles_permuted_node_order() -> None:
     field = scatter_to_grid(canonical_linear_index, grid)
 
     np.testing.assert_array_equal(field, np.arange(12).reshape(3, 4))
+
+
+def test_cartesian_grid_3d_periodic_drop_max_handles_permuted_node_order() -> None:
+    x, y, z = np.meshgrid(
+        np.arange(5),
+        np.arange(5),
+        np.arange(5),
+        indexing="ij",
+    )
+    canonical = np.column_stack(
+        (x.reshape(-1), y.reshape(-1), z.reshape(-1))
+    ).astype(np.float64)
+    rng = np.random.default_rng(7)
+    permutation = rng.permutation(canonical.shape[0])
+    coords = canonical[permutation]
+    source_linear = (
+        25 * coords[:, 0] + 5 * coords[:, 1] + coords[:, 2]
+    )
+
+    grid = infer_cartesian_grid_3d(
+        coords,
+        periodic_endpoint_mode="drop_max",
+    )
+
+    from graph_attention.evaluation.spectra_3d import scatter_to_grid_3d
+
+    field = scatter_to_grid_3d(source_linear, grid)
+    ex, ey, ez = np.meshgrid(
+        np.arange(4),
+        np.arange(4),
+        np.arange(4),
+        indexing="ij",
+    )
+    expected = 25 * ex + 5 * ey + ez
+
+    assert grid.source_shape == (5, 5, 5)
+    assert grid.shape == (4, 4, 4)
+    np.testing.assert_array_equal(field, expected)
+
+
+def test_velocity_energy_spectrum_3d_recovers_periodic_resolved_tke() -> None:
+    from graph_attention.evaluation.spectra_3d import (
+        sample_velocity_energy_spectra_3d,
+    )
+
+    stored_points = 5
+    unique_points = stored_points - 1
+    x, y, z = np.meshgrid(
+        np.arange(stored_points, dtype=np.float64),
+        np.arange(stored_points, dtype=np.float64),
+        np.arange(stored_points, dtype=np.float64),
+        indexing="ij",
+    )
+    coords = np.column_stack(
+        (x.reshape(-1), y.reshape(-1), z.reshape(-1))
+    )
+    grid = infer_cartesian_grid_3d(
+        coords,
+        periodic_endpoint_mode="drop_max",
+    )
+
+    u = np.sin(2.0 * np.pi * x / unique_points).reshape(-1)
+    zeros = np.zeros_like(u)
+    rho = np.ones_like(u)
+    sample = np.stack(
+        (rho, rho * u, rho * zeros, rho * zeros, 10.0 * rho),
+        axis=1,
+    )
+    channel_names = (
+        "rho.value",
+        "rhou.x",
+        "rhov.y",
+        "rhow.z",
+        "rhoE.value",
+    )
+
+    _, energy = sample_velocity_energy_spectra_3d(
+        sample[None, ...],
+        grid,
+        channel_names,
+        num_k_bins=4,
+        subtract_mean=True,
+    )
+
+    unique_u = np.sin(
+        2.0 * np.pi * np.arange(unique_points, dtype=np.float64) / unique_points
+    )
+    expected_tke = 0.5 * float(np.mean(unique_u**2))
+    delta_k = grid.k_nyquist_min / 4.0
+    assert float(np.sum(energy[0]) * delta_k) == pytest.approx(expected_tke)
 
 
 def test_radial_spectra_drop_empty_low_k_shells() -> None:
