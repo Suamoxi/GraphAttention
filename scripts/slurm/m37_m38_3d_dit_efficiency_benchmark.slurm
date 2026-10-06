@@ -16,7 +16,7 @@ RUN_ROOT=/scratch/coop/theret/GraphAttention_runs
 
 M38_RUN=${M38_RUN:-${RUN_ROOT}/m38_3d_full_dit_flow_1000e_h128_l10_h4_b18}
 M37_RUN=${M37_RUN:-${RUN_ROOT}/m37_3d_dinat_dit_flow_1000e_h128_l10_h4_b16}
-SOURCE_CHECKPOINT=${SOURCE_CHECKPOINT:-last.pt}
+SOURCE_CHECKPOINT=${SOURCE_CHECKPOINT:-best.pt}
 EVAL_CHECKPOINT=eval_current.pt
 
 cd "$REPO"
