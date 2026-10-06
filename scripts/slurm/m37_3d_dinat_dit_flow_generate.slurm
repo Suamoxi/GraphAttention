@@ -15,7 +15,7 @@ PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
 RUN_ROOT=/scratch/coop/theret/GraphAttention_runs
 
 RUN_DIR=${RUN_DIR:-${RUN_ROOT}/m37_3d_dinat_dit_flow_1000e_h128_l10_h4_b16}
-CHECKPOINT=${CHECKPOINT:-last.pt}
+CHECKPOINT=${CHECKPOINT:-best.pt}
 BATCH_SIZE=${BATCH_SIZE:-8}
 NUM_WORKERS=${NUM_WORKERS:-4}
 SAMPLING_STEPS=50
@@ -53,7 +53,7 @@ echo "============================================================"
 echo "M37 - full-volume 3-D NAT-DiT Flow inference"
 echo "============================================================"
 echo "Source run:     $RUN_DIR"
-echo "Checkpoint:     $EVAL_CHECKPOINT (snapshot of $CHECKPOINT, epoch $CHECKPOINT_EPOCH)"
+echo "Checkpoint:     $EVAL_CHECKPOINT (snapshot of current $CHECKPOINT, epoch $CHECKPOINT_EPOCH)"
 echo "Batch size:     $BATCH_SIZE"
 echo "Attention:      alternating local / exact-two-hop"
 echo "Backend:        saved run configuration (torch_sparse for M37)"
