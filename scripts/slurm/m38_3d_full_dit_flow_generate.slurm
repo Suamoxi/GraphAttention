@@ -15,12 +15,17 @@ PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
 RUN_ROOT=/scratch/coop/theret/GraphAttention_runs
 
 RUN_DIR=${RUN_DIR:-${RUN_ROOT}/m38_3d_full_dit_flow_1000e_h128_l10_h4_b18}
-CHECKPOINT=${CHECKPOINT:-best.pt}
+CHECKPOINT=${CHECKPOINT:-last.pt}
 BATCH_SIZE=${BATCH_SIZE:-8}
 NUM_WORKERS=${NUM_WORKERS:-4}
 SAMPLING_STEPS=50
 SAMPLING_SEED=5678
-GEN_NAME=flow_heun_steps50_seed5678
+CHECKPOINT_EPOCH=$(singularity exec \
+    -B /home \
+    -B /scratch \
+    "$IMAGE" \
+    "$PYTHON" -c "import torch; p=torch.load('$RUN_DIR/$CHECKPOINT', map_location='cpu', weights_only=True); print(int(p['epoch']))")
+GEN_NAME=flow_heun_steps50_seed5678_${CHECKPOINT%.pt}_epoch${CHECKPOINT_EPOCH}
 GEN_DIR=${RUN_DIR}/generations/${GEN_NAME}
 
 cd "$REPO"
@@ -29,7 +34,7 @@ echo "============================================================"
 echo "M38 - full-volume 3-D Full-DiT Flow inference"
 echo "============================================================"
 echo "Source run:     $RUN_DIR"
-echo "Checkpoint:     $CHECKPOINT"
+echo "Checkpoint:     $CHECKPOINT (epoch $CHECKPOINT_EPOCH)"
 echo "Batch size:     $BATCH_SIZE"
 echo "Sampler:        Flow ODE / Heun"
 echo "Steps:          $SAMPLING_STEPS (100 model evaluations)"
@@ -44,7 +49,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     exit 1
 fi
 
-for artifact in "$CHECKPOINT" summary.json resolved_config.yaml standardizers.pt dataset_split_manifest.json; do
+for artifact in "$CHECKPOINT" resolved_config.yaml standardizers.pt dataset_split_manifest.json; do
     test -s "${RUN_DIR}/${artifact}" || {
         echo "ERROR: missing training artifact: ${RUN_DIR}/${artifact}"
         exit 1
