@@ -20,21 +20,40 @@ BATCH_SIZE=${BATCH_SIZE:-8}
 NUM_WORKERS=${NUM_WORKERS:-4}
 SAMPLING_STEPS=50
 SAMPLING_SEED=5678
+
+cd "$REPO"
+
+for artifact in "$CHECKPOINT" resolved_config.yaml standardizers.pt dataset_split_manifest.json; do
+    test -s "${RUN_DIR}/${artifact}" || {
+        echo "ERROR: missing training artifact: ${RUN_DIR}/${artifact}"
+        exit 1
+    }
+done
+
+# Freeze the evolving training checkpoint before generation so a resumed training
+# job cannot change the weights midway through this evaluation.
+SNAPSHOT_TMP="${RUN_DIR}/.eval_${CHECKPOINT%.pt}_${SLURM_JOB_ID}.tmp"
+cp "${RUN_DIR}/${CHECKPOINT}" "$SNAPSHOT_TMP"
 CHECKPOINT_EPOCH=$(singularity exec \
     -B /home \
     -B /scratch \
     "$IMAGE" \
-    "$PYTHON" -c "import torch; p=torch.load('$RUN_DIR/$CHECKPOINT', map_location='cpu', weights_only=True); print(int(p['epoch']))")
+    "$PYTHON" -c "import torch; p=torch.load('$SNAPSHOT_TMP', map_location='cpu', weights_only=True); print(int(p['epoch']))")
+EVAL_CHECKPOINT="eval_${CHECKPOINT%.pt}_epoch${CHECKPOINT_EPOCH}.pt"
+if [ ! -s "${RUN_DIR}/${EVAL_CHECKPOINT}" ]; then
+    mv "$SNAPSHOT_TMP" "${RUN_DIR}/${EVAL_CHECKPOINT}"
+else
+    rm -f "$SNAPSHOT_TMP"
+fi
+
 GEN_NAME=flow_heun_steps50_seed5678_${CHECKPOINT%.pt}_epoch${CHECKPOINT_EPOCH}
 GEN_DIR=${RUN_DIR}/generations/${GEN_NAME}
-
-cd "$REPO"
 
 echo "============================================================"
 echo "M38 - full-volume 3-D Full-DiT Flow inference"
 echo "============================================================"
 echo "Source run:     $RUN_DIR"
-echo "Checkpoint:     $CHECKPOINT (epoch $CHECKPOINT_EPOCH)"
+echo "Checkpoint:     $EVAL_CHECKPOINT (snapshot of $CHECKPOINT, epoch $CHECKPOINT_EPOCH)"
 echo "Batch size:     $BATCH_SIZE"
 echo "Sampler:        Flow ODE / Heun"
 echo "Steps:          $SAMPLING_STEPS (100 model evaluations)"
@@ -48,13 +67,6 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "ERROR: tracked repository files are modified."
     exit 1
 fi
-
-for artifact in "$CHECKPOINT" resolved_config.yaml standardizers.pt dataset_split_manifest.json; do
-    test -s "${RUN_DIR}/${artifact}" || {
-        echo "ERROR: missing training artifact: ${RUN_DIR}/${artifact}"
-        exit 1
-    }
-done
 
 if [ -s "${GEN_DIR}/generated_test.pt" ] && [ -s "${GEN_DIR}/summary.json" ]; then
     echo "Generation is already complete; reusing:"
@@ -76,7 +88,7 @@ singularity exec --nv \
     "$IMAGE" \
     "$PYTHON" -u -m scripts.generate_generative \
         run_dir="$RUN_DIR" \
-        checkpoint="$CHECKPOINT" \
+        checkpoint="$EVAL_CHECKPOINT" \
         device=cuda \
         batch_size="$BATCH_SIZE" \
         num_workers="$NUM_WORKERS" \
