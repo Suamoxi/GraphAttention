@@ -232,7 +232,6 @@ def _validate_run_artifacts(run_dir: Path, checkpoint_name: str, label: str) -> 
         raise NotADirectoryError(f"{label} run directory does not exist: {run_dir}")
     for name in (
         "resolved_config.yaml",
-        "summary.json",
         "dataset_split_manifest.json",
         "standardizers.pt",
         checkpoint_name,
@@ -279,7 +278,6 @@ def _validate_comparison_contract(run_dirs: dict[str, Path]) -> dict[str, Any]:
         "model.dropout",
         "model.qkv_bias",
         "model.out_proj_bias",
-        "generative.batch_size",
     )
     shared_values: dict[str, Any] = {}
     for path in shared_config_paths:
@@ -316,6 +314,13 @@ def _validate_comparison_contract(run_dirs: dict[str, Path]) -> dict[str, Any]:
         },
         "geometry_configs": {
             label: OmegaConf.to_container(configs[label].geometry, resolve=True)
+            for label in labels
+        },
+        "training_microbatch_sizes": {
+            label: int(configs[label].generative.batch_size) for label in labels
+        },
+        "training_gradient_accumulation_steps": {
+            label: int(configs[label].generative.gradient_accumulation_steps)
             for label in labels
         },
     }
