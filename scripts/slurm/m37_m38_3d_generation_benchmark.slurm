@@ -16,17 +16,32 @@ RUN_ROOT=/scratch/coop/theret/GraphAttention_runs
 
 M38_RUN=${M38_RUN:-${RUN_ROOT}/m38_3d_full_dit_flow_1000e_h128_l10_h4_b18}
 M37_RUN=${M37_RUN:-${RUN_ROOT}/m37_3d_dinat_dit_flow_1000e_h128_l10_h4_b16}
-GEN_NAME=flow_heun_steps50_seed5678
+CHECKPOINT_KIND=${CHECKPOINT_KIND:-last}
 
-M38_GEN=${M38_RUN}/generations/${GEN_NAME}
-M37_GEN=${M37_RUN}/generations/${GEN_NAME}
+cd "$REPO"
+
+latest_generation () {
+    local run_dir="$1"
+    local match
+    match=$(find "${run_dir}/generations" -maxdepth 1 -type d \
+        -name "flow_heun_steps50_seed5678_${CHECKPOINT_KIND}_epoch*" \
+        -print 2>/dev/null | sort -V | tail -n 1)
+    if [ -z "$match" ]; then
+        echo "ERROR: no completed ${CHECKPOINT_KIND}.pt generation found under ${run_dir}/generations" >&2
+        exit 1
+    fi
+    printf '%s\n' "$match"
+}
+
+M38_GEN=$(latest_generation "$M38_RUN")
+M37_GEN=$(latest_generation "$M37_RUN")
+M38_GEN_NAME=$(basename "$M38_GEN")
+M37_GEN_NAME=$(basename "$M37_GEN")
 
 M38_BENCH_ROOT=${RUN_ROOT}/benchmark_3d_m38_full_dit_flow
 M37_BENCH_ROOT=${RUN_ROOT}/benchmark_3d_m37_dinat_dit_flow
-M38_BENCH=${M38_BENCH_ROOT}/${GEN_NAME}
-M37_BENCH=${M37_BENCH_ROOT}/${GEN_NAME}
-
-cd "$REPO"
+M38_BENCH=${M38_BENCH_ROOT}/${M38_GEN_NAME}
+M37_BENCH=${M37_BENCH_ROOT}/${M37_GEN_NAME}
 
 echo "============================================================"
 echo "M37 / M38 full-volume 3-D generation quality benchmark"
@@ -39,6 +54,8 @@ echo "Spectra:                3-D radial FFT"
 echo "Energy:                 velocity-based E_3D(k), 10-90% bands"
 echo "Wasserstein:            nondimensional + train-standardized"
 echo "Full-volume field plots:disabled"
+echo "M38 generation:          $M38_GEN_NAME"
+echo "M37 generation:          $M37_GEN_NAME"
 echo "============================================================"
 
 git rev-parse HEAD
