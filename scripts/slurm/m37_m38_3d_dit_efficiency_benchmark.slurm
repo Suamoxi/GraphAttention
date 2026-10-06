@@ -16,9 +16,26 @@ RUN_ROOT=/scratch/coop/theret/GraphAttention_runs
 
 M38_RUN=${M38_RUN:-${RUN_ROOT}/m38_3d_full_dit_flow_1000e_h128_l10_h4_b18}
 M37_RUN=${M37_RUN:-${RUN_ROOT}/m37_3d_dinat_dit_flow_1000e_h128_l10_h4_b16}
-OUTPUT_DIR=${OUTPUT_DIR:-${RUN_ROOT}/efficiency_m38_vs_m37_3d_flow}
+SOURCE_CHECKPOINT=${SOURCE_CHECKPOINT:-last.pt}
+EVAL_CHECKPOINT=eval_current.pt
 
 cd "$REPO"
+
+for run_dir in "$M38_RUN" "$M37_RUN"; do
+    for artifact in "$SOURCE_CHECKPOINT" resolved_config.yaml standardizers.pt dataset_split_manifest.json; do
+        test -s "${run_dir}/${artifact}" || {
+            echo "ERROR: missing training artifact: ${run_dir}/${artifact}"
+            exit 1
+        }
+    done
+    cp "${run_dir}/${SOURCE_CHECKPOINT}" "${run_dir}/${EVAL_CHECKPOINT}"
+done
+
+M38_EPOCH=$(singularity exec -B /home -B /scratch "$IMAGE" "$PYTHON" -c \
+    "import torch; print(int(torch.load('$M38_RUN/$EVAL_CHECKPOINT', map_location='cpu', weights_only=True)['epoch']))")
+M37_EPOCH=$(singularity exec -B /home -B /scratch "$IMAGE" "$PYTHON" -c \
+    "import torch; print(int(torch.load('$M37_RUN/$EVAL_CHECKPOINT', map_location='cpu', weights_only=True)['epoch']))")
+OUTPUT_DIR=${OUTPUT_DIR:-${RUN_ROOT}/efficiency_m38e${M38_EPOCH}_vs_m37e${M37_EPOCH}_3d_flow}
 
 echo "============================================================"
 echo "M38 / M37 controlled 3-D DiT efficiency benchmark"
@@ -28,6 +45,8 @@ echo "M37:            NAT-DiT / torch_sparse backend"
 echo "Physical batch: 1 full 33^3-node volume"
 echo "Flow generation:50-step Heun (100 model evaluations)"
 echo "Timing scope:   model compute only"
+echo "M38 checkpoint: $EVAL_CHECKPOINT, epoch $M38_EPOCH"
+echo "M37 checkpoint: $EVAL_CHECKPOINT, epoch $M37_EPOCH"
 echo "============================================================"
 
 git rev-parse HEAD
@@ -36,15 +55,6 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "ERROR: tracked repository files are modified."
     exit 1
 fi
-
-for run_dir in "$M38_RUN" "$M37_RUN"; do
-    for artifact in best.pt resolved_config.yaml summary.json standardizers.pt dataset_split_manifest.json; do
-        test -s "${run_dir}/${artifact}" || {
-            echo "ERROR: missing training artifact: ${run_dir}/${artifact}"
-            exit 1
-        }
-    done
-done
 
 echo
 echo "===== NAT backend correctness gate ====="
@@ -72,7 +82,7 @@ singularity exec --nv \
         --run "dinat_torch_sparse=${M37_RUN}" \
         --attention-backend "dinat_torch_sparse=torch_sparse" \
         --output-dir "$OUTPUT_DIR" \
-        --checkpoint best.pt \
+        --checkpoint "$EVAL_CHECKPOINT" \
         --device cuda \
         --batch-size 1 \
         --num-workers 0 \
