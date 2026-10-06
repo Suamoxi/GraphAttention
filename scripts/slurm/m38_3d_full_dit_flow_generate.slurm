@@ -15,7 +15,7 @@ PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
 RUN_ROOT=/scratch/coop/theret/GraphAttention_runs
 
 RUN_DIR=${RUN_DIR:-${RUN_ROOT}/m38_3d_full_dit_flow_1000e_h128_l10_h4_b18}
-CHECKPOINT=${CHECKPOINT:-last.pt}
+CHECKPOINT=${CHECKPOINT:-best.pt}
 BATCH_SIZE=${BATCH_SIZE:-8}
 NUM_WORKERS=${NUM_WORKERS:-4}
 SAMPLING_STEPS=50
@@ -53,7 +53,7 @@ echo "============================================================"
 echo "M38 - full-volume 3-D Full-DiT Flow inference"
 echo "============================================================"
 echo "Source run:     $RUN_DIR"
-echo "Checkpoint:     $EVAL_CHECKPOINT (snapshot of $CHECKPOINT, epoch $CHECKPOINT_EPOCH)"
+echo "Checkpoint:     $EVAL_CHECKPOINT (snapshot of current $CHECKPOINT, epoch $CHECKPOINT_EPOCH)"
 echo "Batch size:     $BATCH_SIZE"
 echo "Sampler:        Flow ODE / Heun"
 echo "Steps:          $SAMPLING_STEPS (100 model evaluations)"
