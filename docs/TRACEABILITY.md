@@ -352,6 +352,37 @@ Known limitations:
     no learning-quality claim before a controlled trained diffusion run is benchmarked
 ```
 
+## 9.1. Full-volume 3-D HIT generation benchmark genealogy
+
+```text
+Concept:
+    unpaired full-volume 3-D distribution and spectral evaluation for generated HIT
+Status:
+    project scientific/numerical benchmark convention
+Project-specific definition:
+    generated and held-out test populations are compared in nondimensional conservative state;
+    the endpoint-inclusive 33^3 periodic HIT storage grid is reduced to the unique 32^3
+    periodic grid only for FFT analysis by dropping the maximum-coordinate plane on x/y/z;
+    3-D orthonormal FFT radial shells retain 0 < k <= min-axis Nyquist;
+    velocity energy uses u=rhou/rho, v=rhov/rho, w=rhow/rho with per-snapshot means removed.
+Implementation path:
+    src/graph_attention/evaluation/spectra_3d.py
+    src/graph_attention/evaluation/generation_benchmark_3d.py
+    scripts/benchmark_generation_3d.py
+Configuration:
+    configs/benchmark_generation_3d.yaml
+Scientific/numerical tests:
+    permuted-node structured 3-D grid reconstruction with periodic endpoint removal;
+    resolved periodic velocity mode recovers the expected integrated specific TKE.
+Evidence status:
+    IMPLEMENTED; target-cluster end-to-end generation/benchmark validation pending.
+Known limitations:
+    requires a complete uniform Cartesian 3-D mesh for FFT diagnostics;
+    periodic endpoint removal is a post-processing convention only and does not repair
+    the currently deferred periodic cross-boundary graph topology;
+    full-volume field plots are deferred.
+```
+
 ## 10. Change procedure
 
 When code changes a scientifically meaningful mechanism:
