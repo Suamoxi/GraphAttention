@@ -746,3 +746,61 @@ Training and reverse generation are deliberately separate workflows. One trained
 For the first controlled M11-versus-M13 sampling-cost comparison, the reference diffusion setting is deterministic DDIM with 100 model evaluations. This is compared against M11 Heun with 50 steps, which also uses 100 model evaluations. Full `T=1000, eta=1` ancestral sampling is a separate cost/quality reference, not the equal-NFE baseline.
 
 M13 does not initially include SNR-weighted loss, `v` prediction, `x0` prediction, learned reverse variance, classifier-free guidance, conditional generation, x0 clipping, richer time embeddings, DDP, or low-precision target validation. Those are separate scientific or numerical changes and must not be attributed to the frozen baseline.
+
+
+## 23. Full-volume 3-D HIT generation benchmark
+
+The full-volume HIT generation benchmark evaluates independently generated and held-out
+test populations in the same nondimensional five-channel conservative state used by
+training. Generated sampling keys are not paired targets for individual CFD snapshots;
+the benchmark therefore reports population statistics rather than paired reconstruction
+error.
+
+For the current `HIT_LES_FORCED` mesh, the stored structured mesh contains
+`33 x 33 x 33` nodes for a periodic box discretized by `32 x 32 x 32`
+hexahedral cells. The maximum-coordinate planes represent the periodic endpoint.
+For FFT-based post-processing only, the benchmark removes the maximum-coordinate
+plane on each axis and analyzes the unique `32 x 32 x 32` periodic grid. This
+post-processing convention does not add periodic graph edges and does not change the
+model input topology.
+
+For a unique Cartesian grid with spacings `dx, dy, dz`, the benchmark uses the
+orthonormal three-dimensional discrete Fourier transform and radial wavenumber
+
+$$
+k = \sqrt{k_x^2+k_y^2+k_z^2}.
+$$
+
+Only modes satisfying
+
+$$
+0 < k \le \min\left(\frac{\pi}{dx},\frac{\pi}{dy},\frac{\pi}{dz}\right)
+$$
+
+are retained in the radial-shell summaries. Per-channel spectra subtract each
+snapshot's spatial mean when configured.
+
+The velocity-based energy diagnostic first reconstructs
+
+$$
+u=\frac{\rho u}{\rho},\qquad
+v=\frac{\rho v}{\rho},\qquad
+w=\frac{\rho w}{\rho}.
+$$
+
+After subtracting the per-snapshot component means, the shell energy is constructed
+from
+
+$$
+\frac{1}{2}\left(|\hat u|^2+|\hat v|^2+|\hat w|^2\right)
+$$
+
+with normalization chosen so integrating the retained shell-density spectrum over
+wavenumber recovers the resolved specific turbulent kinetic energy represented by
+those modes.
+
+The 3-D benchmark also reports pooled channel marginals, train-standardized
+Wasserstein-1 distances, cross-channel correlations, conservative-state physical
+sanity metrics, local axis-neighbour statistics, and unpaired nearest-reference
+descriptor distances. Full-volume field rendering is deliberately excluded from the
+first implementation; it does not affect the statistical or spectral metrics.
