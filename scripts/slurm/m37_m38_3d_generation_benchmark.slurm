@@ -23,14 +23,34 @@ cd "$REPO"
 latest_generation () {
     local run_dir="$1"
     local match
+    local legacy
     match=$(find "${run_dir}/generations" -maxdepth 1 -type d \
         -name "flow_heun_steps50_seed5678_${CHECKPOINT_KIND}_epoch*" \
         -print 2>/dev/null | sort -V | tail -n 1)
-    if [ -z "$match" ]; then
-        echo "ERROR: no completed ${CHECKPOINT_KIND}.pt generation found under ${run_dir}/generations" >&2
-        exit 1
+    if [ -n "$match" ]; then
+        printf '%s\n' "$match"
+        return 0
     fi
-    printf '%s\n' "$match"
+
+    # Compatibility with generations created before epoch-specific output names
+    # were introduced. Only accept the legacy directory when its own summary
+    # proves that it was generated from the requested checkpoint kind.
+    legacy="${run_dir}/generations/flow_heun_steps50_seed5678"
+    if [ -s "${legacy}/generated_test.pt" ] && [ -s "${legacy}/summary.json" ]; then
+        if singularity exec \
+            -B /home \
+            -B /scratch \
+            "$IMAGE" \
+            "$PYTHON" -c "import json, pathlib, sys; p=json.loads(pathlib.Path('${legacy}/summary.json').read_text()); sys.exit(0 if p.get('source_checkpoint') == '${CHECKPOINT_KIND}.pt' else 1)"
+        then
+            echo "INFO: using legacy completed ${CHECKPOINT_KIND}.pt generation: ${legacy}" >&2
+            printf '%s\n' "$legacy"
+            return 0
+        fi
+    fi
+
+    echo "ERROR: no completed ${CHECKPOINT_KIND}.pt generation found under ${run_dir}/generations" >&2
+    exit 1
 }
 
 M38_GEN=$(latest_generation "$M38_RUN")
