@@ -22,6 +22,12 @@ energy_spectrum:
   lower_quantile: 0.10
   upper_quantile: 0.90
 
+spatial_statistics:
+  # On the unique 32^3 periodic grid, None evaluates lags 0..16 = L_box/2.
+  max_lag: null
+  lower_quantile: 0.10
+  upper_quantile: 0.90
+
 nearest_reference:
   enabled: true
   include_channel_correlations: true
@@ -35,8 +41,10 @@ plots:
   marginals: true
   spectra: true
   energy_spectrum: true
-  # Full-volume field rendering is intentionally deferred; statistics and spectra
-  # operate on the complete 3-D volume.
-  fields: false
+  # Visual sanity check: central x/y/z slices for a few unpaired real/generated volumes.
+  fields: true
+  field_examples: 3
+  spatial_correlation: true
+  structure_functions: true
   marginal_bins: 128
   dpi: 180
