@@ -12,6 +12,7 @@ from .dit_common import (
     _BaseDiTGraphTransformer,
     _normalize_coordinates_by_graph,
     _validate_packed_batch_index,
+    _with_missing_self_loops,
 )
 from .geometric_transformer import (
     GeometricSparseMultiheadAttention,
@@ -66,11 +67,13 @@ class DiNATDiTMultiheadAttention(GeometricSparseMultiheadAttention):
 
 
 class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
-    """DiT backbone with M12 local/exact-two-hop geometric attention.
+    """DiT backbone with alternating local/exact-two-hop geometric attention.
 
-    Even-numbered layers use the supplied local edge_index. Odd-numbered layers
-    use attention_edge_indices["dilated"]. Both attention schemes reuse the
-    same learned relative-displacement score bias as M12.
+    When include_self_attention is enabled, even-numbered layers attend over
+    self plus one-hop mesh neighbours and odd-numbered layers attend over self
+    plus exact-two-hop neighbours. The raw geometry topologies remain unchanged;
+    self loops are added only to the attention topology. Both attention schemes
+    reuse the learned relative-displacement score bias.
     """
 
     def __init__(
@@ -92,6 +95,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         qkv_bias: bool = True,
         out_proj_bias: bool = False,
         sparse_attention_backend: str = "scatter",
+        include_self_attention: bool = False,
     ) -> None:
         # Sparse geometric attention does not use dense SDPA, but this argument
         # keeps the same public configuration contract as the other DiT models.
@@ -123,10 +127,52 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             coordinate_normalization_eps=coordinate_normalization_eps,
         )
         self.sparse_attention_backend = backend
+        self.include_self_attention = bool(include_self_attention)
+        self._self_attention_edge_cache: dict[
+            str,
+            tuple[torch.Tensor, int | None, int, torch.Tensor],
+        ] = {}
         self._torch_sparse_topology_cache: dict[
             str,
             tuple[torch.Tensor, int | None, _TorchSparseTopology],
         ] = {}
+
+    def _attention_edges_with_optional_self(
+        self,
+        name: str,
+        edge_index: torch.Tensor,
+        *,
+        num_nodes: int,
+    ) -> torch.Tensor:
+        """Return the requested topology, optionally augmented by self loops."""
+
+        if not self.include_self_attention:
+            return edge_index
+
+        version = _tensor_version_or_none(edge_index)
+        cached = self._self_attention_edge_cache.get(name)
+        if (
+            cached is not None
+            and cached[0] is edge_index
+            and cached[1] == version
+            and cached[2] == num_nodes
+        ):
+            return cached[3]
+
+        # Build cached connectivity outside inference mode so an inference-first
+        # forward can safely be followed by training on the same graph.
+        with torch.inference_mode(False):
+            attention_edge_index = _with_missing_self_loops(
+                edge_index,
+                num_nodes=num_nodes,
+            )
+        self._self_attention_edge_cache[name] = (
+            edge_index,
+            version,
+            num_nodes,
+            attention_edge_index,
+        )
+        return attention_edge_index
 
     def _cached_torch_sparse_topology(
         self,
@@ -208,6 +254,17 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             device=inputs.device,
         )
 
+        local_attention_edge_index = self._attention_edges_with_optional_self(
+            "local",
+            edge_index,
+            num_nodes=inputs.shape[0],
+        )
+        dilated_attention_edge_index = self._attention_edges_with_optional_self(
+            "dilated",
+            dilated_edge_index,
+            num_nodes=inputs.shape[0],
+        )
+
         model_coords = coords
         if self.coordinate_normalization == "centered_bbox":
             model_coords = _normalize_coordinates_by_graph(
@@ -223,42 +280,45 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             conditioning=conditioning,
         )
 
-        local_displacement = edge_relative_displacement(coords, edge_index)
+        local_displacement = edge_relative_displacement(
+            coords,
+            local_attention_edge_index,
+        )
         dilated_displacement = edge_relative_displacement(
             coords,
-            dilated_edge_index,
+            dilated_attention_edge_index,
         )
 
         local_sparse_adj = None
         dilated_sparse_adj = None
         if self.sparse_attention_backend == "dgl":
             local_sparse_adj = _build_dgl_sparse_adjacency(
-                edge_index,
+                local_attention_edge_index,
                 num_nodes=inputs.shape[0],
             )
             dilated_sparse_adj = _build_dgl_sparse_adjacency(
-                dilated_edge_index,
+                dilated_attention_edge_index,
                 num_nodes=inputs.shape[0],
             )
         elif self.sparse_attention_backend == "torch_sparse":
             local_sparse_adj = self._cached_torch_sparse_topology(
                 "local",
-                edge_index,
+                local_attention_edge_index,
                 num_nodes=inputs.shape[0],
             )
             dilated_sparse_adj = self._cached_torch_sparse_topology(
                 "dilated",
-                dilated_edge_index,
+                dilated_attention_edge_index,
                 num_nodes=inputs.shape[0],
             )
 
         for layer_index, block in enumerate(self.blocks):
             if layer_index % 2 == 0:
-                layer_edge_index = edge_index
+                layer_edge_index = local_attention_edge_index
                 layer_displacement = local_displacement
                 layer_sparse_adj = local_sparse_adj
             else:
-                layer_edge_index = dilated_edge_index
+                layer_edge_index = dilated_attention_edge_index
                 layer_displacement = dilated_displacement
                 layer_sparse_adj = dilated_sparse_adj
 
