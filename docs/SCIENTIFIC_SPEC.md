@@ -866,3 +866,12 @@ Visual inference checks use a small deterministic set of unpaired generated and 
 snapshots. For each conservative channel, central x-, y-, and z-normal slices are shown
 with a common robust color scale. These are qualitative population examples and must not
 be interpreted as paired reconstruction targets.
+
+
+## DiNAT-DiT self-attention topology
+
+The current DiNAT-DiT model supports an explicit `include_self_attention` model option. When enabled, local layers attend over the union of each node with its one-hop mesh neighbours, and dilated layers attend over the union of each node with its exact-two-hop neighbours. The underlying geometry topologies remain unchanged: exact-two-hop still means graph distance exactly two, and self loops are injected only at the attention stage.
+
+For a self edge `(i,i)`, the relative displacement is exactly zero, so the learned geometric score bias is evaluated at zero displacement. This allows each attention head to learn an explicit preference for the center token in addition to the residual connection.
+
+Backward compatibility is deliberate: the Python constructor defaults `include_self_attention` to false, so historical resolved configs that do not contain the field reproduce the previous no-self architecture. The current `configs/model/dinat_dit.yaml` sets it to true for new runs.
