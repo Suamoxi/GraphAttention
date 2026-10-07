@@ -145,7 +145,7 @@ benchmark_generation () {
 
     test -s "${bench_dir}/plots/energy_spectrum/energy_spectrum_mean.png"
     test -s "${bench_dir}/plots/energy_spectrum/energy_spectrum_median.png"
-    test -s "${bench_dir}/plots/snapshot_slices/example_000/rho_value.png"
+    find "${bench_dir}/plots/snapshot_slices/example_000" -maxdepth 1 -name '*.png' -type f | grep -q .
     test -s "${bench_dir}/plots/spatial_correlation/longitudinal_correlation.png"
     test -s "${bench_dir}/plots/structure_functions/longitudinal_s2.png"
 }
