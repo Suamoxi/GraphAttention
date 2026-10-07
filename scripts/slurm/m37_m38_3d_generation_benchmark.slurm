@@ -103,6 +103,7 @@ singularity exec \
     "$IMAGE" \
     "$PYTHON" -m pytest \
         tests/unit/test_generation_benchmark.py::test_cartesian_grid_3d_periodic_drop_max_handles_permuted_node_order \
+        tests/unit/test_generation_benchmark.py::test_velocity_spatial_statistics_3d_match_periodic_sinusoid \
         tests/unit/test_generation_benchmark.py::test_velocity_energy_spectrum_3d_recovers_periodic_resolved_tke \
         -q
 
@@ -135,13 +136,18 @@ benchmark_generation () {
         energy_spectrum_per_sample.csv \
         energy_spectrum_summary.csv \
         energy_spectral_bands.csv \
-        nearest_reference.csv
+        nearest_reference.csv \
+        spatial_correlation.csv \
+        structure_functions.csv
     do
         test -s "${bench_dir}/${artifact}"
     done
 
     test -s "${bench_dir}/plots/energy_spectrum/energy_spectrum_mean.png"
     test -s "${bench_dir}/plots/energy_spectrum/energy_spectrum_median.png"
+    test -s "${bench_dir}/plots/snapshot_slices/example_000/rho_value.png"
+    test -s "${bench_dir}/plots/spatial_correlation/longitudinal_correlation.png"
+    test -s "${bench_dir}/plots/structure_functions/longitudinal_s2.png"
 }
 
 benchmark_generation "$M38_GEN" "$M38_BENCH_ROOT" "$M38_BENCH" "M38 Full DiT"
