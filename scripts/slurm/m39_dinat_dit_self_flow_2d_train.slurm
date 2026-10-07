@@ -25,7 +25,7 @@ echo "============================================================"
 echo "Attention local:   self + one-hop"
 echo "Attention dilated: self + exact-two-hop"
 echo "Geometry:          learned relative-displacement bias"
-echo "Backend:           torch_sparse"
+echo "Backend:           scatter (matched to M33 control)"
 echo "Backbone:          DiT adaLN-Zero h128 L10 H4"
 echo "Coordinates:       centered_bbox absolute embedding"
 echo "Path:              x_t=(1-t)*x_source+t*x_data"
@@ -34,7 +34,7 @@ echo "Time input:        1000*t"
 echo "Batch size:        128"
 echo "Epochs:            1000"
 echo "Seed:              42"
-echo "Control:           M33/M34 no-self 2-D DiNAT-DiT"
+echo "Control:           M33 no-self 2-D DiNAT-DiT (same scatter backend)"
 echo "============================================================"
 
 git rev-parse HEAD
@@ -87,7 +87,7 @@ singularity exec --nv \
         model.dropout=0.0 \
         model.qkv_bias=true \
         model.out_proj_bias=false \
-        model.sparse_attention_backend=torch_sparse \
+        model.sparse_attention_backend=scatter \
         model.include_self_attention=true \
         generative.batch_size=128 \
         generative.num_workers=4 \
