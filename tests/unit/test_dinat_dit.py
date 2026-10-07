@@ -119,6 +119,72 @@ def test_dinat_dit_alternates_local_and_exact_two_hop_topologies() -> None:
     torch.testing.assert_close(calls[1][1], edge_relative_displacement(coords, dilated))
 
 
+def test_dinat_dit_self_attention_augments_local_and_dilated_topologies() -> None:
+    model = AlternatingDilatedGeometricDiT(
+        in_channels=3,
+        out_channels=3,
+        hidden_dim=8,
+        num_heads=2,
+        num_layers=4,
+        spatial_dim=2,
+        mlp_ratio=2,
+        conditioning_channels=1,
+        condition_embed_dim=8,
+        use_coord_mlp=True,
+        coordinate_normalization="centered_bbox",
+        use_sdpa=False,
+        include_self_attention=True,
+    )
+    calls: list[tuple[torch.Tensor, torch.Tensor]] = []
+    for block in model.blocks:
+        block.attention = _RecordingGeometricAttention(calls)
+
+    inputs = torch.randn(4, 3)
+    coords = torch.tensor(
+        [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]
+    )
+    batch_index = torch.zeros(4, dtype=torch.long)
+    conditioning = torch.tensor([[0.25]])
+    local = torch.tensor(
+        [[0, 1, 1, 2, 2, 3], [1, 0, 2, 1, 3, 2]],
+        dtype=torch.long,
+    )
+    dilated = torch.tensor(
+        [[0, 2, 1, 3], [2, 0, 3, 1]],
+        dtype=torch.long,
+    )
+
+    model(
+        inputs,
+        edge_index=local,
+        coords=coords,
+        batch_index=batch_index,
+        conditioning=conditioning,
+        attention_edge_indices={"dilated": dilated},
+    )
+
+    assert len(calls) == 4
+    for call_index, raw_edges in ((0, local), (1, dilated), (2, local), (3, dilated)):
+        used_edges, used_displacement = calls[call_index]
+        assert used_edges.shape[1] == raw_edges.shape[1] + inputs.shape[0]
+        source, target = used_edges
+        self_mask = source == target
+        assert int(self_mask.sum()) == inputs.shape[0]
+        assert set(source[self_mask].tolist()) == set(range(inputs.shape[0]))
+        torch.testing.assert_close(
+            used_displacement[self_mask],
+            torch.zeros_like(used_displacement[self_mask]),
+            rtol=0.0,
+            atol=0.0,
+        )
+        raw_pairs = set(zip(raw_edges[0].tolist(), raw_edges[1].tolist(), strict=True))
+        used_nonself = ~self_mask
+        used_pairs = set(
+            zip(source[used_nonself].tolist(), target[used_nonself].tolist(), strict=True)
+        )
+        assert used_pairs == raw_pairs
+
+
 def test_dinat_dit_factory_matches_full_dit_shared_parameters() -> None:
     dataset = SyntheticMeshDataset(num_samples=2, spatial_dim=2, seed=5)
     task = EDMDenoisingTask(
@@ -155,6 +221,7 @@ def test_dinat_dit_factory_matches_full_dit_shared_parameters() -> None:
         {
             "_target_": "graph_attention.models.dinat_dit.AlternatingDilatedGeometricDiT",
             **common,
+            "include_self_attention": True,
         }
     )
 
@@ -162,7 +229,11 @@ def test_dinat_dit_factory_matches_full_dit_shared_parameters() -> None:
     dinat, metadata = instantiate_controlled_model(dinat_cfg, probe, seed=42)
 
     assert metadata["policy"] == "matched_full_dit_shared_parameters_plus_dinat_geometry"
-    assert metadata["layer_topology_schedule"] == "local_exact2hop_alternating_local_first"
+    assert metadata["layer_topology_schedule"] == (
+        "self_plus_local_self_plus_exact2hop_alternating_local_first"
+    )
+    assert metadata["include_self_attention"] is True
+    assert dinat.include_self_attention is True
 
     dinat_state = dinat.state_dict()
     geometry_names = set(metadata["geometry_parameter_names"])
