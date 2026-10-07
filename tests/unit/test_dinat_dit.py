@@ -621,6 +621,7 @@ def test_dinat_dit_torch_sparse_backend_supports_inference_mode_tensors() -> Non
         conditioning_channels=1,
         condition_embed_dim=8,
         sparse_attention_backend="torch_sparse",
+        include_self_attention=True,
     ).to(device)
     model.eval()
 
@@ -679,6 +680,7 @@ def test_dinat_dit_torch_sparse_cache_survives_inference_then_training() -> None
         conditioning_channels=1,
         condition_embed_dim=8,
         sparse_attention_backend="torch_sparse",
+        include_self_attention=True,
     ).to(device)
 
     inputs = torch.randn(4, 3, device=device)
