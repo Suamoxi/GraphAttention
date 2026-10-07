@@ -68,6 +68,7 @@ singularity exec --nv \
         model.dropout=0.0 \
         model.qkv_bias=true \
         model.out_proj_bias=false \
+        model.include_self_attention=false \
         generative.batch_size=128 \
         generative.num_workers=4 \
         generative.max_epochs=1000 \
