@@ -139,7 +139,12 @@ def _instantiate_matched_dit(
     elif target == _LOCAL_DIT_TARGET:
         attention_mode = "local_one_hop_plus_self"
     else:
-        attention_mode = "alternating_local_exact2hop_geometric"
+        include_self_attention = bool(model_cfg.get("include_self_attention", False))
+        attention_mode = (
+            "alternating_self_plus_local_self_plus_exact2hop_geometric"
+            if include_self_attention
+            else "alternating_local_exact2hop_geometric"
+        )
 
     metadata = {
         "policy": (
@@ -169,10 +174,12 @@ def _instantiate_matched_dit(
     sparse_attention_backend = str(
         model_cfg.get("sparse_attention_backend", "scatter")
     )
+    include_self_attention = bool(model_cfg.get("include_self_attention", False))
     torch.manual_seed(geometry_seed)
     dinat_dit = AlternatingDilatedGeometricDiT(
         **common,
         sparse_attention_backend=sparse_attention_backend,
+        include_self_attention=include_self_attention,
     )
     incompatible = dinat_dit.load_state_dict(full_reference.state_dict(), strict=False)
     if incompatible.unexpected_keys:
@@ -193,7 +200,12 @@ def _instantiate_matched_dit(
         {
             "geometry_parameter_seed": geometry_seed,
             "geometry_parameter_names": expected_geometry_keys,
-            "layer_topology_schedule": "local_exact2hop_alternating_local_first",
+            "layer_topology_schedule": (
+                "self_plus_local_self_plus_exact2hop_alternating_local_first"
+                if include_self_attention
+                else "local_exact2hop_alternating_local_first"
+            ),
+            "include_self_attention": include_self_attention,
             "sparse_attention_backend": sparse_attention_backend,
         }
     )
