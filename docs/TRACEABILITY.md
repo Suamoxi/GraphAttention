@@ -383,6 +383,37 @@ Known limitations:
     full-volume field plots are deferred.
 ```
 
+## 9.2. Full-volume 3-D HIT spatial-statistics genealogy
+
+```text
+Concept:
+    real-space validation of generated 3-D HIT beyond one-point PDFs and spectra
+Status:
+    project scientific benchmark convention
+Project-specific definition:
+    velocity is reconstructed from conservative variables;
+    periodic axis-aligned separations on the unique 32^3 HIT grid are averaged across x/y/z;
+    report longitudinal/transverse/vector correlations;
+    report S2 longitudinal, S2 vector, S3 longitudinal, S4 longitudinal, and longitudinal flatness;
+    report population mean and 10-90% snapshot bands;
+    qualitative inference examples show central x/y/z slices for a few unpaired generated/test volumes.
+Implementation path:
+    src/graph_attention/evaluation/spatial_statistics_3d.py
+    src/graph_attention/evaluation/plotting_3d.py
+    src/graph_attention/evaluation/generation_benchmark_3d.py
+Configuration:
+    configs/benchmark_generation_3d.yaml
+Validation:
+    analytic periodic sinusoid test for longitudinal correlation, S2, S3, and normalized separation;
+    benchmark Slurm gate checks produced CSVs and plots.
+Evidence status:
+    IMPLEMENTED; target-cluster benchmark rerun pending.
+Known limitations:
+    spatial statistics use Cartesian-axis separations rather than a full radial all-pairs estimator;
+    the current 32^3 grid offers only limited inertial-range scale separation;
+    snapshot panels are explicitly unpaired qualitative examples.
+```
+
 ## 10. Change procedure
 
 When code changes a scientifically meaningful mechanism:
