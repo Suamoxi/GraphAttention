@@ -105,6 +105,7 @@ train_variant() {
             model.dropout=0.0 \
             model.qkv_bias=true \
             model.out_proj_bias=false \
+        model.include_self_attention=false \
             model.sparse_attention_backend="$backend" \
             generative.batch_size=128 \
             generative.num_workers=4 \
