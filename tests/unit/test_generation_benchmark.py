@@ -91,6 +91,63 @@ def test_cartesian_grid_3d_periodic_drop_max_handles_permuted_node_order() -> No
     np.testing.assert_array_equal(field, expected)
 
 
+def test_velocity_spatial_statistics_3d_match_periodic_sinusoid() -> None:
+    from graph_attention.evaluation.spatial_statistics_3d import (
+        sample_velocity_spatial_statistics_3d,
+    )
+
+    stored_points = 9
+    unique_points = stored_points - 1
+    x, y, z = np.meshgrid(
+        np.arange(stored_points, dtype=np.float64),
+        np.arange(stored_points, dtype=np.float64),
+        np.arange(stored_points, dtype=np.float64),
+        indexing="ij",
+    )
+    coords = np.column_stack((x.reshape(-1), y.reshape(-1), z.reshape(-1)))
+    grid = infer_cartesian_grid_3d(
+        coords,
+        periodic_endpoint_mode="drop_max",
+    )
+
+    ux = np.sin(2.0 * np.pi * x / unique_points)
+    uy = np.sin(2.0 * np.pi * y / unique_points)
+    uz = np.sin(2.0 * np.pi * z / unique_points)
+    rho = np.ones_like(ux)
+    sample = np.stack(
+        (
+            rho.reshape(-1),
+            ux.reshape(-1),
+            uy.reshape(-1),
+            uz.reshape(-1),
+            10.0 * rho.reshape(-1),
+        ),
+        axis=1,
+    )
+    channel_names = (
+        "rho.value",
+        "rhou.x",
+        "rhov.y",
+        "rhow.z",
+        "rhoE.value",
+    )
+
+    stats = sample_velocity_spatial_statistics_3d(
+        sample[None, ...],
+        grid,
+        channel_names,
+        max_lag=2,
+    )
+
+    expected_corr_lag1 = np.cos(2.0 * np.pi / unique_points)
+    expected_s2_lag1 = 1.0 - expected_corr_lag1
+
+    assert stats.longitudinal_correlation[0, 1] == pytest.approx(expected_corr_lag1)
+    assert stats.longitudinal_s2[0, 1] == pytest.approx(expected_s2_lag1)
+    assert stats.longitudinal_s3[0, 1] == pytest.approx(0.0, abs=1.0e-12)
+    assert stats.r_over_box[1] == pytest.approx(1.0 / unique_points)
+
+
 def test_velocity_energy_spectrum_3d_recovers_periodic_resolved_tke() -> None:
     from graph_attention.evaluation.spectra_3d import (
         sample_velocity_energy_spectra_3d,
