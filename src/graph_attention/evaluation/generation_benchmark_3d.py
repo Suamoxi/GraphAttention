@@ -33,6 +33,11 @@ from .plotting import (
     save_marginal_plots,
     save_spectrum_plots,
 )
+from .plotting_3d import (
+    save_3d_snapshot_slice_examples,
+    save_velocity_spatial_correlation_plots,
+    save_velocity_structure_function_plots,
+)
 from .spectra import (
     energy_spectral_band_rows,
     energy_spectrum_population_rows,
@@ -45,6 +50,10 @@ from .spectra_3d import (
     nearest_neighbor_spatial_metrics_3d,
     sample_radial_spectra_3d,
     sample_velocity_energy_spectra_3d,
+)
+from .spatial_statistics_3d import (
+    VelocitySpatialStatistics3D,
+    sample_velocity_spatial_statistics_3d,
 )
 
 
@@ -211,6 +220,28 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
         bin_width=grid.k_nyquist_min / float(cfg.spectra.num_k_bins),
     )
 
+    spatial_lower = float(cfg.spatial_statistics.lower_quantile)
+    spatial_upper = float(cfg.spatial_statistics.upper_quantile)
+    max_lag = OmegaConf.select(cfg, "spatial_statistics.max_lag", default=None)
+    generated_spatial = sample_velocity_spatial_statistics_3d(
+        generated,
+        grid,
+        channel_names,
+        max_lag=None if max_lag is None else int(max_lag),
+    )
+    reference_spatial = sample_velocity_spatial_statistics_3d(
+        reference,
+        grid,
+        channel_names,
+        max_lag=None if max_lag is None else int(max_lag),
+    )
+    spatial_correlation_rows, structure_function_rows = _spatial_population_rows_3d(
+        generated_spatial,
+        reference_spatial,
+        lower_quantile=spatial_lower,
+        upper_quantile=spatial_upper,
+    )
+
     standardized_rows = _standardized_wasserstein_from_source(
         source_summary,
         generated,
@@ -267,6 +298,8 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
     _write_csv(output_dir / "energy_spectrum_summary.csv", energy_summary_rows)
     _write_csv(output_dir / "energy_spectral_bands.csv", energy_band_rows)
     _write_csv(output_dir / "nearest_reference.csv", nearest_rows)
+    _write_csv(output_dir / "spatial_correlation.csv", spatial_correlation_rows)
+    _write_csv(output_dir / "structure_functions.csv", structure_function_rows)
 
     if bool(cfg.plots.enabled):
         plot_root = output_dir / "plots"
@@ -304,9 +337,36 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
                 dimension_label="3-D",
             )
         if bool(OmegaConf.select(cfg, "plots.fields", default=False)):
-            raise ValueError(
-                "3-D benchmark does not render full-volume field plots; "
-                "set plots.fields=false"
+            save_3d_snapshot_slice_examples(
+                generated,
+                reference,
+                generated_ids,
+                reference_ids,
+                channel_names,
+                grid,
+                plot_root / "snapshot_slices",
+                num_examples=int(
+                    OmegaConf.select(cfg, "plots.field_examples", default=3)
+                ),
+                dpi=int(cfg.plots.dpi),
+            )
+        if bool(OmegaConf.select(cfg, "plots.spatial_correlation", default=True)):
+            save_velocity_spatial_correlation_plots(
+                generated_spatial,
+                reference_spatial,
+                plot_root / "spatial_correlation",
+                lower_quantile=spatial_lower,
+                upper_quantile=spatial_upper,
+                dpi=int(cfg.plots.dpi),
+            )
+        if bool(OmegaConf.select(cfg, "plots.structure_functions", default=True)):
+            save_velocity_structure_function_plots(
+                generated_spatial,
+                reference_spatial,
+                plot_root / "structure_functions",
+                lower_quantile=spatial_lower,
+                upper_quantile=spatial_upper,
+                dpi=int(cfg.plots.dpi),
             )
 
     energy_summary = _energy_spectrum_summary(
@@ -359,6 +419,25 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
         "channel_summary": _channel_summary(channel_rows, band_rows),
         "physical_summary": _physical_summary(physical_rows),
         "energy_spectrum": energy_summary,
+        "spatial_statistics": {
+            "definition": (
+                "periodic axis-averaged velocity correlations and structure functions"
+            ),
+            "separation_coordinate": "r_over_box",
+            "max_lag": int(generated_spatial.lag[-1]),
+            "population_interval": [spatial_lower, spatial_upper],
+            "correlations": [
+                "longitudinal_correlation",
+                "transverse_correlation",
+                "vector_correlation",
+            ],
+            "structure_functions": [
+                "longitudinal_s2",
+                "vector_s2",
+                "longitudinal_s3",
+                "longitudinal_flatness",
+            ],
+        },
         "standardized_wasserstein": {
             str(row["channel"]): _finite_or_none(
                 float(row["wasserstein_1_standardized"])
@@ -379,6 +458,13 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
             "nearest_reference": (
                 "nearest_reference.csv"
                 if bool(cfg.nearest_reference.enabled)
+                else None
+            ),
+            "spatial_correlation": "spatial_correlation.csv",
+            "structure_functions": "structure_functions.csv",
+            "snapshot_slices": (
+                "plots/snapshot_slices"
+                if bool(OmegaConf.select(cfg, "plots.fields", default=False))
                 else None
             ),
             "plots": "plots" if bool(cfg.plots.enabled) else None,
@@ -551,6 +637,66 @@ def _snapshot_descriptors_3d(
                 )
 
     return tuple(feature_names), np.column_stack(columns)
+
+
+def _spatial_population_rows_3d(
+    generated: VelocitySpatialStatistics3D,
+    reference: VelocitySpatialStatistics3D,
+    *,
+    lower_quantile: float,
+    upper_quantile: float,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    np.testing.assert_array_equal(generated.lag, reference.lag)
+    np.testing.assert_allclose(generated.r_over_box, reference.r_over_box)
+
+    def rows_for(metrics: tuple[str, ...]) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for metric in metrics:
+            gen = np.asarray(getattr(generated, metric), dtype=np.float64)
+            ref = np.asarray(getattr(reference, metric), dtype=np.float64)
+            for index, lag in enumerate(generated.lag):
+                rows.append(
+                    {
+                        "metric": metric,
+                        "lag": int(lag),
+                        "r_over_box": float(generated.r_over_box[index]),
+                        "generated_mean": float(np.nanmean(gen[:, index])),
+                        "generated_median": float(np.nanmedian(gen[:, index])),
+                        "generated_q10": float(
+                            np.nanquantile(gen[:, index], lower_quantile)
+                        ),
+                        "generated_q90": float(
+                            np.nanquantile(gen[:, index], upper_quantile)
+                        ),
+                        "reference_mean": float(np.nanmean(ref[:, index])),
+                        "reference_median": float(np.nanmedian(ref[:, index])),
+                        "reference_q10": float(
+                            np.nanquantile(ref[:, index], lower_quantile)
+                        ),
+                        "reference_q90": float(
+                            np.nanquantile(ref[:, index], upper_quantile)
+                        ),
+                    }
+                )
+        return rows
+
+    correlation_rows = rows_for(
+        (
+            "longitudinal_correlation",
+            "transverse_correlation",
+            "vector_correlation",
+        )
+    )
+    structure_rows = rows_for(
+        (
+            "longitudinal_s2",
+            "vector_s2",
+            "longitudinal_s3",
+            "longitudinal_s4",
+            "longitudinal_flatness",
+        )
+    )
+    return correlation_rows, structure_rows
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
