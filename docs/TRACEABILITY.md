@@ -429,8 +429,10 @@ Semantics:
     raw exact-two-hop geometry remains self-free
 Backward compatibility:
     constructor default is false; historical resolved configs therefore keep no-self behavior
-New-run default:
-    configs/model/dinat_dit.yaml enables include_self_attention=true
+Default:
+    configs/model/dinat_dit.yaml keeps include_self_attention=false during the ablation stage
+M39 override:
+    model.include_self_attention=true
 Validation:
     unit test checks exactly one self edge per node in both layer types and zero self displacement
 2-D ablation:
