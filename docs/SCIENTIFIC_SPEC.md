@@ -874,4 +874,4 @@ The current DiNAT-DiT model supports an explicit `include_self_attention` model 
 
 For a self edge `(i,i)`, the relative displacement is exactly zero, so the learned geometric score bias is evaluated at zero displacement. This allows each attention head to learn an explicit preference for the center token in addition to the residual connection.
 
-Backward compatibility is deliberate: the Python constructor defaults `include_self_attention` to false, so historical resolved configs that do not contain the field reproduce the previous no-self architecture. The current `configs/model/dinat_dit.yaml` sets it to true for new runs.
+Backward compatibility is deliberate: the Python constructor defaults `include_self_attention` to false, so historical resolved configs that do not contain the field reproduce the previous no-self architecture. The current `configs/model/dinat_dit.yaml` keeps it false by default while the M39 2-D ablation enables it explicitly. This avoids changing historical experiment semantics before validation.
