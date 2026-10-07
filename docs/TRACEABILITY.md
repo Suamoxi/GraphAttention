@@ -437,7 +437,7 @@ Validation:
     unit test checks exactly one self edge per node in both layer types and zero self displacement
 2-D ablation:
     M39 uses the M33/M34 2-D HIT Flow Matching setup with h128 L10 H4, batch 128, seed 42,
-    torch_sparse backend, 1000 epochs, and self attention enabled
+    scatter backend matched to M33, 1000 epochs, and self attention enabled
 ```
 
 ## 10. Change procedure
