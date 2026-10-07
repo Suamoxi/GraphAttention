@@ -804,3 +804,65 @@ Wasserstein-1 distances, cross-channel correlations, conservative-state physical
 sanity metrics, local axis-neighbour statistics, and unpaired nearest-reference
 descriptor distances. Full-volume field rendering is deliberately excluded from the
 first implementation; it does not affect the statistical or spectral metrics.
+
+
+## 24. Three-dimensional HIT spatial diagnostics
+
+The full-volume HIT generation benchmark also evaluates real-space turbulent structure,
+not only one-point distributions and Fourier spectra.
+
+For the endpoint-inclusive 33^3 stored mesh, the same unique 32^3 periodic grid used
+for FFT diagnostics is used for spatial increments. Velocity is reconstructed from the
+conservative state as
+
+$$
+u_i = \frac{(\rho u_i)}{\rho}.
+$$
+
+For integer separation lag m along Cartesian axis a, with periodic wrapping, define
+
+$$
+\delta u_i(r e_a) = u_i(x+r e_a)-u_i(x),
+\qquad
+r/L_{box}=m/N.
+$$
+
+The first spatial-correlation baseline averages axis-aligned periodic estimates over
+the three Cartesian directions. It reports longitudinal, transverse, and vector
+velocity correlations. This is an isotropic-HIT diagnostic; it is not a complete
+all-direction pair enumeration.
+
+The structure-function baseline reports
+
+$$
+S_{2,L}(r)=\langle(\delta u_L)^2\rangle,
+$$
+
+$$
+S_{3,L}(r)=\langle(\delta u_L)^3\rangle,
+$$
+
+$$
+S_{4,L}(r)=\langle(\delta u_L)^4\rangle,
+$$
+
+together with the full-vector second-order increment
+
+$$
+S_{2,|u|}(r)=\langle|\delta \mathbf u|^2\rangle
+$$
+
+and longitudinal flatness
+
+$$
+F_L(r)=\frac{S_{4,L}(r)}{S_{2,L}(r)^2}.
+$$
+
+Population means and 10--90% snapshot variability bands are compared between generated
+and held-out test populations. With the current 32^3 unique grid the default separations
+extend to half the box, m=0,...,16.
+
+Visual inference checks use a small deterministic set of unpaired generated and test
+snapshots. For each conservative channel, central x-, y-, and z-normal slices are shown
+with a common robust color scale. These are qualitative population examples and must not
+be interpreted as paired reconstruction targets.
