@@ -160,9 +160,16 @@ def relative_error_rows(
     spectrum_rows = _read_csv(path / "spectra.csv")
     band_rows = _read_csv(path / "spectral_bands.csv")
     physical_rows = _read_csv(path / "physical_metrics.csv")
+    standardized_path = path / "standardized_wasserstein.csv"
+    standardized_rows = (
+        _read_csv(standardized_path)
+        if standardized_path.is_file() and standardized_path.stat().st_size > 0
+        else []
+    )
 
     rows: list[dict[str, Any]] = []
     rows.extend(_marginal_relative_rows(channel_rows, eps=epsilon))
+    rows.extend(_standardized_wasserstein_relative_rows(standardized_rows))
     rows.extend(_spectral_relative_rows(spectrum_rows, band_rows, eps=epsilon))
     rows.extend(_local_relative_rows(sample_rows, eps=epsilon))
     rows.extend(_correlation_relative_rows(correlation_rows))
@@ -209,6 +216,39 @@ def _marginal_relative_rows(
             _row(
                 "marginal",
                 metric,
+                _mean(values),
+                channel="__mean__",
+                aggregation="arithmetic mean over channels",
+            )
+        )
+    return result
+
+
+def _standardized_wasserstein_relative_rows(
+    rows: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    values: list[float] = []
+    for row in rows:
+        value = _float(row.get("wasserstein_1_standardized", ""))
+        if not math.isfinite(value):
+            continue
+        value = abs(value)
+        result.append(
+            _row(
+                "marginal",
+                "wasserstein_1_standardized",
+                value,
+                channel=row["channel"],
+                aggregation="node-pooled channel population in frozen training-standardized space",
+            )
+        )
+        values.append(value)
+    if values:
+        result.append(
+            _row(
+                "marginal",
+                "wasserstein_1_standardized",
                 _mean(values),
                 channel="__mean__",
                 aggregation="arithmetic mean over channels",
