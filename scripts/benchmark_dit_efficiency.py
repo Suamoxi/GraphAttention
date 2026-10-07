@@ -500,6 +500,22 @@ def _benchmark_run(
         name: int(edge_index.shape[1])
         for name, edge_index in test_scaled.attention_edge_indices.items()
     }
+    include_self_attention = bool(
+        getattr(model, "include_self_attention", False)
+    )
+    effective_local_edges = _attention_edge_count_with_optional_self(
+        test_scaled.edge_index,
+        num_nodes=int(test_scaled.inputs.shape[0]),
+        include_self_attention=include_self_attention,
+    )
+    effective_attention_edges = {
+        name: _attention_edge_count_with_optional_self(
+            edge_index,
+            num_nodes=int(test_scaled.inputs.shape[0]),
+            include_self_attention=include_self_attention,
+        )
+        for name, edge_index in test_scaled.attention_edge_indices.items()
+    }
 
     result = {
         "label": label,
@@ -519,6 +535,9 @@ def _benchmark_run(
         "nodes_per_batch": int(test_scaled.inputs.shape[0]),
         "local_edges_per_batch": local_edges,
         "attention_edges_per_batch": attention_edges,
+        "include_self_attention": include_self_attention,
+        "effective_local_attention_edges_per_batch": effective_local_edges,
+        "effective_attention_edges_per_batch": effective_attention_edges,
         "flow_time_embedding_scale": task.time_embedding_scale,
         "forward": forward,
         "training_step": training,
@@ -534,6 +553,22 @@ def _benchmark_run(
     torch.cuda.empty_cache()
     torch.cuda.synchronize(device)
     return result
+
+
+def _attention_edge_count_with_optional_self(
+    edge_index: torch.Tensor,
+    *,
+    num_nodes: int,
+    include_self_attention: bool,
+) -> int:
+    edge_count = int(edge_index.shape[1])
+    if not include_self_attention:
+        return edge_count
+    if edge_count == 0:
+        return edge_count + num_nodes
+    source, target = edge_index
+    self_nodes = torch.unique(source[source == target])
+    return edge_count + (num_nodes - int(self_nodes.numel()))
 
 
 def _indices_for_ids(
@@ -859,6 +894,13 @@ def _write_results_csv(path: Path, results: list[dict[str, Any]]) -> None:
                 "dilated_edges_per_batch": result["attention_edges_per_batch"].get(
                     "dilated", 0
                 ),
+                "include_self_attention": result["include_self_attention"],
+                "effective_local_attention_edges_per_batch": result[
+                    "effective_local_attention_edges_per_batch"
+                ],
+                "effective_dilated_attention_edges_per_batch": result[
+                    "effective_attention_edges_per_batch"
+                ].get("dilated", 0),
                 "forward_mean_ms": result["forward"]["mean_ms"],
                 "forward_samples_per_second": result["forward"]["samples_per_second"],
                 "forward_peak_allocated_gib": result["forward"]["peak_allocated_gib"],
