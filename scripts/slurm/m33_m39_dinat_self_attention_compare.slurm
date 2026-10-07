@@ -21,11 +21,12 @@ GEN_NAME=flow_heun_steps50_seed5678
 M33_GEN=${M33_RUN}/generations/${GEN_NAME}
 M39_GEN=${M39_RUN}/generations/${GEN_NAME}
 
-M33_BENCH=${RUN_ROOT}/benchmark_m33_dinat_dit_flow/${GEN_NAME}
-M39_BENCH=${RUN_ROOT}/benchmark_m39_dinat_dit_self_flow/${GEN_NAME}
-
 OUTPUT_ROOT=${RUN_ROOT}/m33_m39_dinat_self_attention_comparison
 TRAIN_OUT=${OUTPUT_ROOT}/training
+M33_REBENCH_ROOT=${OUTPUT_ROOT}/rebenchmark_m33
+M39_REBENCH_ROOT=${OUTPUT_ROOT}/rebenchmark_m39
+M33_BENCH=${M33_REBENCH_ROOT}/${GEN_NAME}
+M39_BENCH=${M39_REBENCH_ROOT}/${GEN_NAME}
 QUALITY_OUT=${OUTPUT_ROOT}/generation_quality
 PLOT_OUT=${OUTPUT_ROOT}/plots
 EFF_OUT=${OUTPUT_ROOT}/efficiency
@@ -69,27 +70,6 @@ for gen_dir in "$M33_GEN" "$M39_GEN"; do
     done
 done
 
-for bench_dir in "$M33_BENCH" "$M39_BENCH"; do
-    for artifact in \
-        summary.json \
-        channel_metrics.csv \
-        standardized_wasserstein.csv \
-        sample_statistics.csv \
-        correlation_matrix.csv \
-        spectra.csv \
-        spectral_bands.csv \
-        nearest_reference.csv \
-        physical_metrics.csv \
-        energy_spectrum_summary.csv \
-        energy_spectral_bands.csv
-    do
-        test -s "${bench_dir}/${artifact}" || {
-            echo "ERROR: missing benchmark artifact: ${bench_dir}/${artifact}"
-            exit 1
-        }
-    done
-done
-
 rm -rf "$OUTPUT_ROOT"
 mkdir -p "$OUTPUT_ROOT"
 
@@ -106,7 +86,48 @@ singularity exec \
         --overwrite
 
 echo
-echo "===== 2. Generation-quality relative comparison ====="
+echo "===== 2. Rebuild both generation benchmarks with identical current code ====="
+for spec in "M33:$M33_GEN:$M33_REBENCH_ROOT" "M39:$M39_GEN:$M39_REBENCH_ROOT"; do
+    IFS=: read -r label gen_dir bench_root <<< "$spec"
+    echo
+    echo "--- Rebenchmark $label ---"
+    singularity exec \
+        -B /home \
+        -B /scratch \
+        "$IMAGE" \
+        "$PYTHON" -u -m scripts.benchmark_generation \
+            run_dir="$gen_dir" \
+            output_root="$bench_root" \
+            overwrite=true \
+            energy_spectrum.enabled=true \
+            energy_spectrum.lower_quantile=0.10 \
+            energy_spectrum.upper_quantile=0.90 \
+            plots.energy_spectrum=true
+done
+
+for bench_dir in "$M33_BENCH" "$M39_BENCH"; do
+    for artifact in \
+        summary.json \
+        channel_metrics.csv \
+        standardized_wasserstein.csv \
+        sample_statistics.csv \
+        correlation_matrix.csv \
+        spectra.csv \
+        spectral_bands.csv \
+        nearest_reference.csv \
+        physical_metrics.csv \
+        energy_spectrum_summary.csv \
+        energy_spectral_bands.csv
+    do
+        test -s "${bench_dir}/${artifact}" || {
+            echo "ERROR: missing rebuilt benchmark artifact: ${bench_dir}/${artifact}"
+            exit 1
+        }
+    done
+done
+
+echo
+echo "===== 3. Generation-quality relative comparison ====="
 singularity exec \
     -B /home \
     -B /scratch \
@@ -119,7 +140,7 @@ singularity exec \
         overwrite=true
 
 echo
-echo "===== 3. Direct PDF and energy-spectrum plots ====="
+echo "===== 4. Direct PDF and energy-spectrum plots ====="
 singularity exec \
     -B /home \
     -B /scratch \
@@ -132,7 +153,7 @@ singularity exec \
         --output-dir "$PLOT_OUT"
 
 echo
-echo "===== 4. Controlled CUDA efficiency comparison ====="
+echo "===== 5. Controlled CUDA efficiency comparison ====="
 nvidia-smi
 singularity exec --nv \
     -B /home \
