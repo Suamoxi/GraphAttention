@@ -414,6 +414,30 @@ Known limitations:
     snapshot panels are explicitly unpaired qualitative examples.
 ```
 
+## DiNAT-DiT self-attention ablation
+
+```text
+Concept:
+    add the center/self token to both local and exact-two-hop DiNAT-DiT attention windows
+Implementation:
+    src/graph_attention/models/dinat_dit.py
+    configs/model/dinat_dit.yaml
+    src/graph_attention/training/model_factory.py
+Semantics:
+    local attention = self union one-hop
+    dilated attention = self union exact-two-hop
+    raw exact-two-hop geometry remains self-free
+Backward compatibility:
+    constructor default is false; historical resolved configs therefore keep no-self behavior
+New-run default:
+    configs/model/dinat_dit.yaml enables include_self_attention=true
+Validation:
+    unit test checks exactly one self edge per node in both layer types and zero self displacement
+2-D ablation:
+    M39 uses the M33/M34 2-D HIT Flow Matching setup with h128 L10 H4, batch 128, seed 42,
+    torch_sparse backend, 1000 epochs, and self attention enabled
+```
+
 ## 10. Change procedure
 
 When code changes a scientifically meaningful mechanism:
