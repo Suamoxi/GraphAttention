@@ -84,6 +84,7 @@ singularity exec --nv \
         model.dropout=0.0 \
         model.qkv_bias=true \
         model.out_proj_bias=false \
+        model.include_self_attention=false \
         model.sparse_attention_backend=torch_sparse \
         generative.batch_size=1 \
         generative.gradient_accumulation_steps=8 \
