@@ -54,8 +54,8 @@ def main() -> None:
     np.testing.assert_allclose(m37_reference, m38_reference, rtol=0.0, atol=0.0)
 
     cfg37 = OmegaConf.load(args.m37_generation / "resolved_config.yaml")
-    cfg40 = OmegaConf.load(args.m38_generation / "resolved_config.yaml")
-    if str(cfg37.data.mesh_file) != str(cfg40.data.mesh_file):
+    cfg38 = OmegaConf.load(args.m38_generation / "resolved_config.yaml")
+    if str(cfg37.data.mesh_file) != str(cfg38.data.mesh_file):
         raise ValueError("M37/M38 source 3D meshes differ")
     benchmark_cfg = OmegaConf.load("configs/benchmark_generation_3d.yaml")
     grid, _ = _load_grid_3d(cfg37, benchmark_cfg)
