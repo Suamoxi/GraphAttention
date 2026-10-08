@@ -122,6 +122,154 @@ def save_3d_snapshot_slice_examples(
             plt.close(figure)
 
 
+def save_3d_orthogonal_plane_comparisons(
+    populations: dict[str, np.ndarray],
+    channel_names: tuple[str, ...],
+    grid: CartesianGrid3D,
+    output_dir: Path,
+    *,
+    num_examples: int,
+    dpi: int,
+    cmap: str = "RdBu_r",
+) -> None:
+    """Render three intersecting physical planes in 3-D for each CFD variable.
+
+    Each image compares the same sample index from all populations, with one
+    robust (1-99%) color normalization and one colorbar across every panel.
+    A shared index is a visualization convention, not a physical pairing of
+    unconditionally generated HIT volumes and test reference snapshots.
+    """
+
+    if not populations:
+        raise ValueError("3-D cutaway plots require at least one population")
+    if num_examples < 0:
+        raise ValueError("num_examples must be non-negative")
+    expected_nodes = int(np.prod(grid.source_shape))
+    prepared: dict[str, np.ndarray] = {}
+    for label, values in populations.items():
+        array = np.asarray(values, dtype=np.float64)
+        if array.ndim != 3 or array.shape[1:] != (expected_nodes, len(channel_names)):
+            raise ValueError(
+                f"3-D population {label!r} must have shape "
+                f"[samples, {expected_nodes}, {len(channel_names)}], got {array.shape}"
+            )
+        if not np.isfinite(array).all():
+            raise ValueError(f"3-D population {label!r} contains nonfinite values")
+        prepared[label] = array
+
+    count = min(num_examples, *(values.shape[0] for values in prepared.values()))
+    if count < 1:
+        return
+
+    plt = _pyplot()
+    from matplotlib.colors import Normalize
+    from matplotlib.cm import ScalarMappable
+
+    color_map = plt.get_cmap(cmap)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plane_indices = tuple(size // 2 for size in grid.shape)
+
+    # Use normalized Cartesian coordinates: the endpoint-inclusive source mesh
+    # has its repeated periodic maximum planes dropped by scatter_to_grid_3d.
+    coords = tuple(
+        np.arange(size, dtype=np.float64) / size
+        for size in grid.shape
+    )
+    x, y, z = coords
+    yy, zz = np.meshgrid(y, z, indexing="ij")
+    xx_y, zz_y = np.meshgrid(x, z, indexing="ij")
+    xx_z, yy_z = np.meshgrid(x, y, indexing="ij")
+
+    for sample_index in range(count):
+        sample_dir = output_dir / f"example_{sample_index:03d}"
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        for channel, raw_name in enumerate(channel_names):
+            scalar_grids = {
+                label: scatter_to_grid_3d(values[sample_index, :, channel], grid)
+                for label, values in prepared.items()
+            }
+            combined = np.concatenate([field.ravel() for field in scalar_grids.values()])
+            lower, upper = (float(v) for v in np.quantile(combined, (0.01, 0.99)))
+            if not upper > lower:
+                lower = float(np.min(combined))
+                upper = float(np.max(combined))
+            if not upper > lower:
+                lower -= 0.5
+                upper += 0.5
+            norm = Normalize(vmin=lower, vmax=upper, clip=True)
+
+            figure = plt.figure(figsize=(6.6 * len(scalar_grids), 6.4))
+            axes = []
+            for index, (label, field) in enumerate(scalar_grids.items(), start=1):
+                axis = figure.add_subplot(1, len(scalar_grids), index, projection="3d")
+                axes.append(axis)
+
+                # x = xmid, y = ymid and z = zmid. Coordinates and array
+                # orientations are explicit, so each surface shows the correct
+                # slice regardless of source mesh node ordering.
+                surfaces = (
+                    (
+                        np.full_like(yy, x[plane_indices[0]]),
+                        yy,
+                        zz,
+                        field[plane_indices[0], :, :],
+                    ),
+                    (
+                        xx_y,
+                        np.full_like(xx_y, y[plane_indices[1]]),
+                        zz_y,
+                        field[:, plane_indices[1], :],
+                    ),
+                    (
+                        xx_z,
+                        yy_z,
+                        np.full_like(xx_z, z[plane_indices[2]]),
+                        field[:, :, plane_indices[2]],
+                    ),
+                )
+                for sx, sy, sz, values_on_plane in surfaces:
+                    axis.plot_surface(
+                        sx, sy, sz,
+                        facecolors=color_map(norm(values_on_plane)),
+                        rstride=1,
+                        cstride=1,
+                        shade=False,
+                        alpha=0.88,
+                        linewidth=0,
+                        antialiased=False,
+                    )
+
+                axis.set_xlim(0, 1)
+                axis.set_ylim(0, 1)
+                axis.set_zlim(0, 1)
+                axis.set_box_aspect((1, 1, 1))
+                axis.set_xlabel("x / L")
+                axis.set_ylabel("y / L")
+                axis.set_zlabel("z / L")
+                axis.set_xticks((0, 0.5, 1))
+                axis.set_yticks((0, 0.5, 1))
+                axis.set_zticks((0, 0.5, 1))
+                axis.tick_params(labelsize=10)
+                axis.view_init(elev=26, azim=-58)
+                axis.set_title(label, fontsize=_TITLE_FONTSIZE, pad=12)
+
+            scalar_map = ScalarMappable(norm=norm, cmap=color_map)
+            scalar_map.set_array([])
+            colorbar = figure.colorbar(
+                scalar_map, ax=axes, shrink=0.68, fraction=0.02, pad=0.05
+            )
+            colorbar.set_label(raw_name, fontsize=_LABEL_FONTSIZE)
+            colorbar.ax.tick_params(labelsize=_TICK_FONTSIZE)
+            figure.suptitle(
+                f"{raw_name} | orthogonal 3-D cutaway | unpaired population",
+                fontsize=_TITLE_FONTSIZE,
+            )
+            figure.subplots_adjust(left=0.01, right=0.90, bottom=0.02, top=0.91, wspace=0.02)
+            safe_name = raw_name.replace(".", "_").replace("/", "_")
+            figure.savefig(sample_dir / f"{safe_name}.png", dpi=dpi, bbox_inches="tight")
+            plt.close(figure)
+
+
 def save_velocity_spatial_correlation_plots(
     generated: VelocitySpatialStatistics3D,
     reference: VelocitySpatialStatistics3D,
