@@ -457,3 +457,23 @@ When a mechanism comes from literature, preserve enough citation detail to ident
 Do not attribute a project-specific synthesis to one paper unless that paper actually contains the claimed formulation.
 
 When several ideas are combined, record the genealogy explicitly.
+
+
+## M40: 3-D self plus local, exact-two-hop unchanged
+
+- Control: M37 3-D DiNAT-DiT Flow Matching (h128, L10, H4, B16, seed 42,
+  1000 epochs, torch_sparse).
+- Intervention: local one-hop attention includes exactly one (i,i) self-edge
+  per node in even layers; exact-two-hop dilated layers **exclude** (i,i).
+- New config override: `+model.include_local_self_attention=true` and
+  `model.include_self_attention=false`. Former M39 include_self_attention
+  behaviour is preserved.
+- GPU preflight: `scripts/probe_3d_max_batch.py --model dinat
+  --include-local-self-attention --max-batch 16`; requires passing B16.
+- Training: `scripts/slurm/m40_3d_dinat_local_self_flow_train.slurm`
+- Full 3-D generation: `scripts/slurm/m40_3d_dinat_local_self_flow_generate.slurm`
+- M37/M40 3-D quality benchmark:
+  `scripts/slurm/m37_m40_3d_local_self_quality_compare.slurm`
+- Unit tests assert 3-D local self-loops, zero self-relative displacement,
+  preserved self-free exact-two-hop topology, init metadata, and backward after
+  sparse cached inference.
