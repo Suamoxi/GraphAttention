@@ -141,6 +141,20 @@ def _ratio(candidate: float, baseline: float) -> dict[str, float]:
     }
 
 
+def _optional_float(summary: dict[str, Any], key: str) -> float | None:
+    value = summary.get(key)
+    return float(value) if value is not None else None
+
+
+def _optional_ratio(
+    candidate: float | None,
+    baseline: float | None,
+) -> dict[str, float] | None:
+    if candidate is None or baseline is None:
+        return None
+    return _ratio(candidate, baseline)
+
+
 def _plot_training(
     baseline_history: list[dict[str, float | None]],
     candidate_history: list[dict[str, float | None]],
@@ -357,8 +371,8 @@ def main() -> None:
             "best_validation": baseline_best,
             "test_at_best_validation": baseline_test,
             "fit_wall_seconds": float(baseline_summary["fit_wall_seconds"]),
-            "mean_epoch_compute_seconds": float(
-                baseline_summary["mean_epoch_compute_seconds"]
+            "mean_epoch_compute_seconds": _optional_float(
+                baseline_summary, "mean_epoch_compute_seconds"
             ),
             "fit_peak_allocated_gib": float(
                 baseline_summary["fit_peak_allocated_gib"]
@@ -375,8 +389,8 @@ def main() -> None:
             "best_validation": candidate_best,
             "test_at_best_validation": candidate_test,
             "fit_wall_seconds": float(candidate_summary["fit_wall_seconds"]),
-            "mean_epoch_compute_seconds": float(
-                candidate_summary["mean_epoch_compute_seconds"]
+            "mean_epoch_compute_seconds": _optional_float(
+                candidate_summary, "mean_epoch_compute_seconds"
             ),
             "fit_peak_allocated_gib": float(
                 candidate_summary["fit_peak_allocated_gib"]
@@ -394,9 +408,9 @@ def main() -> None:
                 float(candidate_summary["fit_wall_seconds"]),
                 float(baseline_summary["fit_wall_seconds"]),
             ),
-            "mean_epoch_compute_time": _ratio(
-                float(candidate_summary["mean_epoch_compute_seconds"]),
-                float(baseline_summary["mean_epoch_compute_seconds"]),
+            "mean_epoch_compute_time": _optional_ratio(
+                _optional_float(candidate_summary, "mean_epoch_compute_seconds"),
+                _optional_float(baseline_summary, "mean_epoch_compute_seconds"),
             ),
             "fit_peak_allocated_memory": _ratio(
                 float(candidate_summary["fit_peak_allocated_gib"]),
