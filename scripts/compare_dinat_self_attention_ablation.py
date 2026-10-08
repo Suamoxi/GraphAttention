@@ -20,7 +20,7 @@ _ALLOWED_CONFIG_DIFFERENCES = {
 }
 
 
-def _load_history(path: Path) -> tuple[list[dict[str, float]], str]:
+def _load_history(path: Path) -> tuple[list[dict[str, float | None]], str]:
     with path.open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     if not rows:
@@ -34,19 +34,25 @@ def _load_history(path: Path) -> tuple[list[dict[str, float]], str]:
     validation_column = validation_columns[0]
     metric = validation_column.removeprefix("validation_")
     train_column = f"train_{metric}"
-    required = {"epoch", train_column, validation_column, "epoch_compute_seconds"}
+    required = {"epoch", train_column, validation_column}
     missing = required.difference(rows[0])
     if missing:
         raise ValueError(f"history {path} is missing columns: {sorted(missing)}")
 
-    parsed: list[dict[str, float]] = []
+    # Pre-M34 histories did not persist per-epoch timings. Keep the timing
+    # unknown rather than fabricating it from an aggregate run summary.
+    has_epoch_timing = "epoch_compute_seconds" in rows[0]
+    parsed: list[dict[str, float | None]] = []
     for row in rows:
+        raw_timing = row.get("epoch_compute_seconds") if has_epoch_timing else None
         parsed.append(
             {
                 "epoch": float(row["epoch"]),
                 "train": float(row[train_column]),
                 "validation": float(row[validation_column]),
-                "epoch_compute_seconds": float(row["epoch_compute_seconds"]),
+                "epoch_compute_seconds": (
+                    float(raw_timing) if raw_timing not in (None, "") else None
+                ),
             }
         )
     return parsed, metric
@@ -136,8 +142,8 @@ def _ratio(candidate: float, baseline: float) -> dict[str, float]:
 
 
 def _plot_training(
-    baseline_history: list[dict[str, float]],
-    candidate_history: list[dict[str, float]],
+    baseline_history: list[dict[str, float | None]],
+    candidate_history: list[dict[str, float | None]],
     output_path: Path,
     metric: str,
 ) -> None:
@@ -336,6 +342,8 @@ def main() -> None:
         "metric": metric,
         "controlled_contract": {
             "only_resolved_config_differences": sorted(differences),
+            "baseline_has_per_epoch_timing": baseline_history[0]["epoch_compute_seconds"] is not None,
+            "candidate_has_per_epoch_timing": candidate_history[0]["epoch_compute_seconds"] is not None,
             "baseline_include_self_attention": baseline_self,
             "candidate_include_self_attention": candidate_self,
             "same_train_validation_test_split": True,
