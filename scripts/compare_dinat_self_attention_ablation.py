@@ -150,7 +150,7 @@ def _optional_ratio(
     candidate: float | None,
     baseline: float | None,
 ) -> dict[str, float] | None:
-    if candidate is None or baseline is None:
+    if candidate is None or baseline is None or baseline == 0.0:
         return None
     return _ratio(candidate, baseline)
 
@@ -370,15 +370,15 @@ def main() -> None:
             "best_epoch": int(baseline_summary["best_epoch"]),
             "best_validation": baseline_best,
             "test_at_best_validation": baseline_test,
-            "fit_wall_seconds": float(baseline_summary["fit_wall_seconds"]),
+            "fit_wall_seconds": _optional_float(baseline_summary, "fit_wall_seconds"),
             "mean_epoch_compute_seconds": _optional_float(
                 baseline_summary, "mean_epoch_compute_seconds"
             ),
-            "fit_peak_allocated_gib": float(
-                baseline_summary["fit_peak_allocated_gib"]
+            "fit_peak_allocated_gib": _optional_float(
+                baseline_summary, "fit_peak_allocated_gib"
             ),
-            "fit_peak_reserved_gib": float(
-                baseline_summary["fit_peak_reserved_gib"]
+            "fit_peak_reserved_gib": _optional_float(
+                baseline_summary, "fit_peak_reserved_gib"
             ),
             "final_train": float(baseline_train[-1]),
             "final_validation": float(baseline_val[-1]),
@@ -388,15 +388,15 @@ def main() -> None:
             "best_epoch": int(candidate_summary["best_epoch"]),
             "best_validation": candidate_best,
             "test_at_best_validation": candidate_test,
-            "fit_wall_seconds": float(candidate_summary["fit_wall_seconds"]),
+            "fit_wall_seconds": _optional_float(candidate_summary, "fit_wall_seconds"),
             "mean_epoch_compute_seconds": _optional_float(
                 candidate_summary, "mean_epoch_compute_seconds"
             ),
-            "fit_peak_allocated_gib": float(
-                candidate_summary["fit_peak_allocated_gib"]
+            "fit_peak_allocated_gib": _optional_float(
+                candidate_summary, "fit_peak_allocated_gib"
             ),
-            "fit_peak_reserved_gib": float(
-                candidate_summary["fit_peak_reserved_gib"]
+            "fit_peak_reserved_gib": _optional_float(
+                candidate_summary, "fit_peak_reserved_gib"
             ),
             "final_train": float(candidate_train[-1]),
             "final_validation": float(candidate_val[-1]),
@@ -404,17 +404,17 @@ def main() -> None:
         "m39_relative_to_m33": {
             "best_validation": _ratio(candidate_best, baseline_best),
             "test_at_best_validation": _ratio(candidate_test, baseline_test),
-            "fit_wall_time": _ratio(
-                float(candidate_summary["fit_wall_seconds"]),
-                float(baseline_summary["fit_wall_seconds"]),
+            "fit_wall_time": _optional_ratio(
+                _optional_float(candidate_summary, "fit_wall_seconds"),
+                _optional_float(baseline_summary, "fit_wall_seconds"),
             ),
             "mean_epoch_compute_time": _optional_ratio(
                 _optional_float(candidate_summary, "mean_epoch_compute_seconds"),
                 _optional_float(baseline_summary, "mean_epoch_compute_seconds"),
             ),
-            "fit_peak_allocated_memory": _ratio(
-                float(candidate_summary["fit_peak_allocated_gib"]),
-                float(baseline_summary["fit_peak_allocated_gib"]),
+            "fit_peak_allocated_memory": _optional_ratio(
+                _optional_float(candidate_summary, "fit_peak_allocated_gib"),
+                _optional_float(baseline_summary, "fit_peak_allocated_gib"),
             ),
         },
         "trajectory_difference": {
