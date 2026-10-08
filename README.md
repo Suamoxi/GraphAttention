@@ -60,6 +60,7 @@ The native CFD mesh is preserved. Cells and faces may supply geometric or numeri
 - [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md): run metadata and reproducibility requirements.
 - [`docs/BENCHMARK_PROTOCOL.md`](docs/BENCHMARK_PROTOCOL.md): performance evidence levels and benchmark protocol.
 - [`docs/M40_3D_VOLUME_BENCHMARK.md`](docs/M40_3D_VOLUME_BENCHMARK.md): reproducible full-volume 3-D HIT benchmarking and true ray-cast DNS/M37/M40 field comparisons.
+- [`docs/3D_SPATIAL_STATISTICS_PHYSICS.md`](docs/3D_SPATIAL_STATISTICS_PHYSICS.md): exact 3-D HIT correlation and structure-function equations, normalization, plotting semantics, and turbulence interpretation.
 - [`AGENTS.md`](AGENTS.md): mandatory rules for agents and contributors modifying the repository.
 
 ## Current status
