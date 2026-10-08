@@ -208,6 +208,37 @@ def test_relative_comparison_reports_absolute_and_relative_error_change(tmp_path
     assert float(wasserstein["relative_error_reduction_percent"]) == pytest.approx(66.6666667)
 
 
+def test_relative_comparison_3d_checks_fft_mesh_compatibility(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    output = tmp_path / "comparison"
+    _make_benchmark(baseline, wasserstein=0.2, spectral_ratio=2.0)
+    _make_benchmark(candidate, wasserstein=0.1, spectral_ratio=1.5)
+
+    for path, fft_shape in (
+        (baseline, [32, 32, 32]),
+        (candidate, [32, 32, 31]),
+    ):
+        summary_file = path / "summary.json"
+        summary = json.loads(summary_file.read_text())
+        summary.pop("nodes_per_sample")
+        summary.pop("grid_shape_2d")
+        summary.update(
+            {
+                "benchmark": "generation_distribution_3d_v1",
+                "grid_dimension": 3,
+                "grid_source_shape": [33, 33, 33],
+                "grid_fft_shape": fft_shape,
+                "source_nodes_per_sample": 35937,
+                "periodic_endpoint_mode": "drop_max",
+            }
+        )
+        summary_file.write_text(json.dumps(summary))
+
+    with pytest.raises(ValueError, match="grid_fft_shape"):
+        compare_generation_benchmarks(baseline, candidate, output)
+
+
 def test_relative_comparison_rejects_incompatible_reference_space(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline"
     candidate = tmp_path / "candidate"
