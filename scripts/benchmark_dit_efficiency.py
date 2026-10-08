@@ -503,10 +503,13 @@ def _benchmark_run(
     include_self_attention = bool(
         getattr(model, "include_self_attention", False)
     )
+    include_local_self_attention = bool(
+        getattr(model, "include_local_self_attention", False)
+    )
     effective_local_edges = _attention_edge_count_with_optional_self(
         test_scaled.edge_index,
         num_nodes=int(test_scaled.inputs.shape[0]),
-        include_self_attention=include_self_attention,
+        include_self_attention=include_self_attention or include_local_self_attention,
     )
     effective_attention_edges = {
         name: _attention_edge_count_with_optional_self(
@@ -536,6 +539,7 @@ def _benchmark_run(
         "local_edges_per_batch": local_edges,
         "attention_edges_per_batch": attention_edges,
         "include_self_attention": include_self_attention,
+        "include_local_self_attention": include_local_self_attention,
         "effective_local_attention_edges_per_batch": effective_local_edges,
         "effective_attention_edges_per_batch": effective_attention_edges,
         "flow_time_embedding_scale": task.time_embedding_scale,
@@ -895,6 +899,7 @@ def _write_results_csv(path: Path, results: list[dict[str, Any]]) -> None:
                     "dilated", 0
                 ),
                 "include_self_attention": result["include_self_attention"],
+                "include_local_self_attention": result["include_local_self_attention"],
                 "effective_local_attention_edges_per_batch": result[
                     "effective_local_attention_edges_per_batch"
                 ],
