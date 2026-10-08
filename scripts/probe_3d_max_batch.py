@@ -126,6 +126,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=("dinat", "full"), required=True)
     parser.add_argument("--max-batch", type=int, default=64)
+    parser.add_argument(
+        "--include-local-self-attention",
+        action="store_true",
+        help="Probe NAT layers with self loops; dilated layers stay self-free.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--snapshot-dir",
@@ -168,6 +173,11 @@ def main() -> None:
         time_embedding_scale=1000.0,
     )
     model_cfg, geometry_cfg = _model_and_geometry(args.model)
+    if args.include_local_self_attention:
+        if args.model != "dinat":
+            raise ValueError("--include-local-self-attention requires --model dinat")
+        model_cfg.include_self_attention = False
+        model_cfg.include_local_self_attention = True
     collator = GraphTaskCollator(task, dataset.field_catalog, geometry_cfg)
 
     attempts: list[dict[str, Any]] = []
@@ -200,6 +210,7 @@ def main() -> None:
 
     payload = {
         "model": args.model,
+        "include_local_self_attention": bool(args.include_local_self_attention),
         "max_requested_batch": args.max_batch,
         "max_passing_batch": best,
         "device": torch.cuda.get_device_name(device),
