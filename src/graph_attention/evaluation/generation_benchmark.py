@@ -266,7 +266,36 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
     if bool(cfg.physics.enabled):
         physical_rows = _physical_metric_rows(generated, reference, channel_names, eps=eps)
 
+    # The generation source records the frozen train-only scaling used to
+    # produce/invert model states. Reuse it for channel-comparable Wasserstein.
+    # Older external benchmark fixtures without a training source can still
+    # compute all unstandardized diagnostics.
+    source_training_dir = source_summary.get("source_run_dir")
+    training_dir = (
+        Path(str(source_training_dir)).expanduser().resolve()
+        if source_training_dir is not None
+        else run_dir.parent.parent
+    )
+    training_scaling_path = training_dir / "standardizers.pt"
+    standardized_rows: list[dict[str, float | str]] = []
+    if training_scaling_path.is_file():
+        scaling = torch.load(training_scaling_path, map_location="cpu", weights_only=True)
+        input_scaling = scaling["inputs"]
+        if tuple(input_scaling["channel_names"]) != channel_names:
+            raise ValueError(
+                "generation channels differ from frozen training input standardizers"
+            )
+        standardized_rows = standardized_wasserstein_rows(
+            generated,
+            reference,
+            channel_names,
+            mean=input_scaling["mean"].detach().cpu().numpy(),
+            scale=input_scaling["scale"].detach().cpu().numpy(),
+        )
+
     _write_csv(output_dir / "channel_metrics.csv", channel_rows)
+    if standardized_rows:
+        _write_csv(output_dir / "standardized_wasserstein.csv", standardized_rows)
     _write_csv(output_dir / "sample_statistics.csv", sample_rows)
     _write_csv(output_dir / "correlation_matrix.csv", correlation_rows)
     _write_csv(output_dir / "spectra.csv", spectrum_rows)
@@ -382,6 +411,20 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
         },
         "nearest_reference": nearest_summary,
         "channel_summary": _channel_summary(channel_rows, band_rows),
+        "standardized_wasserstein": {
+            "available": bool(standardized_rows),
+            "training_scaling_file": (
+                str(training_scaling_path) if standardized_rows else None
+            ),
+            "mean_over_channels": (
+                float(np.mean([
+                    float(row["wasserstein_1_standardized"])
+                    for row in standardized_rows
+                ]))
+                if standardized_rows
+                else None
+            ),
+        },
         "physical_summary": _physical_summary(physical_rows),
         "energy_spectrum": _energy_spectrum_summary(
             energy_summary_rows,
@@ -392,6 +435,9 @@ def run_generation_benchmark(cfg: DictConfig) -> dict[str, Any]:
         ),
         "outputs": {
             "channel_metrics": "channel_metrics.csv",
+            "standardized_wasserstein": (
+                "standardized_wasserstein.csv" if standardized_rows else None
+            ),
             "sample_statistics": "sample_statistics.csv",
             "correlation_matrix": "correlation_matrix.csv",
             "spectra": "spectra.csv",
