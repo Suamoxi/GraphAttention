@@ -380,7 +380,7 @@ Known limitations:
     requires a complete uniform Cartesian 3-D mesh for FFT diagnostics;
     periodic endpoint removal is a post-processing convention only and does not repair
     the currently deferred periodic cross-boundary graph topology;
-    full-volume field plots are deferred.
+    true full-volume ray-cast qualitative field plots are now enabled; see docs/M40_3D_VOLUME_BENCHMARK.md.
 ```
 
 ## 9.2. Full-volume 3-D HIT spatial-statistics genealogy
@@ -477,3 +477,26 @@ When several ideas are combined, record the genealogy explicitly.
 - Unit tests assert 3-D local self-loops, zero self-relative displacement,
   preserved self-free exact-two-hop topology, init metadata, and backward after
   sparse cached inference.
+
+
+## 9.3. True 3-D full-volume rendering genealogy
+
+- Purpose: qualitative visual comparison of 3-D HIT conservative scalar fields
+  from unpaired DNS, M37 and M40 populations. No paired reconstruction claim.
+- Scientific definition: trilinear emission/absorption ray casting through all
+  32^3 unique periodic voxels, **not** central slices or three intersecting planes.
+- Colormap: RdBu_r, matching 2-D and existing 3-D slice diagnostics.
+- Cross-population control: one jointly computed 1%-99% scalar range per
+  variable and one identical opacity transfer, camera, and ray integration
+  scheme for DNS, M37, M40.
+- Implementation:
+  src/graph_attention/evaluation/volume_rendering_3d.py;
+  scripts/plot_m37_m40_3d_volumes.py;
+  src/graph_attention/evaluation/generation_benchmark_3d.py.
+- Configuration: configs/benchmark_generation_3d.yaml, plots.volume_3d and
+  plots.volume_resolution, plots.volume_steps, plots.volume_optical_depth.
+- Validation: tests/unit/test_volume_rendering_3d.py checks responsiveness
+  to an off-plane interior voxel and matched-population plot creation.
+- Launch: scripts/slurm/m37_m40_3d_local_self_quality_compare.slurm.
+- Documentation: docs/M40_3D_VOLUME_BENCHMARK.md.
+- Status: implemented in main; target-cluster rendering/test execution pending.
