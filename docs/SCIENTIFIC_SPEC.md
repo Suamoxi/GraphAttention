@@ -869,9 +869,11 @@ and held-out test populations. With the current 32^3 unique grid the default sep
 extend to half the box, m=0,...,16.
 
 Visual inference checks use a small deterministic set of unpaired generated and test
-snapshots. For each conservative channel, central x-, y-, and z-normal slices are shown
-with a common robust color scale. These are qualitative population examples and must not
-be interpreted as paired reconstruction targets.
+snapshots. Existing planar diagnostics show central x-, y-, and z-normal slices.
+The full-volume renderer additionally ray casts all 32^3 unique scalar voxels with
+common robust color limits, RdBu_r mapping and opacity across DNS, M37 and M40.
+Both kinds of figures are qualitative population examples and must not be
+interpreted as paired reconstruction targets.
 
 
 ## DiNAT-DiT self-attention topology
