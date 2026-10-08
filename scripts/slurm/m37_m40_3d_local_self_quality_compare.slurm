@@ -77,6 +77,7 @@ singularity exec \
         tests/unit/test_generation_benchmark.py::test_velocity_spatial_statistics_3d_match_periodic_sinusoid \
         tests/unit/test_generation_benchmark.py::test_velocity_energy_spectrum_3d_recovers_periodic_resolved_tke \
         tests/unit/test_relative_benchmark.py::test_relative_comparison_3d_checks_fft_mesh_compatibility \
+        tests/unit/test_volume_rendering_3d.py \
         -q
 
 for spec in "M37:$M37_GEN:$M37_BENCH_ROOT:$M37_BENCH" "M40:$M40_GEN:$M40_BENCH_ROOT:$M40_BENCH"; do
@@ -116,6 +117,25 @@ singularity exec \
         overwrite=true
 
 test -s "${OUTPUT_ROOT}/generation_quality/relative_comparison.csv"
+
+echo "===== Full 3-D volume raycasting: DNS / M37 / M40 ====="
+singularity exec \
+    -B /home \
+    -B /scratch \
+    "$IMAGE" \
+    "$PYTHON" -u -m scripts.plot_m37_m40_3d_volumes \
+        --m37-generation "$M37_GEN" \
+        --m40-generation "$M40_GEN" \
+        --output-dir "${OUTPUT_ROOT}/plots/volume_3d" \
+        --num-examples 3 \
+        --resolution 220 \
+        --steps 84 \
+        --optical-depth 2.0 \
+        --cmap RdBu_r
+
+for variable in rho_value rhou_x rhov_y rhow_z rhoE_value; do
+    test -s "${OUTPUT_ROOT}/plots/volume_3d/example_000/${variable}.png"
+done
 
 echo "===== M37 standardized Wasserstein ====="
 cat "${M37_BENCH}/standardized_wasserstein.csv"
