@@ -306,18 +306,23 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
     run_dir.mkdir()
     mesh_file = tmp_path / "slice_mesh.pt"
 
-    x, y = torch.meshgrid(torch.arange(4), torch.arange(4), indexing="ij")
+    # 4x4 only resolves high-k shells; all three normalized bands require
+    # a grid that resolves modes below k/k_Nyquist = 0.25.
+    grid_side = 16
+    x, y = torch.meshgrid(
+        torch.arange(grid_side), torch.arange(grid_side), indexing="ij"
+    )
     coords = torch.stack((x.reshape(-1), y.reshape(-1)), dim=1).to(torch.float32)
     torch.save(
         {
             "coords": coords,
-            "metadata": {"grid_shape_2d": [4, 4]},
+            "metadata": {"grid_shape_2d": [grid_side, grid_side]},
         },
         mesh_file,
     )
 
     num_samples = 3
-    num_nodes = 16
+    num_nodes = grid_side**2
     channel_names = ("rho.value", "rhou.x", "rhov.y", "rhow.z", "rhoE.value")
     reference_samples = []
     for sample_index in range(num_samples):
@@ -372,7 +377,7 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
                 "model": "AlternatingDilatedGeometricSparseGraphTransformer",
                 "model_parameters": 123,
                 "best_epoch": 7,
-                "grid_shape_2d": [4, 4],
+                "grid_shape_2d": [grid_side, grid_side],
                 "source_run_dir": str(source_training_dir),
             }
         )
