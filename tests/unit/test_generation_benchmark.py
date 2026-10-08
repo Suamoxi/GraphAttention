@@ -148,6 +148,80 @@ def test_velocity_spatial_statistics_3d_match_periodic_sinusoid() -> None:
     assert stats.r_over_box[1] == pytest.approx(1.0 / unique_points)
 
 
+def test_velocity_correlations_match_structure_functions_3d() -> None:
+    """Periodic S2 and normalized R must agree with unequal velocity variances."""
+
+    from graph_attention.evaluation.spatial_statistics_3d import (
+        sample_velocity_spatial_statistics_3d,
+    )
+
+    n = 8
+    x, y, z = np.meshgrid(
+        np.arange(n + 1, dtype=np.float64),
+        np.arange(n + 1, dtype=np.float64),
+        np.arange(n + 1, dtype=np.float64),
+        indexing="ij",
+    )
+    coords = np.column_stack((x.ravel(), y.ravel(), z.ravel()))
+    grid = infer_cartesian_grid_3d(coords, periodic_endpoint_mode="drop_max")
+    rho = 1.0 + 0.05 * np.cos(2.0 * np.pi * x / n)
+    velocity = np.stack(
+        (
+            1.8 * np.sin(2.0 * np.pi * x / n)
+            + 0.2 * np.cos(2.0 * np.pi * z / n),
+            0.7 * np.sin(4.0 * np.pi * y / n)
+            + 0.13 * np.cos(2.0 * np.pi * x / n),
+            0.4 * np.sin(2.0 * np.pi * z / n)
+            + 0.22 * np.cos(2.0 * np.pi * y / n),
+        ),
+        axis=-1,
+    )
+    sample = np.stack(
+        (
+            rho,
+            rho * velocity[..., 0],
+            rho * velocity[..., 1],
+            rho * velocity[..., 2],
+            5.0 * rho,
+        ),
+        axis=-1,
+    ).reshape(1, -1, 5)
+    metrics = sample_velocity_spatial_statistics_3d(
+        sample,
+        grid,
+        ("rho", "rhou", "rhov", "rhow", "rhoE"),
+        max_lag=3,
+    )
+
+    centered = velocity[:-1, :-1, :-1, :]
+    centered = centered - centered.mean(axis=(0, 1, 2), keepdims=True)
+    variances = np.mean(centered**2, axis=(0, 1, 2))
+    assert variances.max() > 3.0 * variances.min()
+
+    for lag in (1, 2, 3):
+        correlations = []
+        for axis in range(3):
+            shifted = np.roll(centered, -lag, axis=axis)
+            cov = np.mean(centered[..., axis] * shifted[..., axis])
+            correlations.append(cov / variances[axis])
+        expected_s2_l = (2.0 / 3.0) * sum(
+            variances[axis] * (1.0 - correlations[axis])
+            for axis in range(3)
+        )
+        expected_s2_vec = 2.0 * variances.sum() * (
+            1.0 - metrics.vector_correlation[0, lag]
+        )
+
+        assert metrics.longitudinal_correlation[0, lag] == pytest.approx(
+            np.mean(correlations)
+        )
+        assert metrics.longitudinal_s2[0, lag] == pytest.approx(expected_s2_l)
+        assert metrics.vector_s2[0, lag] == pytest.approx(expected_s2_vec)
+        assert metrics.longitudinal_flatness[0, lag] == pytest.approx(
+            metrics.longitudinal_s4[0, lag] / metrics.longitudinal_s2[0, lag] ** 2
+        )
+
+
 def test_velocity_energy_spectrum_3d_recovers_periodic_resolved_tke() -> None:
     from graph_attention.evaluation.spectra_3d import (
         sample_velocity_energy_spectra_3d,
