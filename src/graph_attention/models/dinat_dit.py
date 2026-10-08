@@ -69,11 +69,11 @@ class DiNATDiTMultiheadAttention(GeometricSparseMultiheadAttention):
 class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
     """DiT backbone with alternating local/exact-two-hop geometric attention.
 
-    When include_self_attention is enabled, even-numbered layers attend over
-    self plus one-hop mesh neighbours and odd-numbered layers attend over self
-    plus exact-two-hop neighbours. The raw geometry topologies remain unchanged;
-    self loops are added only to the attention topology. Both attention schemes
-    reuse the learned relative-displacement score bias.
+    The include_local_self_attention option adds (i,i) only in even-numbered
+    local layers; odd-numbered exact-two-hop layers remain unchanged. The
+    historical include_self_attention option adds (i,i) to both layer types.
+    Neither option changes the raw geometric graph topology or exact-two-hop
+    definition; both reuse the learned relative-displacement score bias.
     """
 
     def __init__(
@@ -96,6 +96,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         out_proj_bias: bool = False,
         sparse_attention_backend: str = "scatter",
         include_self_attention: bool = False,
+        include_local_self_attention: bool = False,
     ) -> None:
         # Sparse geometric attention does not use dense SDPA, but this argument
         # keeps the same public configuration contract as the other DiT models.
@@ -128,6 +129,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         )
         self.sparse_attention_backend = backend
         self.include_self_attention = bool(include_self_attention)
+        self.include_local_self_attention = bool(include_local_self_attention)
         self._self_attention_edge_cache: dict[
             str,
             tuple[torch.Tensor, int | None, int, torch.Tensor],
@@ -146,7 +148,10 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
     ) -> torch.Tensor:
         """Return the requested topology, optionally augmented by self loops."""
 
-        if not self.include_self_attention:
+        add_self = self.include_self_attention or (
+            name == "local" and self.include_local_self_attention
+        )
+        if not add_self:
             return edge_index
 
         version = _tensor_version_or_none(edge_index)
