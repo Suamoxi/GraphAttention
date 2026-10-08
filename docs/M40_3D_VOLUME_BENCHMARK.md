@@ -86,3 +86,42 @@ The benchmark config configs/benchmark_generation_3d.yaml includes:
     plots.volume_optical_depth: 2.0
 
 Larger image resolution or more ray steps improve rendering smoothness but increase CPU post-processing time. The baseline and candidate must use identical view and color/opacity transfer functions.
+
+
+## M37 (DiNAT-DiT) vs M38 (Full DiT): true 3-D field comparison
+
+The exact same volume-rendering module can compare the existing **M37 and M38**
+generations directly, without rerunning training, inference, or distribution
+metrics. It produces side-by-side **DNS test reference / M37 DiNAT-DiT /
+M38 Full DiT** ray-cast scalar volumes with the same `RdBu_r` colormap,
+per-variable shared 1%-99% scalar normalization, opacity and camera view.
+
+Run:
+
+    git pull --rebase
+    sbatch scripts/slurm/m37_m38_3d_volume_compare.slurm
+
+The CPU-only launcher locates the latest completed best-checkpoint Heun-50
+generation for each model, checks required saved artifacts, runs the volume
+rendering regression tests, and exports 3 examples x 5 CFD variables under:
+
+    /scratch/coop/theret/GraphAttention_runs/
+      m37_m38_3d_volume_comparison/
+        example_000/rho_value.png
+        example_000/rhou_x.png
+        example_000/rhov_y.png
+        example_000/rhow_z.png
+        example_000/rhoE_value.png
+        example_001/...
+        example_002/...
+
+The script `scripts/plot_m37_m38_3d_volumes.py` checks identical held-out
+reference IDs and reference fields before rendering. If their saved test
+populations do not match, it rejects the comparison instead of silently
+pairing unrelated sample arrays. A shared displayed example index is still
+**not a generated-to-DNS physical pairing**.
+
+This visualization does not establish a controlled architectural ablation
+by itself: M37 and M38 use different training microbatch sizes, although
+both use the same full-volume HIT task. It is a fair color-scale-controlled
+visual comparison of generated field populations.
