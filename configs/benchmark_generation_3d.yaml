@@ -43,6 +43,11 @@ plots:
   energy_spectrum: true
   # Visual sanity check: central x/y/z slices for a few unpaired real/generated volumes.
   fields: true
+  # Also render all three orthogonal planes as one angled 3-D cutaway.
+  # This is a 3-D visualization of slices, not volume rendering or isosurfaces.
+  orthogonal_3d: true
+  # Identical to the existing 2-D and 3-D slice colormap.
+  field_cmap: RdBu_r
   field_examples: 3
   spatial_correlation: true
   structure_functions: true
