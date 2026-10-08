@@ -354,6 +354,18 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
         OmegaConf.create({"data": {"mesh_file": str(mesh_file)}}),
         run_dir / "resolved_config.yaml",
     )
+    source_training_dir = tmp_path / "source_training"
+    source_training_dir.mkdir()
+    torch.save(
+        {
+            "inputs": {
+                "channel_names": channel_names,
+                "mean": torch.zeros(len(channel_names)),
+                "scale": torch.tensor([1.0, 2.0, 4.0, 8.0, 16.0]),
+            },
+        },
+        source_training_dir / "standardizers.pt",
+    )
     (run_dir / "summary.json").write_text(
         json.dumps(
             {
@@ -361,6 +373,7 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
                 "model_parameters": 123,
                 "best_epoch": 7,
                 "grid_shape_2d": [4, 4],
+                "source_run_dir": str(source_training_dir),
             }
         )
     )
@@ -415,6 +428,9 @@ def test_generation_benchmark_writes_isolated_run_directory(tmp_path: Path) -> N
     assert (output_dir / "summary.json").is_file()
     assert (output_dir / "benchmark_config.yaml").is_file()
     assert (output_dir / "channel_metrics.csv").stat().st_size > 0
+    assert (output_dir / "standardized_wasserstein.csv").stat().st_size > 0
+    assert summary["standardized_wasserstein"]["available"] is True
+    assert summary["standardized_wasserstein"]["mean_over_channels"] >= 0.0
     assert (output_dir / "sample_statistics.csv").stat().st_size > 0
     assert (output_dir / "correlation_matrix.csv").stat().st_size > 0
     assert (output_dir / "spectra.csv").stat().st_size > 0
