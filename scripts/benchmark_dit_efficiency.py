@@ -320,7 +320,7 @@ def _validate_comparison_contract(run_dirs: dict[str, Path]) -> dict[str, Any]:
             label: int(configs[label].generative.batch_size) for label in labels
         },
         "training_gradient_accumulation_steps": {
-            label: int(configs[label].generative.gradient_accumulation_steps)
+            label: int(configs[label].generative.get("gradient_accumulation_steps", 1))
             for label in labels
         },
     }
