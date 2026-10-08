@@ -61,6 +61,7 @@ singularity exec \
     "$PYTHON" -m pytest \
         tests/unit/test_generation_benchmark.py::test_generation_benchmark_writes_isolated_run_directory \
         tests/unit/test_generation_benchmark.py::test_standardized_wasserstein_removes_channel_scale_difference \
+        tests/unit/test_dinat_self_attention_ablation.py \
         -q
 
 for run_dir in "$M33_RUN" "$M39_RUN"; do
