@@ -10,6 +10,8 @@ from omegaconf import OmegaConf
 from scripts.compare_dinat_self_attention_ablation import (
     _config_differences,
     _load_history,
+    _optional_float,
+    _optional_ratio,
     _to_plain_config,
 )
 
@@ -98,3 +100,31 @@ def test_old_dinat_default_contract_differs_only_by_self_attention(
         "baseline": False,
         "candidate": True,
     }
+
+
+def test_legacy_summary_missing_runtime_metrics_does_not_invent_values() -> None:
+    # M33 predates fit-wall-time and CUDA peak-memory fields; generative quality
+    # metrics remain comparable even when these efficiency estimates are absent.
+    baseline_summary = {
+        "run_name": "m33",
+        "best_validation_flow_velocity_mse": 0.25,
+    }
+    candidate_summary = {
+        "run_name": "m39",
+        "best_validation_flow_velocity_mse": 0.20,
+        "fit_wall_seconds": 2500.0,
+        "fit_peak_allocated_gib": 5.0,
+    }
+
+    assert _optional_float(baseline_summary, "fit_wall_seconds") is None
+    assert _optional_float(baseline_summary, "fit_peak_allocated_gib") is None
+    assert _optional_float(baseline_summary, "fit_peak_reserved_gib") is None
+    assert _optional_ratio(
+        _optional_float(candidate_summary, "fit_wall_seconds"),
+        _optional_float(baseline_summary, "fit_wall_seconds"),
+    ) is None
+    assert _optional_ratio(
+        _optional_float(candidate_summary, "fit_peak_allocated_gib"),
+        _optional_float(baseline_summary, "fit_peak_allocated_gib"),
+    ) is None
+    assert _optional_ratio(1.0, 0.0) is None
