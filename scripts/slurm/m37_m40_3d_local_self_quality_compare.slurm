@@ -76,6 +76,7 @@ singularity exec \
         tests/unit/test_generation_benchmark.py::test_cartesian_grid_3d_periodic_drop_max_handles_permuted_node_order \
         tests/unit/test_generation_benchmark.py::test_velocity_spatial_statistics_3d_match_periodic_sinusoid \
         tests/unit/test_generation_benchmark.py::test_velocity_energy_spectrum_3d_recovers_periodic_resolved_tke \
+        tests/unit/test_relative_benchmark.py::test_relative_comparison_3d_checks_fft_mesh_compatibility \
         -q
 
 for spec in "M37:$M37_GEN:$M37_BENCH_ROOT:$M37_BENCH" "M40:$M40_GEN:$M40_BENCH_ROOT:$M40_BENCH"; do
