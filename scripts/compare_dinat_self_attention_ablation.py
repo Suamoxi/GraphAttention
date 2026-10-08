@@ -85,6 +85,15 @@ def _to_plain_config(path: Path) -> dict[str, Any]:
     payload = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
     if not isinstance(payload, dict):
         raise TypeError(f"expected mapping config: {path}")
+
+    # Historical DiNAT runs predate these explicit config fields. Their runtime
+    # defaults were scatter attention with no self token, so normalize missing
+    # fields to those values before enforcing the controlled-ablation contract.
+    model = payload.get("model")
+    if not isinstance(model, dict):
+        raise TypeError(f"expected model mapping in config: {path}")
+    model.setdefault("sparse_attention_backend", "scatter")
+    model.setdefault("include_self_attention", False)
     return payload
 
 
