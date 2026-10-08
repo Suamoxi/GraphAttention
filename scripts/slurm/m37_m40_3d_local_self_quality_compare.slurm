@@ -75,6 +75,7 @@ singularity exec \
     "$PYTHON" -m pytest \
         tests/unit/test_generation_benchmark.py::test_cartesian_grid_3d_periodic_drop_max_handles_permuted_node_order \
         tests/unit/test_generation_benchmark.py::test_velocity_spatial_statistics_3d_match_periodic_sinusoid \
+        tests/unit/test_generation_benchmark.py::test_velocity_correlations_match_structure_functions_3d \
         tests/unit/test_generation_benchmark.py::test_velocity_energy_spectrum_3d_recovers_periodic_resolved_tke \
         tests/unit/test_relative_benchmark.py::test_relative_comparison_3d_checks_fft_mesh_compatibility \
         tests/unit/test_volume_rendering_3d.py \
