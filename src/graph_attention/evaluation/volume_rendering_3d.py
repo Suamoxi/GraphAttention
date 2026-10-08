@@ -200,6 +200,9 @@ def save_volume_population_comparison(
     physical pairing between independently generated and reference snapshots.
     """
 
+    import matplotlib
+
+    matplotlib.use("Agg")
     from matplotlib import colormaps, colors, pyplot as plt
 
     if not populations:
