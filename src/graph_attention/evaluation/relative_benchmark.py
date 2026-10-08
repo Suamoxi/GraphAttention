@@ -499,6 +499,16 @@ def _validate_compatible_benchmarks(
         "channel_names",
         "grid_shape_2d",
     )
+    # The full-volume 3D benchmark has distinct mesh-shape metadata; requiring
+    # only the 2D fields would silently accept mismatched FFT resolutions.
+    if baseline.get("grid_dimension") == 3 or candidate.get("grid_dimension") == 3:
+        checks += (
+            "grid_dimension",
+            "grid_source_shape",
+            "grid_fft_shape",
+            "source_nodes_per_sample",
+            "periodic_endpoint_mode",
+        )
     mismatches = [name for name in checks if baseline.get(name) != candidate.get(name)]
     if mismatches:
         raise ValueError(
