@@ -412,6 +412,8 @@ Known limitations:
     spatial statistics use Cartesian-axis separations rather than a full radial all-pairs estimator;
     the current 32^3 grid offers only limited inertial-range scale separation;
     snapshot panels are explicitly unpaired qualitative examples.
+Detailed equation-level physics and implementation-specific limits:
+    docs/3D_SPATIAL_STATISTICS_PHYSICS.md
 ```
 
 ## DiNAT-DiT self-attention ablation
