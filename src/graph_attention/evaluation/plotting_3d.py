@@ -27,6 +27,7 @@ def save_3d_snapshot_slice_examples(
     *,
     num_examples: int,
     dpi: int,
+    cmap: str = "RdBu_r",
 ) -> None:
     """Save unpaired generated/reference central slices for a few 3-D snapshots."""
 
@@ -81,14 +82,14 @@ def save_3d_snapshot_slice_examples(
                 image = axes[0, column].imshow(
                     reference_slices[column],
                     origin="lower",
-                    cmap="RdBu_r",
+                    cmap=cmap,
                     vmin=lower,
                     vmax=upper,
                 )
                 axes[1, column].imshow(
                     generated_slices[column],
                     origin="lower",
-                    cmap="RdBu_r",
+                    cmap=cmap,
                     vmin=lower,
                     vmax=upper,
                 )
