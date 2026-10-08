@@ -52,6 +52,17 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     exit 1
 fi
 
+echo
+echo "===== Regression tests for legacy training and 2-D quality metrics ====="
+singularity exec \
+    -B /home \
+    -B /scratch \
+    "$IMAGE" \
+    "$PYTHON" -m pytest \
+        tests/unit/test_generation_benchmark.py::test_generation_benchmark_writes_isolated_run_directory \
+        tests/unit/test_generation_benchmark.py::test_standardized_wasserstein_removes_channel_scale_difference \
+        -q
+
 for run_dir in "$M33_RUN" "$M39_RUN"; do
     for artifact in best.pt history.csv summary.json resolved_config.yaml standardizers.pt dataset_split_manifest.json; do
         test -s "${run_dir}/${artifact}" || {
