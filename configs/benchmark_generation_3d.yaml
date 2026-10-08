@@ -43,12 +43,14 @@ plots:
   energy_spectrum: true
   # Visual sanity check: central x/y/z slices for a few unpaired real/generated volumes.
   fields: true
-  # Also render all three orthogonal planes as one angled 3-D cutaway.
-  # This is a 3-D visualization of slices, not volume rendering or isosurfaces.
-  orthogonal_3d: true
-  # Identical to the existing 2-D and 3-D slice colormap.
-  field_cmap: RdBu_r
+  # True volumetric ray casting: all voxels intersected by each ray
+  # contribute continuously to color and opacity, not just planar slices.
+  volume_3d: true
+  field_cmap: RdBu_r  # identical to the original 2D/3D slice colormap
   field_examples: 3
+  volume_resolution: 220
+  volume_steps: 84
+  volume_optical_depth: 2.0
   spatial_correlation: true
   structure_functions: true
   marginal_bins: 128
