@@ -868,6 +868,8 @@ Population means and 10--90% snapshot variability bands are compared between gen
 and held-out test populations. With the current 32^3 unique grid the default separations
 extend to half the box, m=0,...,16.
 
+Detailed mathematical definitions of each normalized correlation, the exact S2/correlation identities, S3 cascade interpretation, flatness, and curve plotting conventions are documented in [docs/3D_SPATIAL_STATISTICS_PHYSICS.md](3D_SPATIAL_STATISTICS_PHYSICS.md).
+
 Visual inference checks use a small deterministic set of unpaired generated and test
 snapshots. Existing planar diagnostics show central x-, y-, and z-normal slices.
 The full-volume renderer additionally ray casts all 32^3 unique scalar voxels with
