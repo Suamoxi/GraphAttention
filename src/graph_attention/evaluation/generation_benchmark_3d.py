@@ -34,7 +34,6 @@ from .plotting import (
     save_spectrum_plots,
 )
 from .plotting_3d import (
-    save_3d_orthogonal_plane_comparisons,
     save_3d_snapshot_slice_examples,
     save_velocity_spatial_correlation_plots,
     save_velocity_structure_function_plots,
@@ -52,6 +51,7 @@ from .spectra_3d import (
     sample_radial_spectra_3d,
     sample_velocity_energy_spectra_3d,
 )
+from .volume_rendering_3d import save_volume_population_comparison
 from .spatial_statistics_3d import (
     VelocitySpatialStatistics3D,
     sample_velocity_spatial_statistics_3d,
@@ -351,17 +351,20 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
                 ),
                 dpi=int(cfg.plots.dpi),
             )
-        if bool(OmegaConf.select(cfg, "plots.orthogonal_3d", default=False)):
-            save_3d_orthogonal_plane_comparisons(
+        if bool(OmegaConf.select(cfg, "plots.volume_3d", default=False)):
+            save_volume_population_comparison(
                 {"DNS test reference": reference, "Generated": generated},
                 channel_names,
                 grid,
-                plot_root / "orthogonal_3d",
+                plot_root / "volume_3d",
                 num_examples=int(
                     OmegaConf.select(cfg, "plots.field_examples", default=3)
                 ),
                 dpi=int(cfg.plots.dpi),
                 cmap=str(OmegaConf.select(cfg, "plots.field_cmap", default="RdBu_r")),
+                resolution=int(OmegaConf.select(cfg, "plots.volume_resolution", default=220)),
+                steps=int(OmegaConf.select(cfg, "plots.volume_steps", default=84)),
+                optical_depth=float(OmegaConf.select(cfg, "plots.volume_optical_depth", default=2.0)),
             )
         if bool(OmegaConf.select(cfg, "plots.spatial_correlation", default=True)):
             save_velocity_spatial_correlation_plots(
@@ -480,10 +483,10 @@ def run_generation_benchmark_3d(cfg: DictConfig) -> dict[str, Any]:
                 if bool(OmegaConf.select(cfg, "plots.fields", default=False))
                 else None
             ),
-            "orthogonal_3d": (
-                "plots/orthogonal_3d"
+            "volume_3d": (
+                "plots/volume_3d"
                 if bool(cfg.plots.enabled)
-                and bool(OmegaConf.select(cfg, "plots.orthogonal_3d", default=False))
+                and bool(OmegaConf.select(cfg, "plots.volume_3d", default=False))
                 else None
             ),
             "plots": "plots" if bool(cfg.plots.enabled) else None,
