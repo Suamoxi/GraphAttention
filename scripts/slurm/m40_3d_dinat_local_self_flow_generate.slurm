@@ -90,6 +90,7 @@ singularity exec --nv \
     "$PYTHON" -m pytest \
         tests/unit/test_dinat_dit.py::test_dinat_dit_3d_self_attention_local_only \
         tests/unit/test_dinat_dit.py::test_dinat_dit_3d_local_only_factory_metadata \
+        tests/unit/test_dinat_dit.py::test_dinat_dit_3d_local_only_torch_sparse_survives_inference_to_training \
         tests/unit/test_dinat_dit.py::test_dinat_dit_torch_sparse_backend_matches_scatter \
         tests/unit/test_dinat_dit.py::test_dinat_dit_torch_sparse_backend_supports_inference_mode_tensors \
         tests/unit/test_dinat_dit.py::test_dinat_dit_torch_sparse_cache_survives_inference_then_training \
