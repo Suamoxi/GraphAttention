@@ -73,7 +73,7 @@ echo "FFT unique grid:        32^3 periodic nodes (drop max planes)"
 echo "Spectra:                3-D radial FFT"
 echo "Energy:                 velocity-based E_3D(k), 10-90% bands"
 echo "Wasserstein:            nondimensional + train-standardized"
-echo "Full-volume field plots:disabled"
+echo "True full-volume ray casts: enabled (RdBu_r, DNS/M37/M38)"
 echo "M38 generation:          $M38_GEN_NAME"
 echo "M37 generation:          $M37_GEN_NAME"
 echo "============================================================"
@@ -154,6 +154,27 @@ benchmark_generation "$M38_GEN" "$M38_BENCH_ROOT" "$M38_BENCH" "M38 Full DiT"
 benchmark_generation "$M37_GEN" "$M37_BENCH_ROOT" "$M37_BENCH" "M37 NAT-DiT"
 
 echo
+echo "===== Matched true-volume DNS / M37 / M38 renderings ====="
+singularity exec -B /home -B /scratch "$IMAGE" \
+    "$PYTHON" -m pytest tests/unit/test_volume_rendering_3d.py -q
+
+VOLUME_DIR=${RUN_ROOT}/m37_m38_3d_volume_comparison
+singularity exec -B /home -B /scratch "$IMAGE" \
+    "$PYTHON" -u -m scripts.plot_m37_m38_3d_volumes \
+        --m37-generation "$M37_GEN" \
+        --m38-generation "$M38_GEN" \
+        --output-dir "$VOLUME_DIR" \
+        --num-examples 3 \
+        --resolution 220 \
+        --steps 84 \
+        --optical-depth 2.0 \
+        --cmap RdBu_r
+
+for name in rho_value rhou_x rhov_y rhow_z rhoE_value; do
+    test -s "${VOLUME_DIR}/example_000/${name}.png"
+done
+
+echo
 echo "===== M38 standardized Wasserstein ====="
 cat "${M38_BENCH}/standardized_wasserstein.csv"
 echo
@@ -172,4 +193,5 @@ echo "============================================================"
 echo "3-D QUALITY BENCHMARK COMPLETE"
 echo "M38: $M38_BENCH"
 echo "M37: $M37_BENCH"
+echo "Full-volume DNS/M37/M38 plots: $VOLUME_DIR"
 echo "============================================================"
