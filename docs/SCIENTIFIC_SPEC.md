@@ -875,3 +875,28 @@ The current DiNAT-DiT model supports an explicit `include_self_attention` model 
 For a self edge `(i,i)`, the relative displacement is exactly zero, so the learned geometric score bias is evaluated at zero displacement. This allows each attention head to learn an explicit preference for the center token in addition to the residual connection.
 
 Backward compatibility is deliberate: the Python constructor defaults `include_self_attention` to false, so historical resolved configs that do not contain the field reproduce the previous no-self architecture. The current `configs/model/dinat_dit.yaml` keeps it false by default while the M39 2-D ablation enables it explicitly. This avoids changing historical experiment semantics before validation.
+
+
+## M40 3-D local-only self-attention ablation
+
+M40 tests a single topological change relative to M37 on the full 3-D
+HIT_LES_FORCED mesh: NAT/local (even-indexed) DiT layers attend over each node
+itself in addition to its one-hop neighbours; DiNAT (odd-indexed) layers
+still attend over exact-two-hop neighbours **without** self-attention.
+For node i:
+
+- local neighbourhood: N_1(i) union {i}
+- dilated neighbourhood: N_exact2(i), excluding i
+
+The trainable architecture, initialization, Flow Matching task, 1000-epoch
+budget, seed 42, 50-step Heun sampler, 3-D dataset, and sparse backend
+match M37. Use batch 16, gradient accumulation 1 to match the M37 run.
+A fresh CUDA memory probe tests batch 16 before training; never reduce the
+batch silently, since that would confound the controlled comparison.
+
+Options are independent: include_self_attention=true retains M39's
+self-edges in **both** local and dilated layers, while
+include_local_self_attention=true with include_self_attention=false enables
+**only** local self-edges. Defaults remain false for reproducibility of
+historical M37 and M39 resolved configurations. No changes to the
+exact-two-hop geometry itself are allowed.
