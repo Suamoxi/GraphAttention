@@ -802,8 +802,14 @@ those modes.
 The 3-D benchmark also reports pooled channel marginals, train-standardized
 Wasserstein-1 distances, cross-channel correlations, conservative-state physical
 sanity metrics, local axis-neighbour statistics, and unpaired nearest-reference
-descriptor distances. Full-volume field rendering is deliberately excluded from the
-first implementation; it does not affect the statistical or spectral metrics.
+descriptor distances. Qualitative **full-volume** field rendering is also
+supported for selected unpaired examples using 3-D emission/absorption ray casting.
+Every interior ray sample uses trilinear interpolation, a shared RdBu_r scalar
+colormap and a shared opacity transfer. DNS, M37, and M40 appear side by side
+with the same robust color limits for each variable. This visualization uses
+the 32^3 unique periodic voxels, is **not** a planar slice or isosurface,
+and does not affect the statistical or spectral metrics. Details and runnable
+instructions are in docs/M40_3D_VOLUME_BENCHMARK.md.
 
 
 ## 24. Three-dimensional HIT spatial diagnostics
