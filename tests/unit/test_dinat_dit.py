@@ -257,6 +257,67 @@ def test_dinat_dit_3d_self_attention_local_only() -> None:
         )
 
 
+def test_dinat_dit_3d_local_only_torch_sparse_survives_inference_to_training() -> None:
+    """Cached local-self CSR must remain valid for a subsequent gradient step."""
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = AlternatingDilatedGeometricDiT(
+        in_channels=3,
+        out_channels=3,
+        hidden_dim=8,
+        num_heads=2,
+        num_layers=2,
+        spatial_dim=3,
+        mlp_ratio=2,
+        conditioning_channels=1,
+        condition_embed_dim=8,
+        sparse_attention_backend="torch_sparse",
+        include_local_self_attention=True,
+        include_self_attention=False,
+    ).to(device)
+    coords = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+         [1.0, 1.0, 0.0], [1.0, 1.0, 1.0]],
+        device=device,
+    )
+    local = torch.tensor(
+        [[0, 1, 1, 2, 2, 3],
+         [1, 0, 2, 1, 3, 2]],
+        dtype=torch.long,
+        device=device,
+    )
+    dilated = torch.tensor(
+        [[0, 2, 1, 3],
+         [2, 0, 3, 1]],
+        dtype=torch.long,
+        device=device,
+    )
+    kwargs = {
+        "edge_index": local,
+        "coords": coords,
+        "conditioning": torch.tensor([[0.25]], device=device),
+        "attention_edge_indices": {"dilated": dilated},
+    }
+    model.eval()
+    with torch.inference_mode():
+        out = model(torch.randn(4, 3, device=device), **kwargs)
+        assert torch.isfinite(out).all()
+
+    # The original exact-two-hop input, not augmented connectivity, is
+    # required for the odd-layer sparse topology.
+    cached_dilated = model._torch_sparse_topology_cache["dilated"]
+    assert cached_dilated[0] is dilated
+    cached_local = model._torch_sparse_topology_cache["local"]
+    assert cached_local[0].shape[1] == local.shape[1] + 4
+
+    model.train()
+    inputs = torch.randn(4, 3, device=device, requires_grad=True)
+    output = model(inputs, **kwargs)
+    output.square().sum().backward()
+    assert inputs.grad is not None
+    assert torch.isfinite(inputs.grad).all()
+
+
 def test_dinat_dit_3d_local_only_factory_metadata() -> None:
     dataset = SyntheticMeshDataset(num_samples=2, spatial_dim=3, seed=17)
     task = EDMDenoisingTask(
