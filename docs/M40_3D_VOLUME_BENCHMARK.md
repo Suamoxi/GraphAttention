@@ -6,6 +6,8 @@ M37 is the 3-D DiNAT-DiT baseline: one-hop NAT alternating with exact-two-hop Di
 
 The scientific metrics and FFT definitions are in [SCIENTIFIC_SPEC.md, sections 23 and 24](SCIENTIFIC_SPEC.md). This document describes the executable benchmark and its true 3-D volume rendering.
 
+For the detailed **physics and exact estimators behind R_LL, R_NN, R_uu, S2, S3, S4 and longitudinal flatness**, see [3D_SPATIAL_STATISTICS_PHYSICS.md](3D_SPATIAL_STATISTICS_PHYSICS.md). This includes the implementation's snapshot normalization, separation conventions, 10-90% bands and limitations of inertial-range scaling laws on the 32^3 grid.
+
 ## Scientific benchmark
 
 - Source fields are conservative variables rho, rhou, rhov, rhow, rhoE.
