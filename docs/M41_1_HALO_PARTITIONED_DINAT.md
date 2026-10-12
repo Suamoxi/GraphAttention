@@ -1,6 +1,8 @@
 # M41.1 — single-GPU layerwise halo DiNAT-DiT inference
 
-Status: implementation and validation infrastructure committed; **GH200 results pending execution**.
+Status: **TARGET_VALIDATED for single-GPU numerical equivalence on GH200**, job `461023`,
+2026-10-12, commit `2c28a89`. Selected unit tests: 47 passed, one optional DGL
+backend test skipped. The full repository-wide test suite was not run in this job.
 Scope: existing M37 `AlternatingDilatedGeometricDiT` checkpoint, single physical graph,
 single GPU, inference only. M42 dataset preparation is out of scope.
 
@@ -192,8 +194,85 @@ If output parity fails, inspect the earliest failing layer in
 `errors.layers`; if connectivity checks fail, inspect edge direction,
 self loops and CSR row counts first. If only the generated output fails,
 inspect `generation_checks` and the Heun trajectory. Record the job log
-and JSON files for review. **No successful GH200 numerical or performance
-validation is asserted by this document.**
+and JSON files for review. The section below records the first **successful**
+full M37 checkpoint validation.
+
+## Target GH200 numerical and performance evidence — 2026-10-12
+
+Source: Calypso Slurm job **`461023`** (provided stdout and stderr logs);
+clean `main` commit `2c28a89bb6504cdf8e42d7ee154ccde6c3756cca`.
+All five JSON reports share the same M37 `best.pt` SHA-256:
+`01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8`.
+The held-out sample is `solut_hit_00007500`, with 35,937 nodes, the original
+209,088 local directed edges and 608,058 exact-two-hop directed edges.
+Other artifact hashes and the full resolved configuration are preserved in
+the per-layout JSON reports. Hardware is NVIDIA GH200 480GB, CUDA 12.8,
+PyTorch `2.7.0a0+7c8ec84dab.nv25.03`, single GPU. All measurements are
+FP32 with TF32 disabled.
+
+The selected Slurm test gate completed **47 passed, 1 skipped**; the skipped
+test concerns optional DGL dependencies (missing `torchdata.datapipes`), not
+M37's `torch_sparse` backend. All five checkpoint reports have both
+`passed=true` and `evidence=TARGET_VALIDATED`. Each reports exact ownership
+coverage, unchanged incoming local/exact-two-hop topology and geometry,
+zero numerical tolerance violations after each of 10 transformer blocks,
+and a passing 50-step Heun comparison. Both paths made exactly 100 model
+evaluations with bitwise-identical initial Gaussian noise, seed 5678.
+
+Largest observed absolute error across **all** tested layouts:
+
+- Individual transformer layer: `5.9425831e-5`
+- Single forward output: `5.3167343e-5`
+- Final Heun-generated field: `1.9073486e-6`
+
+All compared tensor elements satisfy
+`abs(partitioned-reference) <= 2e-4 + 2e-4*abs(reference)`.
+The errors are not zero: this is tolerance-based mathematical equivalence,
+not bitwise identity or a proof of arbitrary-grid accuracy.
+
+Measured medians (five repetitions for each mode and layout):
+
+| Spatial blocks | P | Read-node ratio | Original forward (ms) | Partitioned forward (ms) | Forward overhead | Original Heun (s) | Partitioned Heun (s) | Partitioned peak allocated (GiB) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1×1×1 | 1 | 1.000 | 31.45 | 28.95 | −7.9% | 2.743 | 2.528 | 0.433 |
+| 2×1×1 | 2 | 1.121 | 32.01 | 40.28 | +25.9% | 2.786 | 3.614 | 0.353 |
+| 2×2×1 | 4 | 1.246 | 30.90 | 65.58 | +112.2% | 2.736 | 5.879 | 0.310 |
+| 2×2×2 | 8 | 1.375 | 33.31 | 126.99 | +281.3% | 2.783 | 12.099 | 0.251 |
+| 4×2×2 | 16 | 1.632 | 31.50 | 232.88 | +639.4% | 2.750 | 22.954 | 0.216 |
+
+The unpartitioned reference peak allocated memory is approximately **0.440 GiB**
+in every run. The 16-partition result uses 0.216 GiB peak allocated, a measured
+50.8% reduction in this specific setting. Plan-construction time ranges from
+0.071 to 0.150 seconds and retained plan allocations are approximately
+0.060–0.065 GiB. Allocated CUDA memory is not identical to total device memory
+usage, and this result is not an out-of-core memory bound.
+
+The `1×1×1` plan is faster than the original forward in this experiment,
+plausibly because relative geometry is precomputed and reused. More partitions
+are substantially slower; at `4×2×2`, forward latency is about 7.4 times the
+original despite just 1.63 times total gathered nodewise work. The data are
+consistent with repeated small CUDA kernels, reduced GPU occupancy, Python
+launch overhead and redundant halo-target computation, but this breakdown is
+**not** established without profiler evidence. This is a correctness milestone,
+not a favorable partition-scaling performance result.
+
+Results directory:
+
+```text
+/scratch/coop/theret/GraphAttention_runs/m41_1_halo_partitioned_m37/461023/
+    blocks_1x1x1.json ... blocks_4x2x2.json
+    comparison.csv
+    git_commit.txt
+    gpu_info.csv
+```
+
+**M41.1 scope status:** the single-GPU real-checkpoint equivalence, 50-step
+Heun comparison and specified initial GH200 benchmarks are validated.
+The full repository-wide regression suite was **not** run in this job;
+the `torch_sparse` path and relevant original M37/Flow Matching tests were
+included in the selected gate. Future optimization (owned-query-only
+computation, fewer launches or multi-GPU exchange) belongs to a separate
+milestone; M41.1 alone is not a practical speedup for this 35,937-node mesh.
 
 ## Calypso diagnostic history
 
@@ -208,9 +287,11 @@ establish a faulty partition topology or a passing M37 comparison.
 The follow-up changes keep attention partitioned but compute node-local input
 and output projections globally, disable TF32 explicitly in the CUDA parity
 test, and capture reference-vs-partition errors for each intermediate layer.
-If numerical parity still fails, the test reports comparable GPU scatter
-diagnostics without loosening its tolerance. The actual cause of the GH200
-mismatch remains undetermined until these diagnostics are executed.
+The revised CUDA test and real-checkpoint validation passed on 2026-10-12
+(job `461023`) without changing numerical tolerances. The prior failure's
+individual cause was not isolated because both projection shape and TF32
+settings changed. This does not establish bitwise reproducibility across
+GPU kernels.
 
 For diagnostic data collection **only**, the Slurm script accepts
 `M41_CONTINUE_AFTER_FAILURE=1`; it then attempts each benchmark layout

@@ -199,11 +199,16 @@ Local verification (2026-10-12): **59 passed, 2 skipped** with PyTorch on CPU.
 Skipped: CUDA partition parity and unavailable DGL backend. Benchmark CLI help,
 Python compilation, Ruff and Slurm shell syntax were also checked.
 
-Target checkpoint, CUDA parity and GH200 performance remain **unvalidated until
-the Slurm reports are produced and reviewed**. No speedup or memory reduction is
-claimed by this implementation. A report marks `TARGET_VALIDATED` only when its
-numerical gates pass on a GPU named GH200; inspect all requested layouts before
-accepting the milestone.
+Calypso GH200 **TARGET_VALIDATED** on 2026-10-12 in job `461023` (clean
+`main` commit `2c28a89`): 47 selected tests passed, one optional DGL test was
+skipped; all five requested partition layouts passed real M37 checkpoint,
+per-layer, graph-connectivity and 50-step Heun numerical gates. Peak allocated
+GPU memory decreased with additional partitions, but forward and Heun time
+increased substantially. See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for the
+measured performance table, numerical errors and provenance. This is a
+single-graph / FP32 / GH200 numerical result, not a general guarantee of
+speedup or memory savings on other meshes. A repository-wide pytest run
+remains advisable.
 
 ## Validation criteria
 
@@ -227,7 +232,8 @@ accepting the milestone.
   consistent noise across partitions.
 - There is no partitioned backward or gradient exchange yet. Do not use this
   executor for training.
-- Complete 50-step Heun validation is implemented, but target-checkpoint
-  equivalence remains subject to the Calypso results.
+- Complete 50-step Heun generation was target-validated on the trained M37
+  checkpoint in Calypso job `461023`: identical initial Gaussian noise,
+  100 network evaluations per path, and no numerical tolerance violations.
 - M41.2 should avoid redundant halo MLP work and study more memory-efficient
   storage and execution. M41.3 can add multi-GPU communication after parity.

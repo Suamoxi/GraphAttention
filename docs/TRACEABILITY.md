@@ -510,5 +510,14 @@ to attention equations, training objectives or sampling conventions.
 `tests/unit/test_partitioned_dinat.py` covers directed/empty neighborhoods, CSR,
 inference caches, spatial-bin compaction and actual 50-step Heun parity.
 `scripts/benchmark_m41_partitioned.py` gates the pretrained checkpoint at every
-layer and after generation; target evidence is pending. See
-`docs/M41_1_HALO_PARTITIONING.md` for tolerances and memory/timing scope.
+layer and after generation. **TARGET_VALIDATED** on Calypso GH200, 2026-10-12,
+Slurm job `461023`, clean commit `2c28a89`: 47 selected tests passed, one
+optional DGL test skipped; all five 1/2/4/8/16-block layouts passed against
+real M37 `best.pt` at FP32, `atol=rtol=2e-4`, with preserved 209,088 local and
+608,058 exact-two-hop edges, no tolerance violations, and identical initial
+Heun noise / 100 calls. Largest across-layout per-layer/output/Heun absolute
+errors: 5.943e-5 / 5.317e-5 / 1.907e-6. At 16 partitions the median forward
+was 232.88 ms versus 31.50 ms unpartitioned (+639%); peak allocated GPU memory
+was 0.216 GiB versus 0.440 GiB. The full repo suite was not part of this job.
+See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
+`docs/M41_1_HALO_PARTITIONING.md` for the numerical contract.
