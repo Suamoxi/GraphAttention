@@ -141,3 +141,73 @@ def test_full_incoming_edges_and_validation():
             model, torch.randn(n, 5), plan=plan,
             conditioning=torch.tensor([[0.0]]),
         )
+
+
+def test_repeated_heun_evaluations_match():
+    coords, edges = make_graph()
+    n = len(coords)
+    topology = build_attention_edge_indices(
+        edges, n, {"dilated": "exact_two_hop"}
+    )
+    model = make_model(self_mode="local")
+    owners = coordinate_block_partition_ids(coords, blocks=(2, 2, 1))
+    plan = build_dinat_partition_plan(
+        model, coords=coords, edge_index=edges,
+        attention_edge_indices=topology, partition_ids=owners,
+    )
+    torch.manual_seed(43)
+    initial = torch.randn(n, 5)
+
+    def integrate(use_partitions):
+        state = initial.clone()
+        dt = 1.0 / 3
+        for step in range(3):
+            def predict(state_at_time, t):
+                condition = torch.tensor([[1000.0 * t]])
+                if use_partitions:
+                    return forward_partitioned_dinat(
+                        model, state_at_time, plan=plan, conditioning=condition
+                    )
+                return model(
+                    state_at_time, edge_index=edges, coords=coords,
+                    attention_edge_indices=topology, conditioning=condition,
+                )
+            t = step * dt
+            k1 = predict(state, t)
+            k2 = predict(state + dt * k1, t + dt)
+            state = state + (dt / 2) * (k1 + k2)
+        return state
+
+    with torch.no_grad():
+        reference = integrate(False)
+        partitioned = integrate(True)
+    torch.testing.assert_close(partitioned, reference, rtol=3e-5, atol=3e-5)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
+def test_torch_sparse_gpu_parity():
+    coords, edges = make_graph()
+    n = len(coords)
+    topology = build_attention_edge_indices(
+        edges, n, {"dilated": "exact_two_hop"}
+    )
+    model = make_model(backend="torch_sparse").cuda()
+    coords, edges = coords.cuda(), edges.cuda()
+    topology = {name: value.cuda() for name, value in topology.items()}
+    owners = coordinate_block_partition_ids(coords, blocks=(2, 2, 2))
+    plan = build_dinat_partition_plan(
+        model, coords=coords, edge_index=edges,
+        attention_edge_indices=topology, partition_ids=owners,
+    )
+    torch.manual_seed(44)
+    inputs = torch.randn(n, 5, device="cuda")
+    condition = torch.tensor([[251.0]], device="cuda")
+    with torch.inference_mode():
+        reference = model(
+            inputs, coords=coords, edge_index=edges,
+            attention_edge_indices=topology, conditioning=condition,
+        )
+        partitioned = forward_partitioned_dinat(
+            model, inputs, plan=plan, conditioning=condition
+        )
+    torch.testing.assert_close(partitioned, reference, atol=2e-4, rtol=2e-4)
