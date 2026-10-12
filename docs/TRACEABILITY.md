@@ -608,3 +608,40 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   Design, conditions and benchmark instructions:
   `docs/M41_3_HOST_STREAMED_DINAT.md`.
 
+### Standalone global Physics-Token DiT — Transolver-style learned states (pilot pending)
+
+- Purpose: test *global learned physical-state tokens* as a new, independent
+  Flow Matching architecture before considering any hybrid with DiNAT-DiT.
+  This is **not** an M37/M41 variant; existing model weights and M42/dnstoles
+  remain unchanged. Source: Transolver (Wu et al., ICML 2024,
+  arXiv:2402.02366), irregular-mesh Physics-Attention.
+- Model: `src/graph_attention/models/physics_token_dit.py` defines
+  `PhysicsTokenMultiheadAttention` and
+  `PhysicsTokenDiTGraphTransformer`. Each head learns soft assignments
+  of physical nodes to `num_tokens` (default 64), pools globally
+  weighted state tokens, applies attention among tokens, and deslices
+  back to each original node. No graph edges in attention.
+- Fair controlled initialization: matched existing Full DiT
+  non-attention backbone tensors under seed 42, independent
+  physics-token attention initialization seed 43. Preserve existing
+  AdaLN-Zero, Flow Matching time scale, physical standardization and
+  original training/generation runners. Hydra configuration:
+  `configs/model/physics_token_dit.yaml`.
+- Optional `token_chunk_size` recomputes slice assignments in
+  two passes for smaller GPU attention workspace; **not** whole-graph
+  GPU hidden-state streaming. Chunked/un-chunked forward and gradient
+  parity are in `tests/unit/test_physics_token_dit.py`, plus graph
+  isolation, permutation equivariance, formula, 50-step Heun smoke,
+  invalid configs and factory seeding.
+- GH200 pilot: `scripts/slurm/physics_token_dit_3d_train.slurm`,
+  identical 3-D HIT task/data/split, `H128/L10/4 heads`, global
+  tokens 64, 10 epochs by default, microbatch 4 and accumulation 4
+  (nominal batch 16). A 10-epoch pilot is **not** a convergence-matched
+  quality comparison against 1000-epoch M37/M38; extend to 1000
+  epochs after tests and memory validation.
+- Later checkpoint generation (unchanged 50-step Heun):
+  `scripts/slurm/physics_token_dit_3d_generate.slurm`.
+- Status: **IMPLEMENTED BUT NOT YET TESTED ON CALYPSO**; no GH200
+  runtime, loss, spectra or `257^3` scaling claims.
+  Full design/limitations: `docs/PHYSICS_TOKEN_DIT_BASELINE.md`.
+

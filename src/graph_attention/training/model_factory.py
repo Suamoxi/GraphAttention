@@ -13,6 +13,7 @@ from graph_attention.models import (
     FullDiTGraphTransformer,
     GeometricSparseGraphTransformer,
     LocalDiTGraphTransformer,
+    PhysicsTokenDiTGraphTransformer,
     SparseGraphTransformer,
 )
 from graph_attention.tasks import NodeRegressionBatch
@@ -23,6 +24,7 @@ _M12_DILATED_TARGET = "graph_attention.models.AlternatingDilatedGeometricSparseG
 _FULL_DIT_TARGET = "graph_attention.models.full_dit.FullDiTGraphTransformer"
 _LOCAL_DIT_TARGET = "graph_attention.models.local_dit.LocalDiTGraphTransformer"
 _DINAT_DIT_TARGET = "graph_attention.models.dinat_dit.AlternatingDilatedGeometricDiT"
+_PHYSICS_TOKEN_DIT_TARGET = "graph_attention.models.physics_token_dit.PhysicsTokenDiTGraphTransformer"
 
 
 def instantiate_controlled_model(
@@ -34,7 +36,7 @@ def instantiate_controlled_model(
     """Instantiate a controlled model family with reproducible matched initialization."""
 
     target = str(model_cfg.get("_target_", ""))
-    if target in {_FULL_DIT_TARGET, _LOCAL_DIT_TARGET, _DINAT_DIT_TARGET}:
+    if target in {_FULL_DIT_TARGET, _LOCAL_DIT_TARGET, _DINAT_DIT_TARGET, _PHYSICS_TOKEN_DIT_TARGET}:
         return _instantiate_matched_dit(model_cfg, probe, seed=seed)
     if target not in {_M8_TARGET, _M9_TARGET, _M12_DILATED_TARGET}:
         raise TypeError("unsupported controlled graph model class")
@@ -138,6 +140,8 @@ def _instantiate_matched_dit(
         attention_mode = "full"
     elif target == _LOCAL_DIT_TARGET:
         attention_mode = "local_one_hop_plus_self"
+    elif target == _PHYSICS_TOKEN_DIT_TARGET:
+        attention_mode = "transolver_dynamic_global_physics_tokens"
     else:
         include_self_attention = bool(model_cfg.get("include_self_attention", False))
         include_local_self_attention = bool(
@@ -154,7 +158,11 @@ def _instantiate_matched_dit(
         "policy": (
             "matched_full_local_dit_initialization"
             if target in {_FULL_DIT_TARGET, _LOCAL_DIT_TARGET}
-            else "matched_full_dit_shared_parameters_plus_dinat_geometry"
+            else (
+                "matched_dit_backbone_independent_physics_attention"
+                if target == _PHYSICS_TOKEN_DIT_TARGET
+                else "matched_full_dit_shared_parameters_plus_dinat_geometry"
+            )
         ),
         "shared_parameter_seed": seed,
         "architecture_family": "dit_adaln_zero",
@@ -173,6 +181,44 @@ def _instantiate_matched_dit(
                 f"missing={incompatible.missing_keys}, unexpected={incompatible.unexpected_keys}"
             )
         return local, metadata
+
+    if target == _PHYSICS_TOKEN_DIT_TARGET:
+        # Control all shared DiT weights (input, coordinates, time/adaLN,
+        # MLP and final projection) against Full DiT. New attention weights
+        # have their own independent seed: they do not share qkv semantics.
+        physics_seed = seed + 1
+        torch.manual_seed(physics_seed)
+        physics_model = PhysicsTokenDiTGraphTransformer(
+            **common,
+            num_tokens=int(model_cfg.get("num_tokens", 64)),
+            slice_temperature=float(model_cfg.get("slice_temperature", 0.5)),
+            token_chunk_size=model_cfg.get("token_chunk_size", None),
+        )
+        shared = {
+            key: tensor
+            for key, tensor in full_reference.state_dict().items()
+            if ".attention." not in key
+        }
+        incompatible = physics_model.load_state_dict(shared, strict=False)
+        expected_attention = sorted(
+            key for key in physics_model.state_dict() if ".attention." in key
+        )
+        if incompatible.unexpected_keys or sorted(incompatible.missing_keys) != expected_attention:
+            raise RuntimeError(
+                "Physics-token DiT shared backbone initialization mismatch: "
+                f"missing={incompatible.missing_keys}, "
+                f"unexpected={incompatible.unexpected_keys}"
+            )
+        metadata.update(
+            {
+                "physics_token_attention_seed": physics_seed,
+                "num_tokens": physics_model.num_tokens,
+                "slice_temperature": float(model_cfg.get("slice_temperature", 0.5)),
+                "token_chunk_size": physics_model.token_chunk_size,
+                "matched_backbone_key_count": len(shared),
+            }
+        )
+        return physics_model, metadata
 
     geometry_seed = seed + 1
     sparse_attention_backend = str(

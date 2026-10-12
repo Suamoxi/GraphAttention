@@ -9,6 +9,7 @@ from .geometric_transformer import (
     GeometricSparseMultiheadAttention,
 )
 from .local_dit import LocalDiTGraphTransformer, LocalDiTMultiheadAttention
+from .physics_token_dit import PhysicsTokenDiTGraphTransformer, PhysicsTokenMultiheadAttention
 from .sparse_transformer import SparseGraphTransformer, SparseMultiheadAttention
 
 __all__ = [
@@ -22,6 +23,8 @@ __all__ = [
     "LocalDiTGraphTransformer",
     "LocalDiTMultiheadAttention",
     "NodeLinearBaseline",
+    "PhysicsTokenDiTGraphTransformer",
+    "PhysicsTokenMultiheadAttention",
     "SparseGraphTransformer",
     "SparseMultiheadAttention",
 ]
