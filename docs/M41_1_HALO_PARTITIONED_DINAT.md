@@ -42,6 +42,16 @@ gradients disabled. This allows a plan built inside an enclosing
 coordinates, connectivity, attention self-loop policy, dtype or device change.
 The benchmark sampler adapter rejects switching graph tensor objects.
 
+**Numerical fidelity of node-local stages:** input projection, coordinate
+projection and final output projection run once on the complete resident
+global tensor, exactly as in the original M37 forward. Only the alternating
+DiT attention blocks are evaluated by owned/halo partition. This removes
+avoidable differences from partition-dependent CUDA GEMM shapes in these
+strictly nodewise projections, without altering M37 model weights, attention
+topology or condition embeddings. Partition-local DiT blocks can still select
+different CUDA kernels than the full-graph call; equivalence is therefore
+evaluated numerically, not assumed bitwise.
+
 **Known overhead:** for now, each owned-plus-halo gather evaluates the full DiT
 block and discards results at halo query nodes, including unnecessary QKV,
 normalization and MLP work. Further, the same read set contains both one-hop
@@ -182,4 +192,29 @@ If output parity fails, inspect the earliest failing layer in
 `errors.layers`; if connectivity checks fail, inspect edge direction,
 self loops and CSR row counts first. If only the generated output fails,
 inspect `generation_checks` and the Heun trajectory. Record the job log
-and JSON files for review. **No GH200 results are asserted by this document.**
+and JSON files for review. **No successful GH200 numerical or performance
+validation is asserted by this document.**
+
+## Calypso diagnostic history
+
+The first supplied Calypso logs (`m41_1_halo_460988.out` and `.err`)
+showed that the job executed **older commit `8f9ae949`**, not the later
+M41.1 validation commit `1fe30cef`. A GH200 GPU ran 13 pytest items: 12
+passed and `test_torch_sparse_gpu_parity` failed. The largest output error
+was `3.805309534e-4` (2/90 tensor elements outside `atol=rtol=2e-4`).
+The checkpoint benchmark never ran in that job. This alone does not
+establish a faulty partition topology or a passing M37 comparison.
+
+The follow-up changes keep attention partitioned but compute node-local input
+and output projections globally, disable TF32 explicitly in the CUDA parity
+test, and capture reference-vs-partition errors for each intermediate layer.
+If numerical parity still fails, the test reports comparable GPU scatter
+diagnostics without loosening its tolerance. The actual cause of the GH200
+mismatch remains undetermined until these diagnostics are executed.
+
+For diagnostic data collection **only**, the Slurm script accepts
+`M41_CONTINUE_AFTER_FAILURE=1`; it then attempts each benchmark layout
+even if tests or an earlier layout fail. Crucially, the job **still exits
+nonzero** if any validation failed, and individual JSON reports retain
+their `passed` status. By default, failures continue to stop the job.
+

@@ -205,33 +205,116 @@ def test_repeated_heun_evaluations_match():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 def test_torch_sparse_gpu_parity():
-    coords, edges = make_graph()
-    n = len(coords)
-    topology = build_attention_edge_indices(edges, n, {"dilated": "exact_two_hop"})
-    model = make_model(backend="torch_sparse").cuda()
-    coords, edges = coords.cuda(), edges.cuda()
-    topology = {name: value.cuda() for name, value in topology.items()}
-    owners = coordinate_block_partition_ids(coords, blocks=(2, 2, 2))
-    plan = build_dinat_partition_plan(
-        model,
-        coords=coords,
-        edge_index=edges,
-        attention_edge_indices=topology,
-        partition_ids=owners,
-    )
-    torch.manual_seed(44)
-    inputs = torch.randn(n, 5, device="cuda")
-    condition = torch.tensor([[251.0]], device="cuda")
-    with torch.inference_mode():
-        reference = model(
-            inputs,
+    # Match the actual M37 benchmark's explicit FP32/TF32 policy.
+    old_matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+    old_cudnn_tf32 = torch.backends.cudnn.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    try:
+        coords, edges = make_graph()
+        n = len(coords)
+        topology = build_attention_edge_indices(edges, n, {"dilated": "exact_two_hop"})
+        model = make_model(backend="torch_sparse").cuda()
+        coords, edges = coords.cuda(), edges.cuda()
+        topology = {name: value.cuda() for name, value in topology.items()}
+        owners = coordinate_block_partition_ids(coords, blocks=(2, 2, 2))
+        plan = build_dinat_partition_plan(
+            model,
             coords=coords,
             edge_index=edges,
             attention_edge_indices=topology,
-            conditioning=condition,
+            partition_ids=owners,
         )
-        partitioned = forward_partitioned_dinat(model, inputs, plan=plan, conditioning=condition)
-    torch.testing.assert_close(partitioned, reference, atol=2e-4, rtol=2e-4)
+        torch.manual_seed(44)
+        inputs = torch.randn(n, 5, device="cuda")
+        condition = torch.tensor([[251.0]], device="cuda")
+        reference_layers = []
+        hooks = [
+            block.register_forward_hook(
+                lambda _module, _args, output: reference_layers.append(output.detach().clone())
+            )
+            for block in model.blocks
+        ]
+        try:
+            with torch.inference_mode():
+                reference = model(
+                    inputs,
+                    coords=coords,
+                    edge_index=edges,
+                    attention_edge_indices=topology,
+                    conditioning=condition,
+                )
+        finally:
+            for hook in hooks:
+                hook.remove()
+        with torch.inference_mode():
+            partitioned, partition_layers = forward_partitioned_dinat(
+                model, inputs, plan=plan, conditioning=condition,
+                return_layer_states=True,
+            )
+        assert len(reference_layers) == len(partition_layers) == len(model.blocks)
+        try:
+            torch.testing.assert_close(partitioned, reference, atol=2e-4, rtol=2e-4)
+            for actual, expected in zip(partition_layers, reference_layers, strict=True):
+                torch.testing.assert_close(actual, expected, atol=2e-4, rtol=2e-4)
+        except AssertionError as exc:
+            # Diagnostics run only on numerical failure. Compare the scatter
+            # backend using precisely the same model weights and graph.
+            def metrics(actual, expected):
+                delta = (actual - expected).abs()
+                threshold = 2e-4 + 2e-4 * expected.abs()
+                return (
+                    f"max_abs={delta.max().item():.6e}, "
+                    f"rms={delta.square().mean().sqrt().item():.6e}, "
+                    f"violations={(delta > threshold).sum().item()}/{delta.numel()}"
+                )
+
+            details = [
+                f"torch_sparse output: {metrics(partitioned, reference)}",
+                *[
+                    f"torch_sparse layer {i}: {metrics(actual, expected)}"
+                    for i, (actual, expected) in enumerate(
+                        zip(partition_layers, reference_layers, strict=True)
+                    )
+                ],
+            ]
+            try:
+                scatter = make_model(backend="scatter").cuda()
+                scatter.load_state_dict(model.state_dict(), strict=True)
+                scatter_plan = build_dinat_partition_plan(
+                    scatter,
+                    coords=coords,
+                    edge_index=edges,
+                    attention_edge_indices=topology,
+                    partition_ids=owners,
+                )
+                with torch.inference_mode():
+                    global_scatter = scatter(
+                        inputs,
+                        coords=coords,
+                        edge_index=edges,
+                        attention_edge_indices=topology,
+                        conditioning=condition,
+                    )
+                    partition_scatter = forward_partitioned_dinat(
+                        scatter, inputs, plan=scatter_plan, conditioning=condition,
+                    )
+                details.append(
+                    f"scatter partition vs scatter global: "
+                    f"{metrics(partition_scatter, global_scatter)}"
+                )
+                details.append(
+                    f"torch_sparse global vs scatter global: "
+                    f"{metrics(reference, global_scatter)}"
+                )
+            except Exception as diagnostic_error:
+                details.append(f"scatter diagnostics failed: {diagnostic_error}")
+            raise AssertionError(
+                f"{exc}\\nGH200 CUDA parity diagnostics:\\n" + "\\n".join(details)
+            ) from exc
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = old_matmul_tf32
+        torch.backends.cudnn.allow_tf32 = old_cudnn_tf32
 
 
 def test_partitioning_is_invariant_to_mesh_node_numbering():
@@ -498,3 +581,44 @@ def test_sampler_adapter_rejects_reused_plan_on_different_graph():
             torch.randn(n, model.in_channels),
             **{**kwargs, "attention_edge_indices": {"dilated": topology["dilated"].clone()}},
         )
+
+
+def test_nodewise_input_and_output_projection_are_global():
+    # M41.1 only partitions attention layers, not node-local projections.
+    # Global projection shapes avoid an extra CUDA kernel source of rounding.
+    coords, edges = make_graph(4, 3, 2)
+    n = len(coords)
+    topologies = build_attention_edge_indices(edges, n, {"dilated": "exact_two_hop"})
+    model = make_model()
+    owners = coordinate_block_partition_ids(coords, blocks=(2, 2, 2))
+    plan = build_dinat_partition_plan(
+        model,
+        coords=coords,
+        edge_index=edges,
+        attention_edge_indices=topologies,
+        partition_ids=owners,
+    )
+    calls = {"input": [], "coordinate": [], "final": []}
+    hooks = [
+        model.input_projection.register_forward_pre_hook(
+            lambda _module, args: calls["input"].append(len(args[0]))
+        ),
+        model.coordinate_projection.register_forward_pre_hook(
+            lambda _module, args: calls["coordinate"].append(len(args[0]))
+        ),
+        model.final_layer.register_forward_pre_hook(
+            lambda _module, args: calls["final"].append(len(args[0]))
+        ),
+    ]
+    try:
+        with torch.no_grad():
+            forward_partitioned_dinat(
+                model,
+                torch.randn(n, model.in_channels),
+                plan=plan,
+                conditioning=torch.tensor([[50.0]]),
+            )
+    finally:
+        for hook in hooks:
+            hook.remove()
+    assert calls == {"input": [n], "coordinate": [n], "final": [n]}

@@ -232,15 +232,11 @@ def forward_partitioned_dinat(
         raise ValueError("input count or device differs from the partition plan")
 
     condition = model._condition_embedding(inputs, batch_index=None, conditioning=conditioning)
-    hidden = torch.empty(
-        (plan.num_nodes, model.hidden_dim), device=inputs.device, dtype=inputs.dtype
-    )
-    for part in plan.partitions:
-        core = part.owned_global
-        projected = model.input_projection(
-            inputs.index_select(0, core)
-        ) + model.coordinate_projection(plan.model_coords.index_select(0, core))
-        hidden.index_copy_(0, core, projected)
+    # These projections are strictly nodewise. Evaluate them once over the
+    # complete resident graph, as unpartitioned M37 does. Per-partition GEMM
+    # shapes can select different CUDA kernels and introduce avoidable rounding
+    # differences before the first attention layer.
+    hidden = model.input_projection(inputs) + model.coordinate_projection(plan.model_coords)
 
     states: list[torch.Tensor] = []
     for layer_index, block in enumerate(model.blocks):
@@ -271,14 +267,7 @@ def forward_partitioned_dinat(
         if return_layer_states:
             states.append(hidden.clone())
 
-    result = torch.empty(
-        (plan.num_nodes, model.out_channels), device=inputs.device, dtype=inputs.dtype
-    )
-    for part in plan.partitions:
-        core = part.owned_global
-        result.index_copy_(
-            0,
-            core,
-            model.final_layer(hidden.index_select(0, core), condition, batch_index=None),
-        )
+    # The final projection is also nodewise. Match M37's original whole-graph
+    # call without changing any partitioned attention or ownership semantics.
+    result = model.final_layer(hidden, condition, batch_index=None)
     return (result, states) if return_layer_states else result
