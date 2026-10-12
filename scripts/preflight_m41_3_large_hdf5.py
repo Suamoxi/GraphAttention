@@ -25,7 +25,7 @@ DEFAULT_CONNECTIVITY = "Connectivity/hex->node"
 
 
 def _gib(num_bytes: int | float) -> float:
-    return round(float(num_bytes) / 1024**3, 4)
+    return round(float(num_bytes) / 1024**3, 8)
 
 
 def _metadata(handle: h5py.File, name: str) -> dict:
