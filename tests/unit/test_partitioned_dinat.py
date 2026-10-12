@@ -211,3 +211,39 @@ def test_torch_sparse_gpu_parity():
             model, inputs, plan=plan, conditioning=condition
         )
     torch.testing.assert_close(partitioned, reference, atol=2e-4, rtol=2e-4)
+
+
+def test_partitioning_is_invariant_to_mesh_node_numbering():
+    coords, edges = make_graph(4, 3, 2)
+    n = len(coords)
+    torch.manual_seed(45)
+    permutation = torch.randperm(n)
+    inverse = torch.empty_like(permutation)
+    inverse[permutation] = torch.arange(n)
+    shuffled_coords = coords[permutation]
+    shuffled_edges = inverse[edges]
+    topology = build_attention_edge_indices(
+        shuffled_edges, n, {"dilated": "exact_two_hop"}
+    )
+    model = make_model()
+    owners = coordinate_block_partition_ids(
+        shuffled_coords, blocks=(2, 2, 2)
+    )
+    plan = build_dinat_partition_plan(
+        model, coords=shuffled_coords, edge_index=shuffled_edges,
+        attention_edge_indices=topology, partition_ids=owners,
+    )
+    state = torch.randn(n, 5)
+    condition = torch.tensor([[157.0]])
+    with torch.no_grad():
+        reference = model(
+            state,
+            coords=shuffled_coords,
+            edge_index=shuffled_edges,
+            attention_edge_indices=topology,
+            conditioning=condition,
+        )
+        result = forward_partitioned_dinat(
+            model, state, plan=plan, conditioning=condition
+        )
+    torch.testing.assert_close(result, reference, atol=3e-5, rtol=3e-5)
