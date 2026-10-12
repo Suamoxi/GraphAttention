@@ -39,4 +39,16 @@ def test_dinat_dit_config_matches_full_dit_base_settings() -> None:
     dinat_values = dict(dinat.model)
     full_values.pop("_target_")
     dinat_values.pop("_target_")
-    assert full_values == dinat_values
+
+    # DiNAT has its own sparse-attention and self-loop settings. They are
+    # not part of the shared Full-DiT backbone and cannot be expected in
+    # the Full-DiT configuration.
+    assert set(dinat_values) - set(full_values) == {
+        "sparse_attention_backend",
+        "include_self_attention",
+    }
+    assert {key: dinat_values[key] for key in full_values} == full_values
+    assert dinat_values["sparse_attention_backend"] in {
+        "scatter", "torch_sparse", "dgl",
+    }
+    assert dinat_values["include_self_attention"] is False

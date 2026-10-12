@@ -114,7 +114,6 @@ def test_tokens_are_global_and_permutation_equivariant():
 
 @pytest.mark.parametrize("batch_index", [
     [0, 0, 0, 1, 1, 1],
-    [0, 1, 0, 1, 0, 1],
     [0, 0, 0, 0, 1, 1],
 ])
 def test_packed_physical_samples_never_share_global_tokens(batch_index):
@@ -142,6 +141,19 @@ def test_packed_physical_samples_never_share_global_tokens(batch_index):
     torch.testing.assert_close(
         together[owners == 0], changed[owners == 0], atol=1e-6, rtol=1e-5
     )
+
+
+def test_noncontiguous_graph_ids_are_rejected_by_common_dit_contract():
+    # Packed samples in GraphAttention are contiguous node runs. The
+    # architecture deliberately inherits this contract from all DiTs.
+    torch.manual_seed(504)
+    attention = _attention().eval()
+    with pytest.raises(ValueError, match="contiguous by graph"):
+        attention(
+            torch.randn(6, 24),
+            edge_index=torch.empty((2, 0), dtype=torch.long),
+            batch_index=torch.tensor([0, 1, 0, 1, 0, 1], dtype=torch.long),
+        )
 
 
 @pytest.mark.parametrize("bad", [

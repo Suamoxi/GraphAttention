@@ -653,7 +653,18 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   epochs after tests and memory validation.
 - Later checkpoint generation (unchanged 50-step Heun):
   `scripts/slurm/physics_token_dit_3d_generate.slurm`.
-- Status: **IMPLEMENTED BUT NOT YET TESTED ON CALYPSO**; no GH200
-  runtime, loss, spectra or `257^3` scaling claims.
+- Pilot run 461354 (GH200, 2026-10-12; repository
+  `79a525faba21f0c1ef6980080af98abebf5fbcfa`) stopped at its
+  pretraining pytest gate: **30 passed, 2 failed**. The physics-token
+  batch-isolation test incorrectly supplied noncontiguous graph labels,
+  whereas the shared DiT contract requires contiguous packed graphs.
+  A pre-existing config regression test incorrectly demanded exact
+  equality with M37's attention-specific YAML options
+  `include_self_attention` and `sparse_attention_backend`.
+  Both **tests only** were corrected, and the unsupported interleaved
+  layout now has a rejection regression test. Neither architecture
+  nor model weights changed. GH200 retest and training remain pending.
+- Status: **PILOT DID NOT REACH TRAINING**. No GH200 training curves,
+  loss, spectra or `257^3` scaling claims.
   Full design/limitations: `docs/PHYSICS_TOKEN_DIT_BASELINE.md`.
 
