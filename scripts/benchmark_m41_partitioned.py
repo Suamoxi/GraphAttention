@@ -25,6 +25,10 @@ from graph_attention.models.partitioned_dinat import (
     build_dinat_partition_plan,
     forward_partitioned_dinat,
 )
+from graph_attention.models.owned_query_dinat import (
+    build_owned_query_plan,
+    forward_owned_query_dinat,
+)
 from graph_attention.tasks import FlowMatchingTask
 from graph_attention.training.data_pipeline import (
     GraphTaskCollator,
@@ -91,10 +95,11 @@ def _errors(actual, reference, *, atol, rtol):
 class _PartitionedModel(torch.nn.Module):
     """Benchmark-only adapter; reuse the task's actual sampler without rewriting it."""
 
-    def __init__(self, model, plan, *, reference_batch=None):
+    def __init__(self, model, plan, *, reference_batch=None, executor="layerwise_full"):
         super().__init__()
         self.model, self.plan = model, plan
         self.reference_batch = reference_batch
+        self.executor = executor
 
     def forward(self, inputs, *, conditioning, **kwargs):
         # The plan represents one immutable physical graph. Refuse a sampler
@@ -110,12 +115,12 @@ class _PartitionedModel(torch.nn.Module):
                 is not self.reference_batch.attention_edge_indices["dilated"]
             ):
                 raise ValueError("partition plan cannot be used with a different dilated topology")
-        return forward_partitioned_dinat(
-            self.model,
-            inputs,
-            plan=self.plan,
-            conditioning=conditioning,
+        run = (
+            forward_owned_query_dinat
+            if self.executor == "owned_query"
+            else forward_partitioned_dinat
         )
+        return run(self.model, inputs, plan=self.plan, conditioning=conditioning)
 
 
 def _sha256(path):
@@ -150,6 +155,11 @@ def main():
     parser.add_argument("--run-dir", required=True)
     parser.add_argument("--checkpoint", default="best.pt")
     parser.add_argument("--blocks", nargs=3, type=int, default=(2, 2, 2))
+    parser.add_argument(
+        "--executor", choices=("layerwise_full", "owned_query"),
+        default="layerwise_full",
+        help="M41.1 reference or M41.2 owned-query inference",
+    )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--output", required=True)
@@ -228,13 +238,14 @@ def main():
             attention_edge_indices=problem.attention_edge_indices,
         )
 
+    executor_fn = (
+        forward_owned_query_dinat
+        if args.executor == "owned_query"
+        else forward_partitioned_dinat
+    )
+
     def partitioned():
-        return forward_partitioned_dinat(
-            model,
-            inputs,
-            plan=plan,
-            conditioning=condition,
-        )
+        return executor_fn(model, inputs, plan=plan, conditioning=condition)
 
     # Capture untimed reference states on CPU; never retain them during timing.
     snapshots = []
@@ -284,7 +295,12 @@ def main():
 
     plan_start = time.perf_counter()
     owners = coordinate_block_partition_ids(problem.coords, blocks=args.blocks)
-    plan = build_dinat_partition_plan(
+    plan_builder = (
+        build_owned_query_plan
+        if args.executor == "owned_query"
+        else build_dinat_partition_plan
+    )
+    plan = plan_builder(
         model,
         coords=problem.coords,
         edge_index=problem.edge_index,
@@ -293,6 +309,7 @@ def main():
     )
     torch.cuda.synchronize(device)
     plan_seconds = time.perf_counter() - plan_start
+    partitions = plan.base.partitions if args.executor == "owned_query" else plan.partitions
     plan_persistent_allocated_gib = (
         torch.cuda.memory_allocated(device) - before_plan
     ) / 1024**3
@@ -308,7 +325,7 @@ def main():
             num_nodes=len(inputs),
         )
         preserved = 0
-        for part in plan.partitions:
+        for part in partitions:
             attention = getattr(part, name)
             reconstructed = part.read_global[attention.edge_index]
             expected = effective[:, owners[effective[1]] == part.partition_id]
@@ -335,15 +352,33 @@ def main():
                         csr.transpose_col_indices, csr.transpose_order,
                     )
                 ), "cached CSR metadata must not be inference tensors"
+            if args.executor == "owned_query":
+                rectangle = getattr(plan.partitions[part.partition_id], name)
+                expected_rows = torch.searchsorted(
+                    part.owned_local, attention.edge_index[1]
+                )[rectangle.edge_order]
+                assert rectangle.pattern.shape == (
+                    len(part.owned_global), len(part.read_global)
+                ), "rectangular CSR shape mismatch"
+                assert torch.equal(rectangle.row_indices, expected_rows)
+                assert torch.equal(
+                    rectangle.col_indices,
+                    attention.edge_index[0, rectangle.edge_order],
+                )
+                assert torch.equal(
+                    rectangle.pattern.crow_indices().diff(),
+                    torch.bincount(expected_rows, minlength=len(part.owned_global)),
+                ), "rectangular CSR row mismatch"
+                assert not rectangle.pattern.crow_indices().is_inference()
             preserved += reconstructed.shape[1]
         topology_checks.append(
             {"topology": name, "edges": preserved, "passed": preserved == effective.shape[1]}
         )
-    owned = torch.cat([part.owned_global for part in plan.partitions])
+    owned = torch.cat([part.owned_global for part in partitions])
     assert torch.equal(owned.sort().values, torch.arange(len(inputs), device=device))
 
     with torch.inference_mode():
-        changed, layers = forward_partitioned_dinat(
+        changed, layers = executor_fn(
             model,
             inputs,
             plan=plan,
@@ -358,7 +393,9 @@ def main():
             ],
         }
         del changed, layers
-        adapter = _PartitionedModel(model, plan, reference_batch=scaled).eval()
+        adapter = _PartitionedModel(
+            model, plan, reference_batch=scaled, executor=args.executor
+        ).eval()
         generated, partitioned_nfe, partitioned_noise = _generate_with_trace(
             adapter, generate
         )
@@ -391,7 +428,12 @@ def main():
         *topology_checks, generation_checks,
     ]
     payload = {
-        "benchmark": "m41_1_single_gpu_halo_v2",
+        "benchmark": (
+            "m41_2_owned_query_halo_v1"
+            if args.executor == "owned_query"
+            else "m41_1_single_gpu_halo_v2"
+        ),
+        "executor": args.executor,
         "passed": all(check["passed"] for check in checks),
         "evidence": "TARGET_VALIDATED"
         if all(c["passed"] for c in checks) and "GH200" in torch.cuda.get_device_name(device)
@@ -414,7 +456,7 @@ def main():
         "num_nodes": len(inputs),
         "backend": model.sparse_attention_backend,
         "blocks": args.blocks,
-        "num_partitions": len(plan.partitions),
+        "num_partitions": len(partitions),
         "plan_build_seconds": plan_seconds,
         "plan_persistent_allocated_gib": plan_persistent_allocated_gib,
         "released_reference_cache_gib": released_reference_cache_gib,
@@ -427,9 +469,9 @@ def main():
                 "local_edges": p.local.edge_index.shape[1],
                 "dilated_edges": p.dilated.edge_index.shape[1],
             }
-            for p in plan.partitions
+            for p in partitions
         ],
-        "nodewise_work_ratio": sum(len(p.read_global) for p in plan.partitions) / len(inputs),
+        "nodewise_work_ratio": sum(len(p.read_global) for p in partitions) / len(inputs),
         "topology_checks": topology_checks,
         "generation_checks": generation_checks,
         "errors": errors,
@@ -457,7 +499,9 @@ def main():
     output.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n")
     print(json.dumps(payload, indent=2, allow_nan=False))
     if not payload["passed"]:
-        raise SystemExit("M41.1 numerical gate failed; inspect saved per-layer/Heun errors")
+        raise SystemExit(
+            "Partitioned inference numerical gate failed; inspect saved per-layer/Heun errors"
+        )
 
 
 if __name__ == "__main__":

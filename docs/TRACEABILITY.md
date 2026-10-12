@@ -521,3 +521,33 @@ was 232.88 ms versus 31.50 ms unpartitioned (+639%); peak allocated GPU memory
 was 0.216 GiB versus 0.440 GiB. The full repo suite was not part of this job.
 See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
 `docs/M41_1_HALO_PARTITIONING.md` for the numerical contract.
+
+### M41.2 owned-query single-GPU halo optimization (validation pending)
+
+- Scientific contract: retain M37's original global local and exact-two-hop
+  source/target edges and per-target softmax. Each layer computes nodewise
+  normalization, QKV, attention output projection and MLP exactly once over
+  the global resident graph; only the sparse aggregation operates on owner
+  query nodes with full read/halo key/value neighborhoods.
+- Design: original M41.1 ownership plan is retained, while a rectangular
+  `|owned| x |owned+halo|` CSR pattern replaces the unused square cached
+  topology. No M37 training, checkpoint, objective or sampler modifications.
+- Implementation: `src/graph_attention/models/owned_query_dinat.py`;
+  opt-in `--executor owned_query` in
+  `scripts/benchmark_m41_partitioned.py`. The default remains
+  `layerwise_full` for validated M41.1.
+- Tests: `tests/unit/test_owned_query_dinat.py` covers forward and
+  intermediate-layer equivalence, all self-loop modes, directed/empty
+  rows, inference-cache tensors, immutable weights, CUDA CSR and 50-step
+  Heun. Global nodewise modules are checked for exactly one execution
+  per layer. `tests/unit/test_m41_2_summary.py` checks A/B pairing.
+- Experiment: `scripts/slurm/m41_2_owned_query_m37.slurm` compares both
+  executors, each against the original M37 checkpoint, on matched held-out
+  35,937-node graphs and 1/2/4/8/16 spatial partitions. Output includes
+  per-layer/Heun errors and paired runtime/peak-memory CSV.
+- Current evidence: **IMPLEMENTED, NOT GH200-VALIDATED**. Performance
+  gains and memory cost are unknown until the paired Slurm run. The
+  validated M41.1 reference stays at commit `2c28a89` and documented job
+  `461023` for numerical baseline. Full design and usage:
+  `docs/M41_2_OWNED_QUERY_ATTENTION.md`.
+
