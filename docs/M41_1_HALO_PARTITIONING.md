@@ -107,13 +107,17 @@ with torch.inference_mode():
     )
 ```
 
-The plan must be prepared before entering `torch.inference_mode()` to keep
-the cached CSR structures compatible with the existing backend contract.
+The builder disables inference mode internally and owns its coordinate snapshot.
+Plans can be built inside `torch.inference_mode()` and reused outside it. Treat
+all plan tensors as immutable. Rebuild after changes to geometry, edges, model
+self-loop policy, device or dtype; dtype mismatch is rejected explicitly.
+Empty spatial bins are removed while retaining deterministic spatial ordering.
 
-M41.1 does **not** yet replace the default `FlowMatchingTask.sample_standardized`
-model invocation. The original Heun sampler is untouched; the new executor is
-first verified separately. Wiring the executor as a selectable full-generation
-backend is a subsequent integration step once equivalence is demonstrated.
+The benchmark uses a small model-call adapter to pass partitioned execution to
+**the unchanged `FlowMatchingTask.sample_standardized` implementation**. Both
+paths receive the same physical batch, sampling key and seed. Thus the complete
+50-step Heun comparison uses identical Gaussian noise, conditioning and 100
+model evaluations. This is a validation adapter, not a new production sampler.
 
 ## Run on Calypso
 
@@ -123,24 +127,83 @@ git pull --rebase
 sbatch scripts/slurm/m41_1_halo_partitioned_m37.slurm
 ```
 
-Optional settings:
+Default layouts are `1x1x1`, `2x1x1`, `2x2x1`, `2x2x2`, `4x2x2`.
+Each runs in a separate process with the same first held-out sample and weights.
+The Slurm job first runs partition, original DiNAT and Flow Matching task tests.
+It stops on any failed test or numerical gate. To select layouts/repetitions:
 
 ```bash
-M41_BLOCKS="2 2 2" CHECKPOINT=best.pt \
+M41_BLOCKS="1 1 1;2 2 2" M41_REPEATS=3 CHECKPOINT=best.pt \
     sbatch scripts/slurm/m41_1_halo_partitioned_m37.slurm
 ```
 
-Output:
+Reports are stored in
+`GraphAttention_runs/m41_1_halo_partitioned_m37/<job-id>/blocks_XxYxZ.json`.
+Set `OUT` to override the directory. The dataset, frozen standardizers, split
+manifest and model settings come from the saved training run. Checkpoint loading
+is strict. The benchmark requires the saved `torch_sparse` backend, one physical
+graph and 35,937 nodes (override `--expected-nodes` only for an intentional mesh
+change). The input probe uses the task's deterministic validation construction.
 
-```text
-/scratch/coop/theret/GraphAttention_runs/m41_1_halo_partitioned_m37/
-    m41_1_benchmark.json
+Each JSON records:
+
+- Output, every transformer-layer, and complete Heun errors: maximum absolute,
+  RMS, relative L2, number of tolerance violations and finite-value checks.
+- Exact incoming-edge order/multiplicity checks for both effective topologies,
+  including configured self loops, and exact node-ownership coverage.
+- Individual synchronized wall-clock timings, mean, median and sample standard
+  deviation for forward and complete generation; two forward warmups by default.
+- Baseline, peak allocated, incremental peak allocated and peak reserved GiB.
+- Plan construction time, owned/halo nodes and edge counts per partition,
+  nodewise work ratio `sum(read_nodes)/N`, and forward overhead percentage.
+- Git SHA/dirty state, runtime/GPU information, precision policy, all arguments,
+  resolved training config, split manifest, sample ID and SHA256 hashes of the
+  checkpoint, config, manifest and frozen standardizers.
+
+The numerical gate uses elementwise `abs(new-ref) <= 2e-4 + 2e-4*abs(ref)`.
+This is a provisional FP32 acceptance tolerance, allowing different GEMM shapes
+and reduction roundoff; it is not a measured error bound. TF32 and autocast are
+disabled. The same gate applies to each layer and the accumulated Heun result.
+Do not loosen it automatically after a failure: inspect the first divergent
+layer and absolute/RMS errors first. Near zero, the absolute term controls the
+comparison. NaN/Inf is always a failure. Failed numerical comparisons are saved
+before nonzero exit; setup/runtime failures instead appear in Slurm logs.
+
+Timings exclude loading, graph construction, transfers and plan construction;
+partition timings include gathers, duplicated halo nodewise work and writes.
+The original path runs before allocating a partition plan. Partition memory
+includes the resident plan **and the reference model's warmed CSR cache**, so
+this is a conservative comparison, not an isolated minimum-memory claim.
+CPU diagnostic snapshots are outside timings and do not contribute to GPU peak
+memory. Reserved memory is allocator-dependent; compare allocated memory first.
+No isolated kernel attribution is claimed by the aggregate overhead percentage.
+A speedup below one means partitioning is slower; that is acceptable for M41.1.
+
+## Local validation and evidence status
+
+```bash
+PYTHONPATH=src OMP_NUM_THREADS=1 python -m pytest \
+    tests/unit/test_partitioned_dinat.py tests/unit/test_dinat_dit.py \
+    tests/unit/test_dinat_self_attention_ablation.py \
+    tests/unit/test_sparse_transformer.py tests/unit/test_flow_matching_task.py -q
 ```
 
-The script enforces forward agreement (atol/rtol `2e-4`) and records
-absolute/RMS differences, mean forward runtime and peak allocated GPU memory.
-The timing excludes data loading, partition-plan construction, graph topology
-construction and host-to-device transfer.
+The new tests cover asymmetric directed edges (which detect edge reversal),
+existing self loops, isolated targets/empty CSR rows, all self policies,
+inference-created plans, empty spatial bins, dtype mismatch and the actual
+50-step sampler with identical first states and exactly 100 calls per path.
+CPU `torch_sparse` tests exercise the same native PyTorch CSR code; they do not
+substitute for the CUDA test or pretrained checkpoint validation.
+
+Local verification (2026-10-12): **59 passed, 2 skipped** with PyTorch on CPU.
+Skipped: CUDA partition parity and unavailable DGL backend. Benchmark CLI help,
+Python compilation, Ruff and Slurm shell syntax were also checked.
+
+Target checkpoint, CUDA parity and GH200 performance remain **unvalidated until
+the Slurm reports are produced and reviewed**. No speedup or memory reduction is
+claimed by this implementation. A report marks `TARGET_VALIDATED` only when its
+numerical gates pass on a GPU named GH200; inspect all requested layouts before
+accepting the milestone.
 
 ## Validation criteria
 
@@ -164,7 +227,7 @@ construction and host-to-device transfer.
   consistent noise across partitions.
 - There is no partitioned backward or gradient exchange yet. Do not use this
   executor for training.
-- A full 50-step Heun generation must ultimately be routed through the
-  partition executor, with sampling-key and initial-noise parity tests.
+- Complete 50-step Heun validation is implemented, but target-checkpoint
+  equivalence remains subject to the Calypso results.
 - M41.2 should avoid redundant halo MLP work and study more memory-efficient
   storage and execution. M41.3 can add multi-GPU communication after parity.

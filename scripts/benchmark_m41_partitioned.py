@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import json
+import statistics
 import time
 from pathlib import Path
 
 import torch
 from hydra.utils import instantiate
 from omegaconf import OmegaConf
+from scripts.benchmark_dit_efficiency import _load_standardizers
 
 from graph_attention.geometry.partitioning import coordinate_block_partition_ids
 from graph_attention.models.partitioned_dinat import (
@@ -23,10 +26,13 @@ from graph_attention.models.partitioned_dinat import (
 )
 from graph_attention.tasks import FlowMatchingTask
 from graph_attention.training.data_pipeline import (
-    GraphTaskCollator, dataset_sample_ids, make_loader, task_batch_to_device,
+    GraphTaskCollator,
+    dataset_sample_ids,
+    make_loader,
+    task_batch_to_device,
 )
 from graph_attention.training.model_factory import instantiate_controlled_model
-from scripts.benchmark_dit_efficiency import _load_standardizers
+from graph_attention.utils.provenance import collect_runtime_provenance
 
 
 def _time_forward(callback, device, *, warmup: int, repeats: int):
@@ -35,6 +41,7 @@ def _time_forward(callback, device, *, warmup: int, repeats: int):
             callback()
         torch.cuda.synchronize(device)
         gc.collect()
+        torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device)
         baseline = torch.cuda.memory_allocated(device)
         readings = []
@@ -47,10 +54,56 @@ def _time_forward(callback, device, *, warmup: int, repeats: int):
         peak = torch.cuda.max_memory_allocated(device)
     return {
         "times_ms": readings,
-        "mean_ms": sum(readings) / len(readings),
+        "mean_ms": statistics.mean(readings),
+        "median_ms": statistics.median(readings),
+        "stdev_ms": statistics.stdev(readings) if len(readings) > 1 else 0.0,
+        "baseline_allocated_gib": baseline / 1024**3,
+        "peak_reserved_gib": torch.cuda.max_memory_reserved(device) / 1024**3,
         "peak_allocated_gib": peak / 1024**3,
         "incremental_peak_allocated_gib": (peak - baseline) / 1024**3,
     }
+
+
+def _errors(actual, reference, *, atol, rtol):
+    actual, reference = actual.detach().double().cpu(), reference.detach().double().cpu()
+    finite = bool(torch.isfinite(actual).all() and torch.isfinite(reference).all())
+    delta = (actual - reference).abs()
+    threshold = atol + rtol * reference.abs()
+    return {
+        "passed": finite and bool((delta <= threshold).all()),
+        "finite": finite,
+        "max_abs": float(delta.max()) if finite else None,
+        "rms": float(delta.square().mean().sqrt()) if finite else None,
+        "relative_l2": float(
+            torch.linalg.vector_norm(delta) / torch.linalg.vector_norm(reference).clamp_min(1e-30)
+        )
+        if finite
+        else None,
+        "violations": int((delta > threshold).sum()) if finite else actual.numel(),
+        "atol": atol,
+        "rtol": rtol,
+    }
+
+
+class _PartitionedModel(torch.nn.Module):
+    """Benchmark-only adapter; reuse the task's actual sampler without rewriting it."""
+
+    def __init__(self, model, plan):
+        super().__init__()
+        self.model, self.plan = model, plan
+
+    def forward(self, inputs, *, conditioning, **kwargs):
+        return forward_partitioned_dinat(
+            self.model,
+            inputs,
+            plan=self.plan,
+            conditioning=conditioning,
+        )
+
+
+def _sha256(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def main():
@@ -61,20 +114,29 @@ def main():
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--sampling-seed", type=int, default=5678)
+    parser.add_argument("--sampling-steps", type=int, default=50)
+    parser.add_argument("--atol", type=float, default=2e-4)
+    parser.add_argument("--rtol", type=float, default=2e-4)
+    parser.add_argument("--expected-nodes", type=int, default=35937)
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
         raise RuntimeError("M41.1 GH200 benchmark requires CUDA")
     if args.repeats < 1 or args.warmup < 0:
         raise ValueError("repeats must be positive and warmup nonnegative")
+    if args.sampling_steps < 1 or args.atol <= 0 or args.rtol < 0:
+        raise ValueError("invalid sampling steps or tolerances")
+    # Explicit FP32 reference policy; no autocast or TF32 approximation.
+    torch.set_float32_matmul_precision("highest")
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
     device = torch.device("cuda")
     run_dir = Path(args.run_dir).expanduser().resolve()
     config = OmegaConf.load(run_dir / "resolved_config.yaml")
     manifest = json.loads((run_dir / "dataset_split_manifest.json").read_text())
     standardizers = _load_standardizers(run_dir / "standardizers.pt")
-    checkpoint = torch.load(
-        run_dir / args.checkpoint, map_location="cpu", weights_only=True
-    )
+    checkpoint = torch.load(run_dir / args.checkpoint, map_location="cpu", weights_only=True)
 
     dataset = instantiate(config.data)
     task = instantiate(config.task)
@@ -86,8 +148,13 @@ def main():
         raise ValueError("held-out test sample missing from configured dataset")
     collator = GraphTaskCollator(task, dataset.field_catalog, config.geometry)
     loader = make_loader(
-        dataset, [ids.index(test_id)], batch_size=1, num_workers=0,
-        collator=collator, shuffle=False, seed=int(config.seed),
+        dataset,
+        [ids.index(test_id)],
+        batch_size=1,
+        num_workers=0,
+        collator=collator,
+        shuffle=False,
+        seed=int(config.seed),
     )
     host = next(iter(loader))
     standardizers = standardizers.to(device=device, dtype=torch.float32)
@@ -96,19 +163,17 @@ def main():
     problem = task.make_validation_problem(scaled)
     probe = task.make_model_probe(problem)
     model, _ = instantiate_controlled_model(
-        config.model, probe, seed=int(config.seed),
+        config.model,
+        probe,
+        seed=int(config.seed),
     )
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
     model = model.to(device=device, dtype=torch.float32).eval()
 
-    owners = coordinate_block_partition_ids(problem.coords, blocks=args.blocks)
-    plan = build_dinat_partition_plan(
-        model,
-        coords=problem.coords,
-        edge_index=problem.edge_index,
-        attention_edge_indices=problem.attention_edge_indices,
-        partition_ids=owners,
-    )
+    if scaled.num_graphs != 1 or len(problem.inputs) != args.expected_nodes:
+        raise ValueError("benchmark requires one graph with --expected-nodes nodes")
+    if model.sparse_attention_backend != "torch_sparse":
+        raise ValueError("M37 target validation requires saved torch_sparse backend")
     inputs = problem.inputs
     condition = problem.conditioning
 
@@ -124,44 +189,178 @@ def main():
 
     def partitioned():
         return forward_partitioned_dinat(
-            model, inputs, plan=plan, conditioning=condition,
+            model,
+            inputs,
+            plan=plan,
+            conditioning=condition,
+        )
+
+    # Capture untimed reference states on CPU; never retain them during timing.
+    snapshots = []
+    hooks = [
+        block.register_forward_hook(
+            lambda _m, _a, output: snapshots.append(output.detach().cpu().clone())
+        )
+        for block in model.blocks
+    ]
+    try:
+        with torch.inference_mode():
+            reference = original().cpu()
+    finally:
+        for hook in hooks:
+            hook.remove()
+    baseline = _time_forward(original, device, warmup=args.warmup, repeats=args.repeats)
+
+    def generate(which):
+        return task.sample_standardized(
+            which,
+            scaled,
+            steps=args.sampling_steps,
+            solver="heun",
+            sampling_seed=args.sampling_seed,
+            sampling_keys=(test_id,),
         )
 
     with torch.inference_mode():
-        reference = original()
-        changed = partitioned()
-        difference = changed - reference
-        max_abs = float(difference.abs().max().item())
-        rms = float(difference.square().mean().sqrt().item())
-        torch.testing.assert_close(changed, reference, atol=2e-4, rtol=2e-4)
+        generated_reference = generate(model).cpu()
+    generation_baseline = _time_forward(
+        lambda: generate(model),
+        device,
+        warmup=0,
+        repeats=args.repeats,
+    )
 
-    baseline = _time_forward(original, device, warmup=args.warmup, repeats=args.repeats)
+    # Baseline measurement above has no resident partition plan.
+    torch.cuda.synchronize(device)
+    plan_start = time.perf_counter()
+    owners = coordinate_block_partition_ids(problem.coords, blocks=args.blocks)
+    plan = build_dinat_partition_plan(
+        model,
+        coords=problem.coords,
+        edge_index=problem.edge_index,
+        attention_edge_indices=problem.attention_edge_indices,
+        partition_ids=owners,
+    )
+    torch.cuda.synchronize(device)
+    plan_seconds = time.perf_counter() - plan_start
+    topology_checks = []
+    # Exact edge order/multiplicity, not just set equality; self loops included.
+    for name, edges in (
+        ("local", problem.edge_index),
+        ("dilated", problem.attention_edge_indices["dilated"]),
+    ):
+        effective = model._attention_edges_with_optional_self(
+            name,
+            edges,
+            num_nodes=len(inputs),
+        )
+        preserved = 0
+        for part in plan.partitions:
+            reconstructed = part.read_global[getattr(part, name).edge_index]
+            expected = effective[:, owners[effective[1]] == part.partition_id]
+            assert torch.equal(reconstructed, expected), "partition edge mismatch"
+            preserved += reconstructed.shape[1]
+        topology_checks.append(
+            {"topology": name, "edges": preserved, "passed": preserved == effective.shape[1]}
+        )
+    owned = torch.cat([part.owned_global for part in plan.partitions])
+    assert torch.equal(owned.sort().values, torch.arange(len(inputs), device=device))
+
+    with torch.inference_mode():
+        changed, layers = forward_partitioned_dinat(
+            model,
+            inputs,
+            plan=plan,
+            conditioning=condition,
+            return_layer_states=True,
+        )
+        errors = {
+            "output": _errors(changed, reference, atol=args.atol, rtol=args.rtol),
+            "layers": [
+                _errors(new, old, atol=args.atol, rtol=args.rtol)
+                for new, old in zip(layers, snapshots, strict=True)
+            ],
+        }
+        del changed, layers
+        adapter = _PartitionedModel(model, plan).eval()
+        generated = generate(adapter)
+        errors["heun"] = _errors(
+            generated,
+            generated_reference,
+            atol=args.atol,
+            rtol=args.rtol,
+        )
+        del generated
     result = _time_forward(partitioned, device, warmup=args.warmup, repeats=args.repeats)
+    generation_result = _time_forward(
+        lambda: generate(adapter),
+        device,
+        warmup=0,
+        repeats=args.repeats,
+    )
+    checks = [errors["output"], errors["heun"], *errors["layers"], *topology_checks]
     payload = {
-        "benchmark": "m41_1_single_gpu_halo_v1",
-        "run_dir": str(run_dir),
-        "checkpoint": args.checkpoint,
-        "gpu": torch.cuda.get_device_name(device),
-        "blocks": list(args.blocks),
-        "num_nodes": int(inputs.shape[0]),
+        "benchmark": "m41_1_single_gpu_halo_v2",
+        "passed": all(check["passed"] for check in checks),
+        "evidence": "TARGET_VALIDATED"
+        if all(c["passed"] for c in checks) and "GH200" in torch.cuda.get_device_name(device)
+        else "LOCAL_BENCHMARK",
+        "provenance": collect_runtime_provenance(),
+        "arguments": vars(args),
+        "precision": "float32; no autocast; TF32 disabled",
+        "resolved_config": OmegaConf.to_container(config, resolve=True),
+        "dataset_split_manifest": manifest,
+        "artifact_sha256": {
+            name: _sha256(run_dir / name)
+            for name in (
+                args.checkpoint,
+                "standardizers.pt",
+                "resolved_config.yaml",
+                "dataset_split_manifest.json",
+            )
+        },
+        "sample_id": test_id,
+        "num_nodes": len(inputs),
+        "backend": model.sparse_attention_backend,
+        "blocks": args.blocks,
         "num_partitions": len(plan.partitions),
-        "num_halo_nodes_total": sum(p.num_halo_nodes for p in plan.partitions),
-        "owned_nodes_total": sum(int(p.owned_global.numel()) for p in plan.partitions),
-        "local_edges": int(problem.edge_index.shape[1]),
-        "dilated_edges": int(problem.attention_edge_indices["dilated"].shape[1]),
-        "max_abs_error": max_abs,
-        "rms_error": rms,
-        "atol": 2e-4,
-        "rtol": 2e-4,
-        "timing_scope": "forward_only_excludes_plan_build_data_and_transfers",
+        "plan_build_seconds": plan_seconds,
+        "partitions": [
+            {
+                "id": p.partition_id,
+                "owned": len(p.owned_global),
+                "halo": p.num_halo_nodes,
+                "read": len(p.read_global),
+                "local_edges": p.local.edge_index.shape[1],
+                "dilated_edges": p.dilated.edge_index.shape[1],
+            }
+            for p in plan.partitions
+        ],
+        "nodewise_work_ratio": sum(len(p.read_global) for p in plan.partitions) / len(inputs),
+        "topology_checks": topology_checks,
+        "errors": errors,
+        "timing_scope": "warm forward; excludes data/transfers/plan; includes gathers and writes",
+        "memory_scope": (
+            "baseline before plan; partitioned includes plan and warm reference CSR cache"
+        ),
         "original": baseline,
         "partitioned": result,
+        "forward_overhead_percent": 100 * (result["mean_ms"] / baseline["mean_ms"] - 1),
         "speedup_original_over_partitioned": baseline["mean_ms"] / result["mean_ms"],
+        "generation": {
+            "steps": args.sampling_steps,
+            "nfe": 2 * args.sampling_steps,
+            "seed": args.sampling_seed,
+            "original": generation_baseline,
+            "partitioned": generation_result,
+        },
     }
     output = Path(args.output).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(payload, indent=2) + "\n")
-    print(json.dumps(payload, indent=2))
+    output.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n")
+    print(json.dumps(payload, indent=2, allow_nan=False))
+    if not payload["passed"]:
+        raise SystemExit("M41.1 numerical gate failed; inspect saved per-layer/Heun errors")
 
 
 if __name__ == "__main__":

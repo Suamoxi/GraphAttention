@@ -21,8 +21,8 @@ from graph_attention.geometry.partitioning import validate_partition_ids
 from .dinat_dit import AlternatingDilatedGeometricDiT
 from .dit_common import _normalize_coordinates_by_graph
 from .sparse_transformer import (
-    _TorchSparseTopology,
     _build_torch_sparse_topology,
+    _TorchSparseTopology,
     _validate_edge_index,
     _validate_model_inputs,
 )
@@ -80,19 +80,17 @@ def _attention_for_owned_targets(
     # edge[1] = query/target. Every owned target keeps ALL incoming edges.
     selected = global_edges[:, owner[global_edges[1]] == partition_id]
     local_edges = torch.searchsorted(read_global, selected).contiguous()
-    displacement = edge_relative_displacement(
-        coords.index_select(0, read_global), local_edges
-    )
+    displacement = edge_relative_displacement(coords.index_select(0, read_global), local_edges)
     topology = None
     if backend == "torch_sparse" and local_edges.shape[1]:
         # Cached CSR must be normal tensors, not inference-only tensors.
         with torch.inference_mode(False):
-            topology = _build_torch_sparse_topology(
-                local_edges, num_nodes=int(read_global.numel())
-            )
+            topology = _build_torch_sparse_topology(local_edges, num_nodes=int(read_global.numel()))
     return PartitionAttention(local_edges, displacement, topology)
 
 
+@torch.inference_mode(False)
+@torch.no_grad()
 def build_dinat_partition_plan(
     model: AlternatingDilatedGeometricDiT,
     *,
@@ -104,7 +102,9 @@ def build_dinat_partition_plan(
     """Build one partition plan from the ORIGINAL global graph and coordinates.
 
     The graph must be a single physical sample. Construct this plan once,
-    outside torch.inference_mode(), and reuse it for every model evaluation.
+    and reuse it for every model evaluation. Cached tensors are normal tensors
+    even if called inside torch.inference_mode(). Treat the plan as immutable;
+    rebuild it after changing geometry, topology, device or dtype.
     """
     if not isinstance(model, AlternatingDilatedGeometricDiT):
         raise TypeError("M41.1 supports AlternatingDilatedGeometricDiT only")
@@ -118,6 +118,9 @@ def build_dinat_partition_plan(
     ):
         raise ValueError("coords and model parameters must share device/dtype")
 
+    # Own the coordinate storage; an external in-place edit must not leave
+    # cached displacements inconsistent with coordinate embeddings.
+    coords = coords.detach().clone()
     num_nodes = int(coords.shape[0])
     _validate_edge_index(edge_index, num_nodes=num_nodes, device=coords.device)
     if "dilated" not in attention_edge_indices:
@@ -149,9 +152,7 @@ def build_dinat_partition_plan(
         owned_global = torch.nonzero(owner == partition_id).flatten()
         onehop_keys = local_edges[0, owner[local_edges[1]] == partition_id]
         twohop_keys = dilated_edges[0, owner[dilated_edges[1]] == partition_id]
-        read_global = torch.unique(
-            torch.cat((owned_global, onehop_keys, twohop_keys)), sorted=True
-        )
+        read_global = torch.unique(torch.cat((owned_global, onehop_keys, twohop_keys)), sorted=True)
         owned_local = torch.searchsorted(read_global, owned_global)
         partitions.append(
             OwnedHaloPartition(
@@ -225,21 +226,20 @@ def forward_partitioned_dinat(
         expected_channels=model.in_channels,
         parameter=model.input_projection.weight,
     )
+    if inputs.dtype != plan.model_coords.dtype:
+        raise ValueError("input dtype differs from the partition plan; rebuild it")
     if inputs.shape[0] != plan.num_nodes or inputs.device != plan.device:
         raise ValueError("input count or device differs from the partition plan")
 
-    condition = model._condition_embedding(
-        inputs, batch_index=None, conditioning=conditioning
-    )
+    condition = model._condition_embedding(inputs, batch_index=None, conditioning=conditioning)
     hidden = torch.empty(
         (plan.num_nodes, model.hidden_dim), device=inputs.device, dtype=inputs.dtype
     )
     for part in plan.partitions:
         core = part.owned_global
-        projected = (
-            model.input_projection(inputs.index_select(0, core))
-            + model.coordinate_projection(plan.model_coords.index_select(0, core))
-        )
+        projected = model.input_projection(
+            inputs.index_select(0, core)
+        ) + model.coordinate_projection(plan.model_coords.index_select(0, core))
         hidden.index_copy_(0, core, projected)
 
     states: list[torch.Tensor] = []
@@ -279,8 +279,6 @@ def forward_partitioned_dinat(
         result.index_copy_(
             0,
             core,
-            model.final_layer(
-                hidden.index_select(0, core), condition, batch_index=None
-            ),
+            model.final_layer(hidden.index_select(0, core), condition, batch_index=None),
         )
     return (result, states) if return_layer_states else result

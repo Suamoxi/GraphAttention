@@ -502,3 +502,13 @@ When several ideas are combined, record the genealogy explicitly.
 - Launch: scripts/slurm/m37_m40_3d_local_self_quality_compare.slurm.
 - Documentation: docs/M40_3D_VOLUME_BENCHMARK.md.
 - Status: implemented in main; target-cluster rendering/test execution pending.
+
+### M41.1 validation hardening
+
+Software-only executor/cache hardening and benchmark instrumentation; no change
+to attention equations, training objectives or sampling conventions.
+`tests/unit/test_partitioned_dinat.py` covers directed/empty neighborhoods, CSR,
+inference caches, spatial-bin compaction and actual 50-step Heun parity.
+`scripts/benchmark_m41_partitioned.py` gates the pretrained checkpoint at every
+layer and after generation; target evidence is pending. See
+`docs/M41_1_HALO_PARTITIONING.md` for tolerances and memory/timing scope.

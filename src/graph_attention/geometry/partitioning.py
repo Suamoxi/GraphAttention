@@ -22,9 +22,8 @@ def coordinate_block_partition_ids(
     if coords.shape[0] == 0 or not bool(torch.isfinite(coords).all()):
         raise ValueError("coords must be nonempty and finite")
     counts = tuple(blocks)
-    if (
-        len(counts) != coords.shape[1]
-        or any(not isinstance(k, int) or isinstance(k, bool) or k < 1 for k in counts)
+    if len(counts) != coords.shape[1] or any(
+        not isinstance(k, int) or isinstance(k, bool) or k < 1 for k in counts
     ):
         raise ValueError("blocks must contain one positive integer per spatial axis")
 
@@ -34,13 +33,13 @@ def coordinate_block_partition_ids(
         raise ValueError("coordinate-block partitioning requires nonzero axis extents")
     num = torch.tensor(counts, device=coords.device, dtype=coords.dtype)
     bins = torch.floor(((coords - lo) / span) * num).long()
-    bins = torch.minimum(
-        bins, torch.tensor(counts, dtype=torch.long, device=coords.device) - 1
-    )
+    bins = torch.minimum(bins, torch.tensor(counts, dtype=torch.long, device=coords.device) - 1)
     partition_ids = bins[:, 0]
     for axis in range(1, len(counts)):
         partition_ids = partition_ids * counts[axis] + bins[:, axis]
-    return partition_ids
+    # Unstructured meshes can leave spatial bins empty. Compact occupied bins
+    # in spatial order so the ownership validator never sees missing labels.
+    return torch.unique(partition_ids, sorted=True, return_inverse=True)[1]
 
 
 def validate_partition_ids(partition_ids: torch.Tensor, num_nodes: int) -> int:
