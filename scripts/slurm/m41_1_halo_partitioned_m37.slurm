@@ -20,17 +20,25 @@ LAYOUTS=${M41_BLOCKS:-"1 1 1;2 1 1;2 2 1;2 2 2;4 2 2"}
 
 cd "$REPO"
 mkdir -p "$OUT"
+for artifact in "$CHECKPOINT" resolved_config.yaml standardizers.pt dataset_split_manifest.json; do
+    test -s "$M37_RUN/$artifact" || {
+        echo "ERROR: missing M37 artifact: $M37_RUN/$artifact" >&2
+        exit 1
+    }
+done
+git rev-parse HEAD > "$OUT/git_commit.txt"
 echo "M41.1 exact single-GPU halo inference"
 echo "Repository commit: $(git rev-parse HEAD)"
 echo "M37 run: $M37_RUN"
 echo "Checkpoint: $CHECKPOINT"
 echo "Partition layouts: $LAYOUTS"
 nvidia-smi
+nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv > "$OUT/gpu_info.csv"
 
 echo "==== Partitioned DiNAT test gate ===="
 singularity exec --nv -B /home -B /scratch "$IMAGE" \
-    "$PYTHON" -m pytest tests/unit/test_partitioned_dinat.py tests/unit/test_dinat_dit.py \
-    tests/unit/test_flow_matching_task.py -q
+    "$PYTHON" -m pytest tests/unit/test_partitioned_dinat.py tests/unit/test_m41_summary.py \
+    tests/unit/test_dinat_dit.py tests/unit/test_flow_matching_task.py -q
 
 echo "Real M37 checkpoint: per-layer / 50-step Heun parity and performance"
 IFS=';' read -ra PARTITION_LAYOUTS <<< "$LAYOUTS"
@@ -40,7 +48,11 @@ for layout in "${PARTITION_LAYOUTS[@]}"; do
         "$PYTHON" -u -m scripts.benchmark_m41_partitioned \
         --run-dir "$M37_RUN" --checkpoint "$CHECKPOINT" \
         --blocks "$BX" "$BY" "$BZ" \
-        --warmup 2 --repeats "${M41_REPEATS:-5}" --sampling-steps 50 \
+        --warmup "${M41_WARMUP:-2}" --repeats "${M41_REPEATS:-5}" --sampling-steps 50 \
         --output "$OUT/blocks_${BX}x${BY}x${BZ}.json"
 done
-echo "M41.1 validation reports: $OUT"
+
+singularity exec -B /home -B /scratch "$IMAGE" \
+    "$PYTHON" -u -m scripts.summarize_m41_partitioned \
+    --input-dir "$OUT"
+echo "M41.1 validation reports and comparison.csv: $OUT"

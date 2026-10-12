@@ -19,6 +19,7 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 from scripts.benchmark_dit_efficiency import _load_standardizers
 
+from graph_attention.geometry import edge_relative_displacement
 from graph_attention.geometry.partitioning import coordinate_block_partition_ids
 from graph_attention.models.partitioned_dinat import (
     build_dinat_partition_plan,
@@ -52,12 +53,14 @@ def _time_forward(callback, device, *, warmup: int, repeats: int):
             torch.cuda.synchronize(device)
             readings.append((time.perf_counter() - start) * 1000)
         peak = torch.cuda.max_memory_allocated(device)
+        allocated_after = torch.cuda.memory_allocated(device)
     return {
         "times_ms": readings,
         "mean_ms": statistics.mean(readings),
         "median_ms": statistics.median(readings),
         "stdev_ms": statistics.stdev(readings) if len(readings) > 1 else 0.0,
         "baseline_allocated_gib": baseline / 1024**3,
+        "allocated_after_gib": allocated_after / 1024**3,
         "peak_reserved_gib": torch.cuda.max_memory_reserved(device) / 1024**3,
         "peak_allocated_gib": peak / 1024**3,
         "incremental_peak_allocated_gib": (peak - baseline) / 1024**3,
@@ -88,11 +91,25 @@ def _errors(actual, reference, *, atol, rtol):
 class _PartitionedModel(torch.nn.Module):
     """Benchmark-only adapter; reuse the task's actual sampler without rewriting it."""
 
-    def __init__(self, model, plan):
+    def __init__(self, model, plan, *, reference_batch=None):
         super().__init__()
         self.model, self.plan = model, plan
+        self.reference_batch = reference_batch
 
     def forward(self, inputs, *, conditioning, **kwargs):
+        # The plan represents one immutable physical graph. Refuse a sampler
+        # call on different geometry/topology rather than silently reusing it.
+        if self.reference_batch is not None:
+            for name in ("coords", "edge_index", "batch_index"):
+                if kwargs.get(name) is not getattr(self.reference_batch, name):
+                    raise ValueError(f"partition plan cannot be used with a different {name}")
+            topologies = kwargs.get("attention_edge_indices")
+            if (
+                topologies is None
+                or topologies.get("dilated")
+                is not self.reference_batch.attention_edge_indices["dilated"]
+            ):
+                raise ValueError("partition plan cannot be used with a different dilated topology")
         return forward_partitioned_dinat(
             self.model,
             inputs,
@@ -104,6 +121,28 @@ class _PartitionedModel(torch.nn.Module):
 def _sha256(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _generate_with_trace(model, generate):
+    """Capture only the first velocity input plus model-evaluation count."""
+    first_inputs = []
+    calls = 0
+
+    def capture(_module, args):
+        nonlocal calls
+        calls += 1
+        if not first_inputs:
+            first_inputs.append(args[0].detach().cpu().clone())
+
+    hook = model.register_forward_pre_hook(capture)
+    try:
+        with torch.inference_mode():
+            sample = generate(model).cpu()
+    finally:
+        hook.remove()
+    if not first_inputs:
+        raise RuntimeError("Heun generation did not evaluate the model")
+    return sample, calls, first_inputs[0]
 
 
 def main():
@@ -137,6 +176,8 @@ def main():
     manifest = json.loads((run_dir / "dataset_split_manifest.json").read_text())
     standardizers = _load_standardizers(run_dir / "standardizers.pt")
     checkpoint = torch.load(run_dir / args.checkpoint, map_location="cpu", weights_only=True)
+    if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
+        raise ValueError("M37 checkpoint must contain model_state_dict")
 
     dataset = instantiate(config.data)
     task = instantiate(config.task)
@@ -221,8 +262,7 @@ def main():
             sampling_keys=(test_id,),
         )
 
-    with torch.inference_mode():
-        generated_reference = generate(model).cpu()
+    generated_reference, original_nfe, original_noise = _generate_with_trace(model, generate)
     generation_baseline = _time_forward(
         lambda: generate(model),
         device,
@@ -230,8 +270,18 @@ def main():
         repeats=args.repeats,
     )
 
-    # Baseline measurement above has no resident partition plan.
+    # Release reference-only global CSR caches before measuring partitioned
+    # memory. Otherwise partitioned peak includes BOTH full-graph and halo CSR.
     torch.cuda.synchronize(device)
+    before_cache_release = torch.cuda.memory_allocated(device)
+    model._torch_sparse_topology_cache.clear()
+    model._self_attention_edge_cache.clear()
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.synchronize(device)
+    before_plan = torch.cuda.memory_allocated(device)
+    released_reference_cache_gib = max(0, before_cache_release - before_plan) / 1024**3
+
     plan_start = time.perf_counter()
     owners = coordinate_block_partition_ids(problem.coords, blocks=args.blocks)
     plan = build_dinat_partition_plan(
@@ -243,6 +293,9 @@ def main():
     )
     torch.cuda.synchronize(device)
     plan_seconds = time.perf_counter() - plan_start
+    plan_persistent_allocated_gib = (
+        torch.cuda.memory_allocated(device) - before_plan
+    ) / 1024**3
     topology_checks = []
     # Exact edge order/multiplicity, not just set equality; self loops included.
     for name, edges in (
@@ -256,9 +309,32 @@ def main():
         )
         preserved = 0
         for part in plan.partitions:
-            reconstructed = part.read_global[getattr(part, name).edge_index]
+            attention = getattr(part, name)
+            reconstructed = part.read_global[attention.edge_index]
             expected = effective[:, owners[effective[1]] == part.partition_id]
             assert torch.equal(reconstructed, expected), "partition edge mismatch"
+            expected_displacement = edge_relative_displacement(problem.coords, expected)
+            assert torch.equal(
+                attention.displacement, expected_displacement
+            ), "edge geometry mismatch"
+            if attention.sparse_topology is not None:
+                csr = attention.sparse_topology
+                assert csr.num_nodes == len(part.read_global)
+                assert torch.equal(csr.row_indices, attention.edge_index[1, csr.edge_order])
+                assert torch.equal(csr.col_indices, attention.edge_index[0, csr.edge_order])
+                assert torch.equal(
+                    csr.crow_indices.diff(),
+                    torch.bincount(attention.edge_index[1], minlength=csr.num_nodes),
+                )
+                assert int(csr.crow_indices[-1]) == attention.edge_index.shape[1]
+                assert all(
+                    not value.is_inference()
+                    for value in (
+                        csr.crow_indices, csr.col_indices, csr.row_indices,
+                        csr.edge_order, csr.transpose_crow_indices,
+                        csr.transpose_col_indices, csr.transpose_order,
+                    )
+                ), "cached CSR metadata must not be inference tensors"
             preserved += reconstructed.shape[1]
         topology_checks.append(
             {"topology": name, "edges": preserved, "passed": preserved == effective.shape[1]}
@@ -282,8 +358,10 @@ def main():
             ],
         }
         del changed, layers
-        adapter = _PartitionedModel(model, plan).eval()
-        generated = generate(adapter)
+        adapter = _PartitionedModel(model, plan, reference_batch=scaled).eval()
+        generated, partitioned_nfe, partitioned_noise = _generate_with_trace(
+            adapter, generate
+        )
         errors["heun"] = _errors(
             generated,
             generated_reference,
@@ -291,6 +369,16 @@ def main():
             rtol=args.rtol,
         )
         del generated
+    generation_checks = {
+        "expected_nfe": 2 * args.sampling_steps,
+        "reference_nfe": original_nfe,
+        "partitioned_nfe": partitioned_nfe,
+        "identical_initial_noise": bool(torch.equal(original_noise, partitioned_noise)),
+        "passed": (
+            original_nfe == partitioned_nfe == 2 * args.sampling_steps
+            and bool(torch.equal(original_noise, partitioned_noise))
+        ),
+    }
     result = _time_forward(partitioned, device, warmup=args.warmup, repeats=args.repeats)
     generation_result = _time_forward(
         lambda: generate(adapter),
@@ -298,7 +386,10 @@ def main():
         warmup=0,
         repeats=args.repeats,
     )
-    checks = [errors["output"], errors["heun"], *errors["layers"], *topology_checks]
+    checks = [
+        errors["output"], errors["heun"], *errors["layers"],
+        *topology_checks, generation_checks,
+    ]
     payload = {
         "benchmark": "m41_1_single_gpu_halo_v2",
         "passed": all(check["passed"] for check in checks),
@@ -325,6 +416,8 @@ def main():
         "blocks": args.blocks,
         "num_partitions": len(plan.partitions),
         "plan_build_seconds": plan_seconds,
+        "plan_persistent_allocated_gib": plan_persistent_allocated_gib,
+        "released_reference_cache_gib": released_reference_cache_gib,
         "partitions": [
             {
                 "id": p.partition_id,
@@ -338,10 +431,14 @@ def main():
         ],
         "nodewise_work_ratio": sum(len(p.read_global) for p in plan.partitions) / len(inputs),
         "topology_checks": topology_checks,
+        "generation_checks": generation_checks,
         "errors": errors,
         "timing_scope": "warm forward; excludes data/transfers/plan; includes gathers and writes",
         "memory_scope": (
-            "baseline before plan; partitioned includes plan and warm reference CSR cache"
+            "each path retains only its own CSR cache; full reference CSR is released "
+            "before plan build. Peak allocated includes model, data, and persistent "
+            "topology; incremental peak excludes resident topology. "
+            "Plan memory is device allocation delta during plan build."
         ),
         "original": baseline,
         "partitioned": result,

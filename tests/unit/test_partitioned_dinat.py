@@ -3,7 +3,7 @@
 import pytest
 import torch
 
-from graph_attention.geometry import build_attention_edge_indices
+from graph_attention.geometry import build_attention_edge_indices, edge_relative_displacement
 from graph_attention.geometry.partitioning import (
     coordinate_block_partition_ids,
     validate_partition_ids,
@@ -289,6 +289,13 @@ def test_directed_empty_rows_and_inference_plan(backend, self_mode):
         )
     assert not plan.model_coords.is_inference()
     for part in plan.partitions:
+        assert not part.owned_global.is_inference()
+        assert not part.read_global.is_inference()
+        assert not part.owned_local.is_inference()
+        assert not part.local.edge_index.is_inference()
+        assert not part.dilated.edge_index.is_inference()
+        assert not part.local.displacement.is_inference()
+        assert not part.dilated.displacement.is_inference()
         for name in ("local", "dilated"):
             attention = getattr(part, name)
             effective = model._attention_edges_with_optional_self(
@@ -303,6 +310,14 @@ def test_directed_empty_rows_and_inference_plan(backend, self_mode):
             if attention.sparse_topology is not None:
                 csr = attention.sparse_topology
                 assert not csr.crow_indices.is_inference()
+                assert all(
+                    not tensor.is_inference()
+                    for tensor in (
+                        csr.crow_indices, csr.col_indices, csr.row_indices,
+                        csr.edge_order, csr.transpose_crow_indices,
+                        csr.transpose_col_indices, csr.transpose_order,
+                    )
+                )
                 assert csr.crow_indices.numel() == len(part.read_global) + 1
                 assert int(csr.crow_indices[-1]) == attention.edge_index.shape[1]
                 assert torch.equal(
@@ -393,3 +408,93 @@ def test_actual_fifty_step_heun_sampler():
     torch.testing.assert_close(actual, reference, atol=3e-5, rtol=3e-5)
     assert _errors(actual, reference, atol=3e-5, rtol=3e-5)["passed"]
     assert not _errors(reference + 1, reference, atol=3e-5, rtol=3e-5)["passed"]
+
+
+def test_global_geometry_and_model_parameters_are_unchanged():
+    coords, edges = make_graph(4, 3, 2)
+    coords = coords * torch.tensor([0.25, 2.0, 4.0]) + torch.tensor([10.0, -5.0, 3.0])
+    n = len(coords)
+    topology = build_attention_edge_indices(edges, n, {"dilated": "exact_two_hop"})
+    model = make_model(self_mode="local")
+    before = {key: value.clone() for key, value in model.state_dict().items()}
+    owner = coordinate_block_partition_ids(coords, blocks=(2, 2, 1))
+    plan = build_dinat_partition_plan(
+        model,
+        coords=coords,
+        edge_index=edges,
+        attention_edge_indices=topology,
+        partition_ids=owner,
+    )
+    low = coords.amin(dim=0, keepdim=True)
+    high = coords.amax(dim=0, keepdim=True)
+    center = 0.5 * (low + high)
+    span = (high - low).amax(dim=1, keepdim=True).clamp_min(
+        model.coordinate_normalization_eps
+    )
+    assert torch.equal(plan.model_coords, (coords - center) / span)
+    assert any(part.num_halo_nodes > 0 for part in plan.partitions)
+    for part in plan.partitions:
+        for attention in (part.local, part.dilated):
+            global_edges = part.read_global[attention.edge_index]
+            assert torch.equal(
+                attention.displacement,
+                edge_relative_displacement(coords, global_edges),
+            )
+    inputs = torch.randn(n, model.in_channels)
+    condition = torch.tensor([[123.0]])
+    with torch.no_grad():
+        baseline = model(
+            inputs,
+            edge_index=edges,
+            coords=coords,
+            batch_index=torch.zeros(n, dtype=torch.long),
+            attention_edge_indices=topology,
+            conditioning=condition,
+        )
+        changed = forward_partitioned_dinat(
+            model, inputs, plan=plan, conditioning=condition
+        )
+    torch.testing.assert_close(changed, baseline, atol=3e-5, rtol=3e-5)
+    for key, value in before.items():
+        assert torch.equal(model.state_dict()[key], value)
+
+
+def test_sampler_adapter_rejects_reused_plan_on_different_graph():
+    from types import SimpleNamespace
+
+    from scripts.benchmark_m41_partitioned import _PartitionedModel
+
+    coords, edges = make_graph()
+    n = len(coords)
+    topology = build_attention_edge_indices(edges, n, {"dilated": "exact_two_hop"})
+    batch_index = torch.zeros(n, dtype=torch.long)
+    model = make_model()
+    plan = build_dinat_partition_plan(
+        model,
+        coords=coords,
+        edge_index=edges,
+        attention_edge_indices=topology,
+        partition_ids=coordinate_block_partition_ids(coords, blocks=(2, 2, 1)),
+    )
+    original = SimpleNamespace(
+        coords=coords, edge_index=edges,
+        attention_edge_indices=topology, batch_index=batch_index,
+    )
+    adapter = _PartitionedModel(model, plan, reference_batch=original).eval()
+    kwargs = dict(
+        conditioning=torch.tensor([[17.0]]),
+        coords=coords,
+        edge_index=edges,
+        batch_index=batch_index,
+        attention_edge_indices=topology,
+    )
+    with torch.no_grad():
+        prediction = adapter(torch.randn(n, model.in_channels), **kwargs)
+    assert prediction.shape == (n, model.out_channels)
+    with pytest.raises(ValueError, match="different edge_index"):
+        adapter(torch.randn(n, model.in_channels), **{**kwargs, "edge_index": edges.clone()})
+    with pytest.raises(ValueError, match="different dilated topology"):
+        adapter(
+            torch.randn(n, model.in_channels),
+            **{**kwargs, "attention_edge_indices": {"dilated": topology["dilated"].clone()}},
+        )
