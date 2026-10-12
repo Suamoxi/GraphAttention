@@ -573,7 +573,7 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   Full evidence and proposed experimental CUDA Graph replay:
   `docs/M41_2_OWNED_QUERY_ATTENTION.md`.
 
-### M41.3 single-GPU CPU-host-streamed layerwise DiNAT (GH200 pending)
+### M41.3 single-GPU CPU-host-streamed layerwise DiNAT (GH200 verified, large mesh pending)
 
 - Purpose: the original M41.1/M41.2 single-GPU partitioned executors
   still retain global transformer hidden states on GPU. M41.3 keeps
@@ -600,13 +600,25 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   using the existing reference M37 checkpoint and 100-evaluation
   Heun run. Strict paired comparison in
   `scripts/summarize_m41_3.py`.
-- Current status: **IMPLEMENTED, NOT YET GH200 VALIDATED**. No
-  runtime/memory/speedup claims for M41.3 or `257^3` mesh.
-  CPU graph plan still requires full original graph topology on
-  host RAM; the GH200 reference-loading benchmark leaves original
-  graph/physical tensors on GPU and is not a large-scale memory test.
-  Design, conditions and benchmark instructions:
-  `docs/M41_3_HOST_STREAMED_DINAT.md`.
+- Current status: **GH200 M37 numerical parity PASSED on 2026-10-12**
+  (job 461341; 5 partition layouts; layer, output, 50-step Heun).
+  P16 forward medians: M41.2 161.96 ms, M41.3 348.08 ms;
+  peak allocated GPU M41.2 0.377 GiB, M41.3 0.119 GiB.
+  P16 output max error 4.07e-5, Heun max error 9.54e-7.
+  The reference benchmark retains its original graph and data on GPU;
+  these allocations do not establish a full `257^3` peak.
+  Large-mesh graph construction and CPU graph-memory scaling remain
+  unvalidated. Evidence:
+  <https://drive.google.com/drive/folders/1u3ASJVKPZ9UQ0ic0QzL9eUvSBqBM4kTa>.
+  Design and benchmark: `docs/M41_3_HOST_STREAMED_DINAT.md`.
+- Large-mesh dataset uploaded in Drive: `Re150/Ma0.3` mesh
+  `mesh.mesh.h5` (1.68 GB) and `solut_hit_00000001.h5` (2.65 GB).
+  Added `scripts/preflight_m41_3_large_hdf5.py`,
+  `tests/unit/test_m41_3_large_hdf5_preflight.py`, and
+  `scripts/slurm/m41_3_257cube_preflight.slurm`: CPU-only HDF5
+  layout, field, index-base and memory preflight, without constructing
+  full global edge or two-hop tensors. End-to-end 257^3 inference
+  is **not yet implemented or validated**.
 
 ### Standalone global Physics-Token DiT — Transolver-style learned states (pilot pending)
 

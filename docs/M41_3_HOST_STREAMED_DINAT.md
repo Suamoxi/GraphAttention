@@ -1,6 +1,6 @@
 # M41.3 — single-GPU, CPU-host-streamed layerwise DiNAT-DiT
 
-**Status: IMPLEMENTED, GH200 CHECKPOINT VALIDATION PENDING.**
+**Status: IMPLEMENTED; M37 numerical parity VALIDATED on GH200 job 461341 at 35,937 nodes. Real 257^3 large-mesh execution remains UNTESTED.**
 
 This is a third, explicitly opt-in inference executor for the original
 trained M37 `AlternatingDilatedGeometricDiT`; it does not change M37,
@@ -80,7 +80,7 @@ Because the per-partition linear operations use different GEMM shapes
 from the original unpartitioned M37, FP32 results may not be bitwise
 identical. The benchmark tests **every layer**, final output and
 50-step Heun under `atol=rtol=2e-4`, and must report **zero elementwise
-violations** to be accepted. This is pending GH200 validation.
+violations** to be accepted. This was validated on GH200 job 461341 (2026-10-12) for all five partition layouts. The original M37 checkpoint is reproduced under the specified tolerances.
 
 ## Implementation
 
@@ -217,3 +217,97 @@ missing reports, and any numerical-gate failure.
 4. Later: pinned async copies/double-buffer prefetch, grouping multiple
    local GPU partitions, geometry cache, CUDA Graph replay, and MPI
    ownership/halo exchanges. These are **not** part of M41.3 v1.
+
+## M41.3 actual GH200 evidence — job 461341, 2026-10-12
+
+Original source: Google Drive
+<https://drive.google.com/drive/folders/1u3ASJVKPZ9UQ0ic0QzL9eUvSBqBM4kTa>.
+Repository commit recorded in the run:
+`6b6324d1138deaba22bf4d9955573eab495d4ec4`.
+All five layouts passed M37 parity for every transformer layer,
+final model output and 50-step/100-NFE Heun generation.
+At tolerance `atol=rtol=2e-4` all were finite and had zero violations.
+
+| Blocks | M41.2 forward median (ms) | M41.3 forward median (ms) | M41.2 peak GPU GiB | M41.3 peak GPU GiB |
+|---|---:|---:|---:|---:|
+| 1x1x1 | 34.81 | 55.98 | 0.485 | 0.345 |
+| 2x1x1 | 44.92 | 75.63 | 0.414 | 0.258 |
+| 2x2x1 | 69.19 | 113.22 | 0.398 | 0.210 |
+| 2x2x2 | 103.24 | 190.02 | 0.383 | 0.154 |
+| 4x2x2 | 161.96 | 348.08 | 0.377 | 0.119 |
+
+For P16: M41.3 uses 0.119 GiB vs 0.377 GiB peak allocated
+(about **68.4% less**), but takes **2.15x longer** for a forward.
+The corresponding Heun medians are 33.446 s vs 12.366 s.
+M41.3's largest layer error (absolute) was 5.86e-5,
+final-output max error 4.07e-5, Heun max error 9.54e-7.
+
+**Important**: the paired script keeps original M37 reference data
+on GPU, so these allocations overestimate a standalone CPU-only
+loading configuration and cannot predict the peak on a 257^3 mesh.
+Only two timed repetitions were used; do not overinterpret small
+cross-run performance differences.
+
+## Actual 257^3 mesh and snapshot — metadata-only next gate
+
+Uploaded to Drive on 2026-10-12:
+
+- Mesh: `Re150/Ma0.3/MESH/mesh.mesh.h5`, about **1.68 GB**
+  (1,678,544,536 bytes). Drive ID:
+  `1DSeN5Lp9NK6iRPleogvq2tyoq8GILika`.
+- Snapshot: `Re150/Ma0.3/SOLUT/solut_hit_00000001.h5`,
+  about **2.65 GB** (2,648,061,484 bytes). Drive ID:
+  `1cg3HmzfyDTh3S2OHdO636BbAeK2Ji1RU`.
+- The mesh's `hip.in` describes 257x257 structured-plane
+  generation and a 256-interval extrusion, consistent with a
+  `257^3` node lattice. This does **not** establish actual HDF5
+  field shapes, vertex ordering, indexing base or periodic connectivity.
+
+Do **not** call the existing GraphTaskCollator or
+`build_streamed_dinat_plan` on this full mesh until graph preparation
+is redesigned or memory-tested. The current
+`hex_connectivity_to_edge_index` materializes 12 candidate undirected
+hex edges per cell, uses `torch.unique` across the entire mesh, and
+`exact_two_hop_edge_index` materializes length-two walks globally.
+Even on a perfectly regular cubic mesh, intermediate memory and
+sorting costs can be enormous. The old M41.3 planner also scans
+global edges once per partition. No actual 257^3 end-to-end inference
+has been attempted.
+
+A new **metadata-only, bounded-memory CPU preflight** is available:
+
+- `scripts/preflight_m41_3_large_hdf5.py`
+- `tests/unit/test_m41_3_large_hdf5_preflight.py`
+- `scripts/slurm/m41_3_257cube_preflight.slurm`
+
+If the earlier Kraken-to-Calypso copy retained the folder layout,
+the anticipated paths are:
+`/archive/coop/theret/HIT_DNS_COMP/Re150/Ma0.3/MESH/mesh.mesh.h5`
+and
+`/archive/coop/theret/HIT_DNS_COMP/Re150/Ma0.3/SOLUT/solut_hit_00000001.h5`.
+The Slurm script uses these as **guesses**, checks both files exist,
+and otherwise fails with instructions for setting `MESH_FILE` and
+`SNAPSHOT_FILE`. It is CPU-only and selects the default Slurm
+partition; supply `sbatch --partition=<cpu partition>` if required.
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+git pull --rebase
+sbatch scripts/slurm/m41_3_257cube_preflight.slurm
+```
+
+The report `preflight.json` records HDF5 path/shape/dtype/chunking,
+node and cell counts, a bounded sample of field/coordinate values,
+connectivity extrema scanned without reading entire arrays into RAM,
+and theoretical GPU/CPU buffer budgets. A successful preflight
+establishes **metadata compatibility only**; it does not validate
+periodic boundaries, geometric ordering, graph topology, trained weights
+or 17-million-node end-to-end memory scaling.
+
+Next implementation gate after seeing this preflight: if the mesh is
+regular, construct per-partition 1-hop/exact-two-hop CSR directly from
+verified Cartesian lattice node IDs and only retain CPU partition
+metadata, rather than materializing global graph paths; otherwise
+implement a general streamed edge-bucketing builder. Then test small
+subdomains against the validated M37 model before attempting 257^3.
+
