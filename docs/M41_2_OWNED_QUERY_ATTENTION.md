@@ -268,3 +268,83 @@ This profiling is an **unvalidated additional instrumentation path**.
 The numerical implementation measured in job `461158` has not
 changed. Further numerical or performance claims require the
 new Calypso profiler run results.
+
+## GH200 CPU/CUDA operator profile — job 461247 (2026-10-12)
+
+Evidence: clean main commit `eb1935f2ca798c3ca48c0301c8bb169c72ead9a0`,
+NVIDIA GH200 480GB, FP32/TF32 disabled, the identical M37 checkpoint and
+35,937-node test graph as job `461158`. Calypso path:
+`/scratch/coop/theret/GraphAttention_runs/m41_2_owned_query_m37/461247/`.
+The job ran 68 selected tests successfully with one optional DGL test
+skipped; both `1x1x1` and `4x2x2` executors passed all checkpoint,
+intermediate-layer, and complete 50-step Heun numerical gates. Unprofiled
+timings used two warmups and **two** timed repeats. Profiling captured one
+additional forward per executor after those timings. No Chrome trace was
+requested.
+
+| Blocks | M37 reference forward (ms) | M41.1 forward (ms) | M41.2 forward (ms) | M41.2/M41.1 speedup | M41.1 Heun (s) | M41.2 Heun (s) |
+|---|---:|---:|---:|---:|---:|---:|
+| 1x1x1 | 42.82 | 44.96 | 41.19 | 1.092x | 2.825 | 2.313 |
+| 4x2x2 | 42.16 | 307.82 | 199.56 | 1.542x | 26.647 | 15.063 |
+
+Both M37 and partitioned forwards were slower than in job `461158`.
+The M37 reference rose from approximately 31 ms to 42 ms. These
+cross-job differences may be hardware frequency or runtime variability;
+this profile alone does not isolate their cause and is **not** evidence of
+a regression caused by the opt-in profiler instrumentation. Within-run
+numerical checks and speedup ratios remain valid.
+
+### Operator counts on a single forward
+
+| Operation | Original M37 | M41.2 1 partition | M41.2 16 partitions |
+|---|---:|---:|---:|
+| `aten::sparse_sampled_addmm` | 40 | 40 | 640 |
+| `aten::scatter_reduce_` | 12 | 10 | 160 |
+| `aten::index_select` | 3 | 20 | 320 |
+| `aten::copy_` | 250 | 241 | 3,841 |
+| `aten::addmm` | 57 | 57 | 207 |
+
+The 640 sampled CSR matrix multiplications correspond to
+`10 layers x 16 partitions x 4 heads`, rather than 40 for the original
+whole-graph M37. The `addmm` difference (207 versus 57) is consistent
+with 150 extra per-partition geometry-MLP evaluations, one for each
+additional partition per layer.
+
+The 16-partition M41.2 profile records, among other PyTorch
+`aten::` operator *self CPU* times: `empty` 19.65 ms (6,512 calls),
+`copy_` 17.79 ms (3,841 calls), `sparse_sampled_addmm` 12.96 ms
+(640 calls), `index` 7.98 ms (640 calls), and `addmm` 6.83 ms
+(207 calls). The sampled-addmm CUDA execution record totals only
+approximately 2.82 ms. Recorded `aten::` self CPU time summed across
+all `aten::` operators is ~135.1 ms for M41.2 and ~197.3 ms for
+M41.1; separately recorded raw CUDA kernel activity sums to ~43.6 ms
+and ~62.8 ms, respectively. **Do not add CPU and CUDA totals**: they are
+overlapping timing domains, and the profiler also changes execution.
+
+These counts and self-times indicate many small dispatched operations,
+temporary allocations, and per-partition sparse launches. They do not
+prove that a particular future fusion or caching implementation will
+produce a speedup. The original whole-graph M37 forward remains much
+faster than either 16-partition implementation on this mesh.
+
+### Next performance experiment (not yet implemented or validated)
+
+Prioritize **opt-in CUDA Graph capture/replay** of the existing
+owned-query executor for a fixed graph and fixed tensor shapes. The
+single-GPU flow-matching Heun solver invokes the same graph 100 times,
+so replay could reduce host-side launch overhead without modifying
+attention, self-loop topology, learned weights, or time-conditioning
+mathematics. Inputs and conditioning must be copied into stable replay
+buffers each evaluation. Numerical checks must include all layers,
+the identical Heun noise and output, and memory retained by the
+captured graph.
+
+**Unknown until a GH200 experiment:** whether this particular cuSPARSE
+sampled-CSR path and dynamic allocations can be captured safely, how much
+GPU memory replay buffers/pools consume, and whether end-to-end Heun
+improves. Preserve M41.2 as the unmodified numerical reference and
+fail explicitly on unsupported capture, rather than silently switching
+executors. A fallback experimental avenue is reducing per-partition CSR
+kernel calls (e.g., head batching or a purpose-built fused sparse
+attention kernel). Caching static geometry MLP outputs is a simpler,
+lower-risk change, but does not address the 640 sampled-matmul calls.

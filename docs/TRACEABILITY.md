@@ -557,9 +557,19 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   unpartitioned M37 forward was 30.76 ms. Correctness does not
   imply efficient high-partition execution. The validated M41.1
   baseline is job `461023` (commit `2c28a89`).
-- Follow-up instrumentation: opt-in PyTorch CPU/CUDA operator profiler in
-  `scripts/benchmark_m41_partitioned.py`, launched with
-  `M41_2_PROFILE=1` through the M41.2 Slurm script. Profiles are not
-  yet GH200-validated; no operator-level bottleneck is asserted.
-  Full design and evidence: `docs/M41_2_OWNED_QUERY_ATTENTION.md`.
+- Follow-up profiling: **TARGET-EXECUTED** on GH200, Slurm job
+  `461247`, 2026-10-12, clean main `eb1935f2`; 68 selected tests
+  passed/one optional DGL skipped, 1 and 16 partition layouts both
+  passed checkpoint and Heun equivalence. At 16 partitions, M41.2
+  forward 199.56 ms vs M41.1 307.82 ms (1.542x speedup), but
+  M37 42.16 ms. Operator profile: 640 sampled-CSR matmuls
+  (10 layers x 16 partitions x 4 heads), 160 scatter reductions,
+  3,841 copies and 6,512 `empty` allocations. M41.2 sampled-CSR
+  reports ~12.96 ms PyTorch self CPU time vs ~2.82 ms sampled-CSR
+  GPU time, supporting launch/dispatch fragmentation as a primary
+  target. Operator CPU and GPU event times must not be summed.
+  The previous run `461158` had a faster M37 reference, so
+  cross-run comparisons should not be treated as clock-normalized.
+  Full evidence and proposed experimental CUDA Graph replay:
+  `docs/M41_2_OWNED_QUERY_ATTENTION.md`.
 
