@@ -29,6 +29,10 @@ from graph_attention.models.owned_query_dinat import (
     build_owned_query_plan,
     forward_owned_query_dinat,
 )
+from graph_attention.models.streamed_dinat import (
+    build_streamed_dinat_plan,
+    forward_streamed_dinat,
+)
 from graph_attention.tasks import FlowMatchingTask
 from graph_attention.training.data_pipeline import (
     GraphTaskCollator,
@@ -170,11 +174,11 @@ class _PartitionedModel(torch.nn.Module):
                 is not self.reference_batch.attention_edge_indices["dilated"]
             ):
                 raise ValueError("partition plan cannot be used with a different dilated topology")
-        run = (
-            forward_owned_query_dinat
-            if self.executor == "owned_query"
-            else forward_partitioned_dinat
-        )
+        run = {
+            "layerwise_full": forward_partitioned_dinat,
+            "owned_query": forward_owned_query_dinat,
+            "streamed": forward_streamed_dinat,
+        }[self.executor]
         return run(self.model, inputs, plan=self.plan, conditioning=conditioning)
 
 
@@ -211,9 +215,13 @@ def main():
     parser.add_argument("--checkpoint", default="best.pt")
     parser.add_argument("--blocks", nargs=3, type=int, default=(2, 2, 2))
     parser.add_argument(
-        "--executor", choices=("layerwise_full", "owned_query"),
+        "--executor", choices=("layerwise_full", "owned_query", "streamed"),
         default="layerwise_full",
-        help="M41.1 reference or M41.2 owned-query inference",
+        help="M41.1 reference, M41.2 owned-query, or M41.3 host-streamed inference",
+    )
+    parser.add_argument(
+        "--pin-host-hidden", action="store_true",
+        help="M41.3 only: pin both complete CPU hidden buffers (uses substantial RAM)",
     )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=5)
@@ -244,6 +252,8 @@ def main():
         raise ValueError("invalid sampling steps or tolerances")
     if args.profile_chrome_trace and args.profile_dir is None:
         raise ValueError("--profile-chrome-trace requires --profile-dir")
+    if args.pin_host_hidden and args.executor != "streamed":
+        raise ValueError("--pin-host-hidden requires --executor streamed")
     # Explicit FP32 reference policy; no autocast or TF32 approximation.
     torch.set_float32_matmul_precision("highest")
     torch.backends.cuda.matmul.allow_tf32 = False
@@ -306,11 +316,11 @@ def main():
             attention_edge_indices=problem.attention_edge_indices,
         )
 
-    executor_fn = (
-        forward_owned_query_dinat
-        if args.executor == "owned_query"
-        else forward_partitioned_dinat
-    )
+    executor_fn = {
+        "layerwise_full": forward_partitioned_dinat,
+        "owned_query": forward_owned_query_dinat,
+        "streamed": forward_streamed_dinat,
+    }[args.executor]
 
     def partitioned():
         return executor_fn(model, inputs, plan=plan, conditioning=condition)
@@ -369,21 +379,40 @@ def main():
 
     plan_start = time.perf_counter()
     owners = coordinate_block_partition_ids(problem.coords, blocks=args.blocks)
-    plan_builder = (
-        build_owned_query_plan
-        if args.executor == "owned_query"
-        else build_dinat_partition_plan
-    )
-    plan = plan_builder(
-        model,
-        coords=problem.coords,
-        edge_index=problem.edge_index,
-        attention_edge_indices=problem.attention_edge_indices,
-        partition_ids=owners,
-    )
+    if args.executor == "streamed":
+        # Only the *benchmark reference* uses CUDA-resident global graph data.
+        # A production streamed caller supplies graph/physical inputs on CPU.
+        owners = owners.cpu()
+        plan = build_streamed_dinat_plan(
+            model,
+            coords=problem.coords.cpu(),
+            edge_index=problem.edge_index.cpu(),
+            attention_edge_indices={
+                name: edge.cpu() for name, edge in problem.attention_edge_indices.items()
+            },
+            partition_ids=owners,
+            pin_memory=args.pin_host_hidden,
+        )
+    else:
+        plan_builder = (
+            build_owned_query_plan
+            if args.executor == "owned_query"
+            else build_dinat_partition_plan
+        )
+        plan = plan_builder(
+            model,
+            coords=problem.coords,
+            edge_index=problem.edge_index,
+            attention_edge_indices=problem.attention_edge_indices,
+            partition_ids=owners,
+        )
     torch.cuda.synchronize(device)
     plan_seconds = time.perf_counter() - plan_start
-    partitions = plan.base.partitions if args.executor == "owned_query" else plan.partitions
+    partitions = (
+        plan.base.partitions
+        if args.executor in ("owned_query", "streamed")
+        else plan.partitions
+    )
     plan_persistent_allocated_gib = (
         torch.cuda.memory_allocated(device) - before_plan
     ) / 1024**3
@@ -393,10 +422,10 @@ def main():
         ("local", problem.edge_index),
         ("dilated", problem.attention_edge_indices["dilated"]),
     ):
+        if args.executor == "streamed":
+            edges = edges.cpu()
         effective = model._attention_edges_with_optional_self(
-            name,
-            edges,
-            num_nodes=len(inputs),
+            name, edges, num_nodes=len(inputs),
         )
         preserved = 0
         for part in partitions:
@@ -404,7 +433,12 @@ def main():
             reconstructed = part.read_global[attention.edge_index]
             expected = effective[:, owners[effective[1]] == part.partition_id]
             assert torch.equal(reconstructed, expected), "partition edge mismatch"
-            expected_displacement = edge_relative_displacement(problem.coords, expected)
+            reference_coords = (
+                problem.coords.cpu() if args.executor == "streamed" else problem.coords
+            )
+            expected_displacement = edge_relative_displacement(
+                reference_coords, expected
+            )
             assert torch.equal(
                 attention.displacement, expected_displacement
             ), "edge geometry mismatch"
@@ -426,7 +460,7 @@ def main():
                         csr.transpose_col_indices, csr.transpose_order,
                     )
                 ), "cached CSR metadata must not be inference tensors"
-            if args.executor == "owned_query":
+            if args.executor in ("owned_query", "streamed"):
                 rectangle = getattr(plan.partitions[part.partition_id], name)
                 expected_rows = torch.searchsorted(
                     part.owned_local, attention.edge_index[1]
@@ -449,7 +483,9 @@ def main():
             {"topology": name, "edges": preserved, "passed": preserved == effective.shape[1]}
         )
     owned = torch.cat([part.owned_global for part in partitions])
-    assert torch.equal(owned.sort().values, torch.arange(len(inputs), device=device))
+    assert torch.equal(
+        owned.sort().values, torch.arange(len(inputs), device=owned.device)
+    )
 
     with torch.inference_mode():
         changed, layers = executor_fn(
@@ -508,9 +544,13 @@ def main():
     ]
     payload = {
         "benchmark": (
-            "m41_2_owned_query_halo_v1"
-            if args.executor == "owned_query"
-            else "m41_1_single_gpu_halo_v2"
+            "m41_3_host_streamed_halo_v1"
+            if args.executor == "streamed"
+            else (
+                "m41_2_owned_query_halo_v1"
+                if args.executor == "owned_query"
+                else "m41_1_single_gpu_halo_v2"
+            )
         ),
         "executor": args.executor,
         "profiles": profiles,
@@ -542,6 +582,13 @@ def main():
         "num_partitions": len(partitions),
         "plan_build_seconds": plan_seconds,
         "plan_persistent_allocated_gib": plan_persistent_allocated_gib,
+        "hidden_storage": "cpu_double_buffer" if args.executor == "streamed" else "gpu",
+        "host_hidden_two_buffer_gib": (
+            2 * len(inputs) * model.hidden_dim * 4 / 1024**3
+            if args.executor == "streamed" else 0
+        ),
+        "max_partition_read_nodes": max(len(p.read_global) for p in partitions),
+        "pin_host_hidden": args.pin_host_hidden,
         "released_reference_cache_gib": released_reference_cache_gib,
         "partitions": [
             {
@@ -558,12 +605,26 @@ def main():
         "topology_checks": topology_checks,
         "generation_checks": generation_checks,
         "errors": errors,
-        "timing_scope": "warm forward; excludes data/transfers/plan; includes gathers and writes",
+        "timing_scope": (
+            "streamed: includes CPU gather, host-to-device/device-to-host copies, "
+            "per-partition attention and final output copy; excludes data loading "
+            "and CPU plan build"
+            if args.executor == "streamed"
+            else "warm forward; excludes data/transfers/plan; includes gathers and writes"
+        ),
         "memory_scope": (
-            "each path retains only its own CSR cache; full reference CSR is released "
-            "before plan build. Peak allocated includes model, data, and persistent "
-            "topology; incremental peak excludes resident topology. "
-            "Plan memory is device allocation delta during plan build."
+            "M41.3 executor keeps hidden tensors and partition metadata on CPU. "
+            "The shared benchmark still retains CUDA reference graph and "
+            "physical data, so peak CUDA allocated is NOT a standalone "
+            "out-of-core deployment measurement. CPU buffer RAM is reported "
+            "separately; CPU plan memory is not measured by CUDA allocation."
+            if args.executor == "streamed"
+            else (
+                "each path retains only its own CSR cache; full reference CSR is released "
+                "before plan build. Peak allocated includes model, data, and persistent "
+                "topology; incremental peak excludes resident topology. "
+                "Plan memory is device allocation delta during plan build."
+            )
         ),
         "original": baseline,
         "partitioned": result,

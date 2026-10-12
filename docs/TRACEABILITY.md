@@ -573,3 +573,38 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   Full evidence and proposed experimental CUDA Graph replay:
   `docs/M41_2_OWNED_QUERY_ATTENTION.md`.
 
+### M41.3 single-GPU CPU-host-streamed layerwise DiNAT (GH200 pending)
+
+- Purpose: the original M41.1/M41.2 single-GPU partitioned executors
+  still retain global transformer hidden states on GPU. M41.3 keeps
+  **two complete hidden-state buffers on CPU** and evaluates only
+  one owned-plus-complete-halo partition at a time on the GPU.
+- Mathematics: trained M37 unchanged, directed incoming 1-hop and
+  exact-two-hop neighborhoods with original geometric bias and
+  optional self loops; at each layer, every partition reads the
+  immutable previous-layer host buffer, writes **owned nodes only**
+  to a distinct next-layer host buffer; the next layer begins after
+  all owned updates complete.
+- Code: `src/graph_attention/models/streamed_dinat.py` with CPU-only
+  `StreamedDiNATPlan` metadata, original M41.2 rectangular CSR,
+  partition-local QKV/attention/MLP and CPU streaming. Physical output
+  returns to input device for the original Flow Matching Heun sampler.
+- Tests: `tests/unit/test_streamed_dinat.py` for all self-loop modes,
+  spatial/interleaved ownership, directed/empty graphs, intermediate
+  and final output parity, trained-weight immutability, CPU topology
+  residency and 50-step Heun parity; CUDA partition size checks.
+  `tests/unit/test_m41_3_summary.py` enforces report provenance
+  and does not mark failed numerical gates as performance successes.
+- GH200 experiment: `scripts/slurm/m41_3_host_streamed_m37.slurm`
+  compares opt-in `--executor streamed` versus validated M41.2,
+  using the existing reference M37 checkpoint and 100-evaluation
+  Heun run. Strict paired comparison in
+  `scripts/summarize_m41_3.py`.
+- Current status: **IMPLEMENTED, NOT YET GH200 VALIDATED**. No
+  runtime/memory/speedup claims for M41.3 or `257^3` mesh.
+  CPU graph plan still requires full original graph topology on
+  host RAM; the GH200 reference-loading benchmark leaves original
+  graph/physical tensors on GPU and is not a large-scale memory test.
+  Design, conditions and benchmark instructions:
+  `docs/M41_3_HOST_STREAMED_DINAT.md`.
+
