@@ -68,13 +68,20 @@ for layout in "${PARTITION_LAYOUTS[@]}"; do
         fi
         report="$OUT/${label}_blocks_${BX}x${BY}x${BZ}.json"
         log="$OUT/${label}_blocks_${BX}x${BY}x${BZ}.log"
+        profile_args=()
+        if [ "${M41_2_PROFILE:-0}" = "1" ]; then
+            profile_args=(--profile-dir "$OUT/profile_${label}_${BX}x${BY}x${BZ}")
+            if [ "${M41_2_TRACE:-0}" = "1" ]; then
+                profile_args+=(--profile-chrome-trace)
+            fi
+        fi
         echo "==== $label, blocks ${BX}x${BY}x${BZ} ===="
         if singularity exec --nv -B /home -B /scratch "$IMAGE" \
             "$PYTHON" -u -m scripts.benchmark_m41_partitioned \
             --executor "$strategy" --run-dir "$M37_RUN" --checkpoint "$CHECKPOINT" \
             --blocks "$BX" "$BY" "$BZ" --sampling-steps 50 \
             --warmup "${M41_2_WARMUP:-2}" --repeats "${M41_2_REPEATS:-5}" \
-            --output "$report" > "$log" 2>&1; then
+            "${profile_args[@]}" --output "$report" > "$log" 2>&1; then
             echo "$label layout ${BX}x${BY}x${BZ}: completed"
         else
             FAILED=1

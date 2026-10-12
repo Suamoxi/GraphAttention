@@ -1,6 +1,9 @@
 # M41.2 — owned-query halo attention (single GPU, inference-only)
 
-Status: **implemented, numerical/performance validation pending on GH200**.
+Status: **TARGET_VALIDATED for numerical equivalence and measured on GH200**,
+Calypso Slurm job `461158` (2026-10-12, code commit `f3d9e5bf`).
+Performance gains versus M41.1 are measured; the high-partition latency
+remains above M37 and memory use is greater than M41.1.
 This is a separate executor and opt-in benchmark, **not a replacement** for
 the validated M41.1 `forward_partitioned_dinat` reference.
 Neither the M37 training path, the original M37 model, checkpoints nor
@@ -162,12 +165,106 @@ The M41.2 experiment is accepted as *numerically valid* only if all
 selected tests and real-checkpoint layouts pass, every intermediate layer
 and the final Heun state meet the original tolerances, and original M41.1
 still passes. Accept a *performance improvement* only if the paired medians
-show positive speedup without unacceptable memory growth. No such measurement
-is asserted before Calypso execution.
+show positive speedup without unacceptable memory growth. The results in
+the next section report the measured speed-memory trade-off, not an
+unqualified optimization win.
 
-A useful next iteration, **after obtaining the A/B results**, is profiling
-the remaining sampled-CSR heads, per-partition gather/softmax and
-aggregation kernels. Candidate later optimizations include caching
-geometry-only biases while weights are frozen, batching compatible
-partitions, and a fused rectangular sparse attention kernel. None is
-introduced in M41.2's first implementation.
+The next step is to profile the remaining sampled-CSR heads,
+per-partition gather/softmax and aggregation kernels. Candidate later
+optimizations include caching geometry-only biases while weights are frozen,
+batching compatible partitions, and a fused rectangular sparse attention
+kernel. The current M41.2 implementation is deliberately preserved
+as the validated reference during this profiling stage.
+
+## GH200 measured results — job 461158 (2026-10-12)
+
+The Calypso run used clean Git commit
+`f3d9e5bfcf174858698cdaf5f9f1deabc901ada8`, NVIDIA GH200 480GB,
+single GPU, FP32 with TF32 disabled, two warmup steps and five
+timed repetitions per configuration. Checkpoint
+`best.pt` SHA-256:
+`01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8`.
+All ten reports used held-out sample `solut_hit_00007500`, with 35,937
+nodes, 209,088 directed one-hop edges, and 608,058 directed exact-two-hop
+edges. The selected regression gate completed **68 passed / one skipped**
+(optional DGL/torchdata backend unavailable). This selected gate was
+not a full repository-wide test run.
+
+Every M41.1 and M41.2 layout has `passed=true` and
+`evidence=TARGET_VALIDATED`. Every edge topology check passed. Across
+the five M41.2 layouts the maximum absolute error versus unpartitioned M37
+was `5.888939e-5` for intermediate layers, `4.443526e-5` for the
+final network output, and `1.907349e-6` for complete Heun generation.
+All individual component comparisons have zero violations under
+`atol=rtol=2e-4`; initial Gaussian noise is bitwise identical, and
+both models perform 100 model evaluations with 50 Heun steps.
+
+### Timings and memory
+
+All numbers are **measured medians** over five repetitions, without plan
+construction or data transfer. Each executor was run in a separate process.
+Latency comparisons use the original M37 time measured alongside the
+corresponding executor, not the reference timing from another job.
+
+| Spatial blocks | Partitions | M41.1 forward (ms) | M41.2 forward (ms) | M41.2 speedup vs M41.1 | M41.2 / M37 forward | M41.1 Heun (s) | M41.2 Heun (s) | M41.1 peak GiB | M41.2 peak GiB |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1x1x1 | 1 | 28.96 | 23.09 | 1.254x | 0.733x | 2.501 | 2.248 | 0.433 | 0.485 |
+| 2x1x1 | 2 | 42.96 | 31.89 | 1.347x | 1.014x | 3.639 | 2.518 | 0.353 | 0.414 |
+| 2x2x1 | 4 | 69.91 | 44.55 | 1.569x | 1.412x | 6.106 | 3.567 | 0.310 | 0.398 |
+| 2x2x2 | 8 | 122.94 | 73.26 | 1.678x | 2.334x | 11.675 | 6.419 | 0.251 | 0.383 |
+| 4x2x2 | 16 | 238.88 | 126.44 | 1.889x | 4.110x | 23.518 | 11.622 | 0.216 | 0.377 |
+
+Original M37's reference allocated-memory peak is approximately
+**0.440 GiB** in each per-layout run. As intended, M41.2 is faster
+than M41.1 at every tested partition count. With 16 partitions,
+forward speedup is 1.889x, generation speedup is 2.024x, but M41.2
+is still 4.11x slower than unpartitioned M37. Total per-partition
+read-node ratio at 16 partitions is 1.632.
+
+The improvement **comes with a memory cost**. At 16 partitions,
+M41.2 peaks at 0.377 GiB versus M41.1 at 0.216 GiB (+74%),
+although it remains about 14% below unpartitioned M37. At one
+partition, M41.2's 0.485 GiB peak exceeds M37's 0.440 GiB.
+These are `torch.cuda.max_memory_allocated` measurements, not total
+device usage or an out-of-core upper bound.
+
+**Interpretation:** for this 35,937-node problem, one or two
+M41.2 partitions are preferable when latency matters.
+Two partitions have approximately the same forward time as M37
+(31.89 versus 31.46 ms) with a 0.414 GiB allocation peak.
+Finer partitions may be useful only when larger meshes or hard
+working-memory constraints justify their extra runtime.
+Potential costs from sampled CSR kernel launches, halo gathers,
+geometry-bias MLP, row-wise normalization and index-add reduction
+are **hypotheses** until operator-level profiling measures them.
+
+### Opt-in operator-level profiling
+
+An additional, non-default profiler now instruments **one forward per
+executor after all unprofiled median timings have completed**. It
+captures PyTorch CPU/CUDA operator names, call counts, self GPU and CPU
+times, and memory activity. No CUDA trace is exported by default.
+
+For a targeted experiment, profile the one-partition and 16-partition
+cases first; this avoids another full five-layout run:
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+git pull --rebase
+sbatch --export=ALL,M41_2_BLOCKS="1 1 1;4 2 2",M41_2_REPEATS=2,M41_2_PROFILE=1 \
+    scripts/slurm/m41_2_owned_query_m37.slurm
+```
+
+Set `M41_2_TRACE=1` as well to export per-forward Chrome traces, which
+may consume substantial scratch space. Profiles are saved as
+`profile_full_...` and `profile_owned_...` directories with
+`original_operations.json` and either
+`layerwise_full_operations.json` or `owned_query_operations.json`.
+The corresponding benchmark JSON includes a `profiles` summary with the
+top 30 GPU operators. Profiled GPU operation sums are *not* a substitute
+for unprofiled wall-clock medians.
+
+This profiling is an **unvalidated additional instrumentation path**.
+The numerical implementation measured in job `461158` has not
+changed. Further numerical or performance claims require the
+new Calypso profiler run results.

@@ -71,6 +71,61 @@ def _time_forward(callback, device, *, warmup: int, repeats: int):
     }
 
 
+def _profile_forward(callback, device, directory: Path, label: str, *, chrome: bool) -> dict:
+    """Opt-in single-forward PyTorch operator profile, outside benchmark timings."""
+    from torch.profiler import ProfilerActivity, profile
+
+    directory.mkdir(parents=True, exist_ok=True)
+    with torch.inference_mode():
+        callback()  # Populate inference caches before instrumenting the forward.
+        torch.cuda.synchronize(device)
+        with profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+            record_shapes=False,
+            profile_memory=True,
+            with_stack=False,
+        ) as profiler:
+            callback()
+            torch.cuda.synchronize(device)
+
+    aggregates = profiler.key_averages()
+    rows = []
+    for event in aggregates:
+        gpu_time = getattr(event, "self_device_time_total", None)
+        if gpu_time is None:
+            gpu_time = getattr(event, "self_cuda_time_total", 0.0)
+        rows.append(
+            {
+                "op": event.key,
+                "calls": int(event.count),
+                "self_cpu_ms": float(event.self_cpu_time_total) / 1000.0,
+                "self_gpu_ms": float(gpu_time) / 1000.0,
+                "cpu_memory_bytes": int(event.cpu_memory_usage),
+                "gpu_memory_bytes": int(
+                    getattr(event, "device_memory_usage",
+                            getattr(event, "cuda_memory_usage", 0))
+                ),
+            }
+        )
+    rows.sort(key=lambda item: (-item["self_gpu_ms"], -item["self_cpu_ms"], item["op"]))
+    operations = directory / f"{label}_operations.json"
+    operations.write_text(json.dumps(rows, indent=2) + "\n")
+    summary = {
+        "operations_json": str(operations),
+        "operator_count": len(rows),
+        "top_gpu_operations": rows[:30],
+        "interpretation": (
+            "Profiler self-device times are sums of GPU operator activity; they are "
+            "not benchmark wall-clock times. Use unprofiled median_ms for latency."
+        ),
+    }
+    if chrome:
+        trace = directory / f"{label}_trace.json"
+        profiler.export_chrome_trace(str(trace))
+        summary["chrome_trace"] = str(trace)
+    return summary
+
+
 def _errors(actual, reference, *, atol, rtol):
     actual, reference = actual.detach().double().cpu(), reference.detach().double().cpu()
     finite = bool(torch.isfinite(actual).all() and torch.isfinite(reference).all())
@@ -163,6 +218,17 @@ def main():
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--profile-dir",
+        type=Path,
+        default=None,
+        help="Opt-in PyTorch operator profile directory; outside timed measurements",
+    )
+    parser.add_argument(
+        "--profile-chrome-trace",
+        action="store_true",
+        help="Export optional Chrome traces (may be large; requires --profile-dir)",
+    )
     parser.add_argument("--sampling-seed", type=int, default=5678)
     parser.add_argument("--sampling-steps", type=int, default=50)
     parser.add_argument("--atol", type=float, default=2e-4)
@@ -176,6 +242,8 @@ def main():
         raise ValueError("repeats must be positive and warmup nonnegative")
     if args.sampling_steps < 1 or args.atol <= 0 or args.rtol < 0:
         raise ValueError("invalid sampling steps or tolerances")
+    if args.profile_chrome_trace and args.profile_dir is None:
+        raise ValueError("--profile-chrome-trace requires --profile-dir")
     # Explicit FP32 reference policy; no autocast or TF32 approximation.
     torch.set_float32_matmul_precision("highest")
     torch.backends.cuda.matmul.allow_tf32 = False
@@ -280,6 +348,12 @@ def main():
         warmup=0,
         repeats=args.repeats,
     )
+    profiles = {}
+    if args.profile_dir is not None:
+        profiles["original"] = _profile_forward(
+            original, device, args.profile_dir, "original",
+            chrome=args.profile_chrome_trace,
+        )
 
     # Release reference-only global CSR caches before measuring partitioned
     # memory. Otherwise partitioned peak includes BOTH full-graph and halo CSR.
@@ -423,6 +497,11 @@ def main():
         warmup=0,
         repeats=args.repeats,
     )
+    if args.profile_dir is not None:
+        profiles["partitioned"] = _profile_forward(
+            partitioned, device, args.profile_dir, args.executor,
+            chrome=args.profile_chrome_trace,
+        )
     checks = [
         errors["output"], errors["heun"], *errors["layers"],
         *topology_checks, generation_checks,
@@ -434,12 +513,16 @@ def main():
             else "m41_1_single_gpu_halo_v2"
         ),
         "executor": args.executor,
+        "profiles": profiles,
         "passed": all(check["passed"] for check in checks),
         "evidence": "TARGET_VALIDATED"
         if all(c["passed"] for c in checks) and "GH200" in torch.cuda.get_device_name(device)
         else "LOCAL_BENCHMARK",
         "provenance": collect_runtime_provenance(),
-        "arguments": vars(args),
+        "arguments": {
+            **vars(args),
+            "profile_dir": str(args.profile_dir) if args.profile_dir is not None else None,
+        },
         "precision": "float32; no autocast; TF32 disabled",
         "resolved_config": OmegaConf.to_container(config, resolve=True),
         "dataset_split_manifest": manifest,
