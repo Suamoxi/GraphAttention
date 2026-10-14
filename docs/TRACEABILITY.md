@@ -687,3 +687,30 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   assessing a 1000-epoch matched convergence comparison.
   Full design/limitations: `docs/PHYSICS_TOKEN_DIT_BASELINE.md`.
 
+### M41.3 257^3 real-mesh topology gate (GH200 job 464614)
+
+- Metadata preflight run **464614** passed **10/10** tests on
+  `calypso-grace04`, 2026-10-14. HDF5 mesh has 16,974,593
+  float64-coordinate nodes and 16,777,216 hexahedral cells. Flattened
+  uint64 connectivity has 134,217,728 entries, globally **one-based**
+  with min=1 and max=16,974,593; all five conservative fields are
+  float64 and node-aligned. No graph or inference was constructed.
+- The strict follow-up in
+  `scripts/qualify_m41_3_cartesian_mesh.py` verifies a bijective
+  uniform-coordinate lattice and every cell's canonical 12 M37 local
+  hex edges, processing the HDF5 in bounded slabs. Only if complete
+  qualification passes does it persist the two Cartesian permutation
+  maps and permit the direct Cartesian candidate.
+- `src/graph_attention/geometry/cartesian_halo.py` builds owned
+  plus halo one-hop/exact-two-hop directed edges per partition, using
+  the proven Cartesian inverse mapping instead of global edge tensors.
+  The candidate graph edges are compared to a hex-derived oracle
+  with randomized node ordering in
+  `tests/unit/test_m41_3_cartesian_mesh.py`.
+- Next GH200 verification:
+  `scripts/slurm/m41_3_257cube_qualify.slurm`, requesting Grace,
+  one GPU, four CPUs and four hours with **no explicit memory cap**.
+  Its CPU-only qualification must pass before integration into the
+  M41.3 CPU-streamed CSR/geometry plan.
+- Status: **metadata verified; 257^3 topology qualification NOT YET RUN**.
+  Complete details: `docs/M41_3_257CUBE_TOPOLOGY_GATE.md`.
