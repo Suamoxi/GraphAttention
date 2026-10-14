@@ -714,3 +714,41 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   M41.3 CPU-streamed CSR/geometry plan.
 - Status: **metadata verified; 257^3 topology qualification NOT YET RUN**.
   Complete details: `docs/M41_3_257CUBE_TOPOLOGY_GATE.md`.
+
+### M41.4 — Generic unstructured halo CSR before 257^3 inference
+
+- Objective: retire the full-graph one-hop-plus-two-hop construction
+  requirement in M41.3 without specializing the scientific framework to
+  Cartesian HIT. Keep original M37 weights and exact one-hop /
+  exact-two-hop definitions, owned-query softmax and layerwise
+  previous-layer Jacobi refresh.
+- Implemented prototype:
+  src/graph_attention/geometry/external_csr.py builds a one-hop incoming
+  CSR by streaming hex/tet HDF5 element connectivity and externally
+  deduplicating target buckets on disk. A generic directed edge-block
+  interface handles graph inputs with other supported edge sources.
+  src/graph_attention/geometry/partition_csr.py extracts only per-owned
+  one-hop/exact-two-hop edges with optional self-loop policy, works with
+  any contiguous owner assignment. No global exact-two-hop graph.
+- Adapter: src/graph_attention/models/disk_streamed_dinat.py
+  constructs the original OwnedQueryPartition/CSR and StreamedDiNATPlan
+  interfaces from partition files. Unchanged M41.3 forward executor;
+  on-demand disk or CPU-RAM preloading.
+- Regression gate: tests/unit/test_m41_4_generic_csr.py verifies
+  irregular shuffled hexahedral and tetrahedral input graph
+  construction, exact-two-hop exclusion/deduplication and full M37
+  output parity including self-loop variants.
+- Grace stages:
+  scripts/slurm/m41_4_generic_257_prepare.slurm runs the unstructured
+  gate BEFORE touching 257^3, then builds CSR/partitions from the real
+  one-based 257^3 HDF5 mesh; requires one Grace GPU, four CPUs, four
+  hours, no explicit --mem. Next:
+  scripts/slurm/m41_4_generic_257_infer.slurm first performs one
+  full-resolution forward, then optionally a resumable 50-step
+  Heun generation using 100 NFEs.
+- **Status: CODE PREPARED; NEW GH200 TESTS, REAL 257^3 GRAPH
+  PREPARATION, AND INFERENCE ARE NOT YET VALIDATED.** Original M41.3
+  small-graph parity remains unchanged. The checkpoint is trained on
+  a different, smaller HIT source; coordinate physical normalization
+  needs confirmation before scientific quality comparisons.
+  Details: docs/M41_4_GENERIC_UNSTRUCTURED_HALO.md.
