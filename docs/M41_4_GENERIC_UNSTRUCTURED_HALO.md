@@ -112,6 +112,49 @@ jobs to the same generation directory.
 - The M37 checkpoint was trained on the much smaller HIT_LES_FORCED
   dataset, not this Re150/Ma0.3 257^3 simulation. A successful forward
   or Heun rollout demonstrates execution feasibility, not quality.
-- No real 257^3 graph preparation or inference results have been
-  obtained yet. The external sort requires scratch disk space and
-  the Heun runtime may require multiple Grace allocations.
+- The external sort requires scratch disk space. Generation throughput
+  has not yet been measured, and the Heun runtime may require multiple
+  Grace allocations. Peak CPU RAM was **not recorded** in job 464853;
+  new runner instrumentation records current/peak process RSS before
+  and after partition-plan loading and after the forward.
+
+## Actual GH200 forward evidence — 2026-10-14, job 464853
+
+- Host: `calypso-grace02.calypso.cerfacs.fr`, code revision
+  `ebbb732d56d186f3c68059f326e7df6e0fcd1761`.
+- The `prepare.json` from the previous stage was present and marked
+  complete; the full preparation log was not uploaded with this report.
+  The caller requested preloaded CPU partition plans.
+- Partition plan loaded in **10.4 s**, with `preload_partitions=true`.
+- Original M37 checkpoint `best.pt` SHA-256
+  `01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8`.
+- Single full-resolution forward at flow time `t=0.0`:
+  **158.22969341 seconds**, `[16,974,593, 5]` output shape,
+  finite output. Total Python runtime: **170.08620595 seconds**.
+- GPU peak **allocated 2.25520754 GiB**, GPU peak **reserved 7.6796875 GiB**
+  (PyTorch allocator). The GH200 reports 97,871 MiB total HBM.
+- stderr contained only a Singularity read-only CUDA-compat cleanup
+  warning and the PyTorch sparse-CSR beta warning.
+- Important qualification: no unpartitioned M37 `257^3` output exists,
+  so numeric parity was established only on earlier small test graphs.
+  The forward demonstrates execution feasibility, not physical validity
+  or full-population generation throughput. Actual peak host RAM and
+  CPU/GPU transfer time breakdown remain unmeasured.
+
+Next computational gate: measure process peak resident CPU RAM and
+compare lazy on-disk partitions vs preloaded CPU partitions on the **same
+prepared 64-partition graph**. The updated runner now records
+`host_memory_before_plan`, `host_memory_after_plan`,
+`host_memory_after_forward`, and `plan_load_seconds`.
+Execute separately for the two modes:
+
+~~~bash
+# Current preloaded baseline, now with RSS instrumentation
+M41_4_PRELOAD=1 OUTPUT=/scratch/coop/theret/GraphAttention_runs/m41_4_257_inference/forward_preload_profile sbatch scripts/slurm/m41_4_generic_257_infer.slurm
+
+# Lazy, disk-backed partition metadata, same mesh and checkpoint
+M41_4_PRELOAD=0 OUTPUT=/scratch/coop/theret/GraphAttention_runs/m41_4_257_inference/forward_lazy_profile sbatch scripts/slurm/m41_4_generic_257_infer.slurm
+~~~
+
+The scripts reserve Grace, 1 GPU, 4 CPUs, 4 hours, and do not add a
+`--mem` directive. They do not rebuild the graph.

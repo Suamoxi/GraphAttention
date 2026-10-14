@@ -15,6 +15,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import resource
+import sys
 import time
 
 import h5py
@@ -36,6 +38,24 @@ from scripts.generate_generative import _load_standardizers
 
 
 FIELD_NAMES = ("rho", "rhou", "rhov", "rhow", "rhoE")
+
+
+def _host_memory_stats() -> dict[str, float | None]:
+    """Linux process RSS plus peak RSS, including memory-mapped graph pages.
+
+    ru_maxrss is KiB on Linux and bytes on macOS. RSS measures the full
+    resident CPU process (graph plan, hidden buffers, Python and caches),
+    not Slurm node-wide RAM consumption.
+    """
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    peak_gib = float(peak) / (1024**2 if sys.platform != "darwin" else 1024**3)
+    current_gib = None
+    if sys.platform.startswith("linux"):
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                current_gib = int(line.split()[1]) / (1024**2)
+                break
+    return {"rss_current_gib": current_gib, "rss_peak_gib": peak_gib}
 
 
 def _report(path: Path, content: dict) -> None:
@@ -123,6 +143,7 @@ def _prepare(args) -> dict:
         "include_self_attention": args.include_self_attention,
         "include_local_self_attention": args.include_local_self_attention,
         "seconds": time.perf_counter()-start,
+        "host_memory_at_end": _host_memory_stats(),
         "caveats": [
             "Coordinates must use the same nondimensional convention as the trained M37 model.",
             "The existing checkpoint was trained on a different, smaller HIT dataset.",
@@ -198,13 +219,18 @@ def _inference(args) -> dict:
     model = model.to("cuda", dtype=torch.float32).eval()
     raw_coords = np.load(root/"coords.npy", mmap_mode="r")
     coords = torch.from_numpy(np.array(raw_coords, dtype=np.float32, copy=True))
+    host_memory_before_plan = _host_memory_stats()
     plan_started = time.perf_counter()
     plan = build_disk_streamed_dinat_plan(
         model, coords=coords, partition_dir=root/"partitions",
         preload=args.preload_partitions, pin_memory=False,
     )
-    print(f"[infer] partition plan ready in {time.perf_counter()-plan_started:.1f}s; "
-          f"preload={args.preload_partitions}", flush=True)
+    plan_seconds = time.perf_counter()-plan_started
+    host_memory_after_plan = _host_memory_stats()
+    print(f"[infer] partition plan ready in {plan_seconds:.1f}s; "
+          f"preload={args.preload_partitions}, "
+          f"host RSS={host_memory_after_plan['rss_current_gib']:.2f}GiB, "
+          f"host peak={host_memory_after_plan['rss_peak_gib']:.2f}GiB", flush=True)
     n = prep["num_nodes"]
     ckpt_digest = _sha256(ckpt)
     device = torch.device("cuda")
@@ -230,6 +256,13 @@ def _inference(args) -> dict:
             "gpu_peak_reserved_gib": torch.cuda.max_memory_reserved(device)/1024**3,
             "checkpoint_sha256": ckpt_digest,
             "preload_partitions": args.preload_partitions,
+            "plan_load_seconds": plan_seconds,
+            "host_memory_before_plan": host_memory_before_plan,
+            "host_memory_after_plan": host_memory_after_plan,
+            "host_memory_after_forward": _host_memory_stats(),
+            "partition_count": prep["num_partitions"],
+            "max_partition_owned_nodes": prep["max_partition_owned_nodes"],
+            "max_partition_read_nodes": prep["max_partition_read_nodes"],
             "total_wall_seconds": time.perf_counter()-started,
         }
         _report(args.output_dir/"forward.json", report)
@@ -326,6 +359,11 @@ def _inference(args) -> dict:
         "gpu_peak_allocated_gib": torch.cuda.max_memory_allocated(device)/1024**3,
         "gpu_peak_reserved_gib": torch.cuda.max_memory_reserved(device)/1024**3,
         "session_wall_seconds": time.perf_counter()-started,
+        "plan_load_seconds": plan_seconds,
+        "host_memory_before_plan": host_memory_before_plan,
+        "host_memory_after_plan": host_memory_after_plan,
+        "host_memory_at_end": _host_memory_stats(),
+        "partition_count": prep["num_partitions"],
     }
     _report(folder/"run_report.json", report)
     return report

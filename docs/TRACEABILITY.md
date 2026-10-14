@@ -747,9 +747,13 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   scripts/slurm/m41_4_generic_257_infer.slurm first performs one
   full-resolution forward, then optionally a resumable 50-step
   Heun generation using 100 NFEs.
-- **Status: CODE PREPARED; NEW GH200 TESTS, REAL 257^3 GRAPH
-  PREPARATION, AND INFERENCE ARE NOT YET VALIDATED.** Original M41.3
-  small-graph parity remains unchanged. The checkpoint is trained on
-  a different, smaller HIT source; coordinate physical normalization
-  needs confirmation before scientific quality comparisons.
+- **Status updated 2026-10-14: real 257^3 full forward PASSED
+  on Grace job 464853.** The inferred generic partitions were successfully
+  loaded; the uploaded report has no end-to-end CSR preparation timing.
+  Peak GPU memory 2.2552 GiB allocated, 7.6797 GiB reserved,
+  forward time 158.2297 s, output [16,974,593,5] finite.
+  CPU RSS was not recorded in that run; later runner versions measure it.
+  Original M41.3 small-graph parity remains unchanged.
+  No same-size unpartitioned M37 reference exists; this demonstrates
+  executable scalability, not 257^3 M37 numerical parity or physical quality.
   Details: docs/M41_4_GENERIC_UNSTRUCTURED_HALO.md.
