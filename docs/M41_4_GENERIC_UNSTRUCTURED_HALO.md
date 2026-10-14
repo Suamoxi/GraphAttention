@@ -158,3 +158,64 @@ M41_4_PRELOAD=0 OUTPUT=/scratch/coop/theret/GraphAttention_runs/m41_4_257_infere
 
 The scripts reserve Grace, 1 GPU, 4 CPUs, 4 hours, and do not add a
 `--mem` directive. They do not rebuild the graph.
+
+## CPU/GPU memory profiling and lazy-CSR failure — 2026-10-14
+
+Evidence: Grace jobs 464863 (preload, passed) and 464864 (lazy,
+failed), both on code revision 7dd94c0b.
+
+The real 257^3 preparation manifest reports 64 parts using 4x4x4
+coordinate bins, 101,451,264 directed one-hop edges and 303,167,994
+directed exact-two-hop edges stored per partition. Maximum owned
+partition size is 274,625 nodes; maximum read set is 312,064 nodes.
+Total preparation took **96.63197 seconds**, including coordinates,
+disk one-hop CSR construction and per-partition exact-two-hop extraction.
+
+| Metric | Preloaded (464863) | Lazy (464864) |
+|---|---:|---:|
+| Plan setup | 8.854 s | 0.2 s |
+| Host RSS after plan | 23.0956 GiB | 1.24 GiB |
+| Peak CPU RSS through complete forward | 31.7054 GiB | unknown (failed) |
+| Full forward | 171.2683 s, passed | failed |
+| Peak GPU allocated | 2.2552 GiB | unavailable |
+| Peak GPU reserved | 7.6797 GiB | unavailable |
+| Output | [16,974,593,5], finite | none |
+
+The preloaded process began at 1.091 GiB RSS; host RSS at the end
+of the forward was 15.313 GiB despite a peak of 31.705 GiB.
+This measures process memory, not total node memory. Lazy memory
+numbers were sampled only after the plan was opened, not during
+a successful forward, so the lazy peak is still unknown.
+
+The lazy run failed inside _gpu_topology with:
+RuntimeError: Cannot set version_counter for inference tensor.
+
+Cause: the lazy partition loader assembled CSR component tensors
+while PyTorch inference mode was active. Temporarily disabling
+inference mode around only the sparse CSR wrapper was insufficient,
+because its component tensors were still inference tensors.
+The repair disables inference mode for the entire lazy __getitem__
+operation, so all tensors are ordinary/versioned. This does not
+change M37 graph edges, model weights or numerical behavior.
+
+A local PyTorch CPU minimal reproduction confirmed the diagnosis
+and verified that the full guard removes the error. Unit regression
+now runs irregular hex/tet M37 forward parity under inference mode,
+checking the sparse CSR components. The Grace Slurm script runs this
+regression gate before attempting a lazy forward. Real GH200 rerun
+of the corrected lazy path remains outstanding.
+
+### Next job: corrected lazy path (same prepared graph)
+
+~~~bash
+cd /scratch/coop/theret/GraphAttention
+git pull --rebase
+M41_4_PRELOAD=0 \
+OUTPUT=/scratch/coop/theret/GraphAttention_runs/m41_4_257_inference/forward_lazy_fixed \
+sbatch scripts/slurm/m41_4_generic_257_infer.slurm
+~~~
+
+On success, compare forward_lazy_fixed/forward.json with the
+successful forward_preload_profile baseline to quantify peak
+CPU RAM versus forward execution time. No global M37 full-graph
+257^3 reference is available for a same-size numerical comparison.

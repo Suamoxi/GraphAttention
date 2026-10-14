@@ -133,9 +133,17 @@ def test_irregular_hex_csr_halo_and_m37_forward(tmp_path, include_self, include_
             plan = build_disk_streamed_dinat_plan(
                 model, coords=coords, partition_dir=part_dir, preload=preload,
             )
-            result = forward_streamed_dinat(
-                model, data, conditioning=condition, plan=plan
-            )
+            # Production uses torch.inference_mode(). Lazy CSR partitions
+            # are constructed inside it; they must be ordinary versioned tensors.
+            with torch.inference_mode():
+                first = plan.partitions[0]
+                for topology in (first.local, first.dilated):
+                    assert not topology.pattern.is_inference()
+                    assert not topology.pattern.crow_indices().is_inference()
+                    assert not topology.pattern.col_indices().is_inference()
+                result = forward_streamed_dinat(
+                    model, data, conditioning=condition, plan=plan
+                )
             torch.testing.assert_close(
                 result, expected, atol=2e-4, rtol=2e-4
             )
@@ -260,9 +268,10 @@ def test_true_unstructured_tetrahedral_m37_full_forward_parity(tmp_path):
         plan = build_disk_streamed_dinat_plan(
             model, coords=xyz, partition_dir=tmp_path/"parts", preload=False,
         )
-        observed = forward_streamed_dinat(
-            model, x, plan=plan, conditioning=cond,
-        )
+        with torch.inference_mode():
+            observed = forward_streamed_dinat(
+                model, x, plan=plan, conditioning=cond,
+            )
         torch.testing.assert_close(
             observed, expected, atol=2e-4, rtol=2e-4,
         )

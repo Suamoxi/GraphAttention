@@ -757,3 +757,33 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   No same-size unpartitioned M37 reference exists; this demonstrates
   executable scalability, not 257^3 M37 numerical parity or physical quality.
   Details: docs/M41_4_GENERIC_UNSTRUCTURED_HALO.md.
+
+### M41.4 CPU RSS profiling and lazy inference-mode bug — 2026-10-14
+
+- Actual real graph preparation: 16,974,593 nodes, 64 coordinate
+  partitions, 101,451,264 directed one-hop physical graph edges and
+  303,167,994 exact-two-hop edges across owned partitions. Preparation
+  total was 96.632 s (prepare.json). Largest owned/read sets were
+  274,625 / 312,064 nodes. No Cartesian fast path was invoked.
+- Grace job 464863, commit 7dd94c0b: preloaded CSR partition
+  metadata, 8.854 s setup, 23.0956 GiB CPU RSS after plan load,
+  31.7054 GiB peak process RSS through full forward,
+  171.2683 s completed 257^3 forward,
+  2.2552 GiB allocated GPU peak, 7.6797 GiB reserved peak.
+  Output [16,974,593,5] was finite.
+- Grace job 464864: lazy plan loaded in ~0.2 s at 1.24 GiB CPU RSS,
+  but failed DURING forward with "Cannot set version_counter for
+  inference tensor" in sparse CSR CUDA staging. This is NOT a
+  completed lazy measurement.
+- Diagnosis: lazy CSR component tensors were built inside
+  torch.inference_mode(), unlike the preloaded plan. Fix in
+  DiskPartitionCollection.__getitem__: @torch.inference_mode(False)
+  around the entire materialization (not only sparse_csr_tensor).
+  Unit tests now exercise lazy and preloaded forward parity on
+  irregular hex/tet meshes under inference mode, including
+  CSR component inference-tensor checks. Minimal PyTorch CPU
+  reproducer verifies the guard resolves the tensor lifecycle issue.
+- Next: rerun a new lazy GH200 forward with tests as a prerequisite,
+  and compare true peak CPU RSS and wall time to the successful
+  preloaded run. The rerun's success has NOT yet been established.
+  Details: docs/M41_4_GENERIC_UNSTRUCTURED_HALO.md.

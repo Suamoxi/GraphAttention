@@ -35,6 +35,15 @@ done
 echo "M41.4 on host $(hostname), commit $(git rev-parse HEAD)"
 echo "Mode=$MODE, prepared=$GRAPH_ROOT, checkpoint=$M37_RUN/$CHECKPOINT"
 nvidia-smi
+if [ "$PRELOAD" != "0" ] && [ "$PRELOAD" != "1" ]; then
+    echo "ERROR: M41_4_PRELOAD must be 0 or 1" >&2
+    exit 1
+fi
+if [ "$MODE" = "forward" ] && [ "$PRELOAD" = "0" ]; then
+    echo "==== M41.4 lazy-CSR inference-mode regression gate ===="
+    singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
+        "$PYTHON" -m pytest tests/unit/test_m41_4_generic_csr.py -q
+fi
 ARGS=()
 if [ "$PRELOAD" = "1" ]; then ARGS=(--preload-partitions); fi
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \

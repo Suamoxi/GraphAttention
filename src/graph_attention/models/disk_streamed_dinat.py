@@ -75,7 +75,16 @@ class DiskPartitionCollection(Sequence[OwnedQueryPartition]):
     def __len__(self) -> int:
         return self.count
 
+    @torch.inference_mode(False)
     def __getitem__(self, index: int | slice):
+        """Load ordinary CSR/indices even when the forward is in inference mode.
+
+        Lazy loading occurs inside torch.inference_mode() in M41.4 whereas
+        preloading happens beforehand. Creating the CSR and its component
+        tensors under inference mode can break CSR .to(cuda) with
+        `Cannot set version_counter for inference tensor`. Turn it off for
+        the entire assembly, not merely the sparse_csr_tensor call.
+        """
         if isinstance(index, slice):
             return tuple(self[i] for i in range(*index.indices(self.count)))
         if index < 0:
