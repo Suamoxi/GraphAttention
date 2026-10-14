@@ -280,15 +280,17 @@ A new **metadata-only, bounded-memory CPU preflight** is available:
 - `tests/unit/test_m41_3_large_hdf5_preflight.py`
 - `scripts/slurm/m41_3_257cube_preflight.slurm`
 
-If the earlier Kraken-to-Calypso copy retained the folder layout,
-the anticipated paths are:
-`/archive/coop/theret/HIT_DNS_COMP/Re150/Ma0.3/MESH/mesh.mesh.h5`
+On Grace, the archive root is `/archivenfs/phlusim/HIT_DNS_COMP`.
+The M41.3 preflight defaults to
+`/archivenfs/phlusim/HIT_DNS_COMP/Re150/Ma0.3/MESH/mesh.mesh.h5`
 and
-`/archive/coop/theret/HIT_DNS_COMP/Re150/Ma0.3/SOLUT/solut_hit_00000001.h5`.
-The Slurm script uses these as **guesses**, checks both files exist,
-and otherwise fails with instructions for setting `MESH_FILE` and
-`SNAPSHOT_FILE`. It is CPU-only and selects the default Slurm
-partition; supply `sbatch --partition=<cpu partition>` if required.
+`/archivenfs/phlusim/HIT_DNS_COMP/Re150/Ma0.3/SOLUT/solut_hit_00000001.h5`.
+The script explicitly binds `/archivenfs` into Singularity and checks
+both paths before launching HDF5 inspection. If the Re150/Ma0.3
+subdirectory differs on Grace, override `M41_3_DATA_BASE` or set
+`MESH_FILE` and `SNAPSHOT_FILE` individually. The job is CPU-only;
+supply `sbatch --partition=<cpu partition>` if the default partition
+requires a GPU.
 
 ```bash
 cd /scratch/coop/theret/GraphAttention

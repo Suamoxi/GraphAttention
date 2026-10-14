@@ -15,7 +15,7 @@ set -euo pipefail
 REPO=/scratch/coop/theret/GraphAttention
 IMAGE=/softs/local_arm/singularity/images/pyg25.03.sif
 PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
-BASE=${M41_3_DATA_BASE:-/archive/coop/theret/HIT_DNS_COMP/Re150/Ma0.3}
+BASE=${M41_3_DATA_BASE:-/archivenfs/phlusim/HIT_DNS_COMP/Re150/Ma0.3}
 MESH_FILE=${MESH_FILE:-${BASE}/MESH/mesh.mesh.h5}
 SNAPSHOT_FILE=${SNAPSHOT_FILE:-${BASE}/SOLUT/solut_hit_00000001.h5}
 OUT=${OUT:-/scratch/coop/theret/GraphAttention_runs/m41_3_257_preflight/${SLURM_JOB_ID:-manual}}
@@ -39,10 +39,10 @@ echo "Snapshot: $SNAPSHOT_FILE"
 echo "Report: $OUT"
 echo "No full graph construction. No GPU. No trained model or sampler invoked."
 
-singularity exec -B /home -B /scratch -B /archive "$IMAGE" \
+singularity exec -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m pytest tests/unit/test_m41_3_large_hdf5_preflight.py -q
 
-singularity exec -B /home -B /scratch -B /archive "$IMAGE" \
+singularity exec -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m scripts.preflight_m41_3_large_hdf5 \
     --mesh-file "$MESH_FILE" \
     --snapshot-file "$SNAPSHOT_FILE" \
