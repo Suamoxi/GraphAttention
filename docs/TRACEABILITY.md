@@ -783,7 +783,29 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   irregular hex/tet meshes under inference mode, including
   CSR component inference-tensor checks. Minimal PyTorch CPU
   reproducer verifies the guard resolves the tensor lifecycle issue.
-- Next: rerun a new lazy GH200 forward with tests as a prerequisite,
-  and compare true peak CPU RSS and wall time to the successful
-  preloaded run. The rerun's success has NOT yet been established.
+- The corrected lazy GH200 forward subsequently passed job 464888.
   Details: docs/M41_4_GENERIC_UNSTRUCTURED_HALO.md.
+
+
+### M41.4 lazy full-resolution forward confirmed — Grace job 464888, 2026-10-14
+
+- Code revision 2ffa461802903f80c4eb9c1e86be69a47b03c81d
+  on calypso-grace04, same M37 checkpoint as job 464863.
+  Lazy-CSR inference-mode regression **7/7 passed** before forward.
+- **16,974,593 nodes × five output channels**, 64 generic
+  unstructured-capable partitions, full output finite.
+  Forward **108.94849112 s**, plan opening **0.14267161 s**,
+  total Python **110.43804057 s**. Original M37 weights unchanged.
+- Host RSS **1.24047852 GiB after plan opening**, peak process RSS
+  **19.98260498 GiB during entire forward**. GPU allocated peak
+  **2.25520754 GiB**, reserved peak **7.67968750 GiB**.
+- Compared to job 464863 preloaded: process RSS peak
+  31.7054 -> 19.9826 GiB (-37.0%); forward 171.2683 ->
+  108.9485 s (-36.4%). Single trials on different hosts:
+  do not attribute the speed improvement solely to lazy loading
+  without repetitions. Per-channel outputs have consistent summary
+  statistics; no full elementwise equality comparison or complete
+  unpartitioned M37 257^3 baseline.
+- Status: **M41.4 257^3 lazy forward successfully demonstrated**,
+  next performance gates are reproducibility and partition-count
+  scaling. No generative-quality assessment is being pursued.

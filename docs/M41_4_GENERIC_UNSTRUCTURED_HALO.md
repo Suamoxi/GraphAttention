@@ -198,12 +198,10 @@ The repair disables inference mode for the entire lazy __getitem__
 operation, so all tensors are ordinary/versioned. This does not
 change M37 graph edges, model weights or numerical behavior.
 
-A local PyTorch CPU minimal reproduction confirmed the diagnosis
-and verified that the full guard removes the error. Unit regression
-now runs irregular hex/tet M37 forward parity under inference mode,
-checking the sparse CSR components. The Grace Slurm script runs this
-regression gate before attempting a lazy forward. Real GH200 rerun
-of the corrected lazy path remains outstanding.
+A local PyTorch CPU minimal reproduction confirmed the diagnosis.
+Unit regression runs irregular hex/tet M37 forward parity under
+inference mode and checks CSR components. The corrected lazy full
+forward subsequently **passed on Grace job 464888**, described below.
 
 ### Next job: corrected lazy path (same prepared graph)
 
@@ -215,7 +213,62 @@ OUTPUT=/scratch/coop/theret/GraphAttention_runs/m41_4_257_inference/forward_lazy
 sbatch scripts/slurm/m41_4_generic_257_infer.slurm
 ~~~
 
-On success, compare forward_lazy_fixed/forward.json with the
-successful forward_preload_profile baseline to quantify peak
-CPU RAM versus forward execution time. No global M37 full-graph
-257^3 reference is available for a same-size numerical comparison.
+Job 464888 completed successfully; the exact run command above is
+preserved for reproducibility. No global unpartitioned M37 257^3
+reference is available for a same-size numerical comparison.
+
+
+## Confirmed lazy GH200 full-resolution forward — 2026-10-14, job 464888
+
+- Host: calypso-grace04.calypso.cerfacs.fr. Code revision:
+  2ffa461802903f80c4eb9c1e86be69a47b03c81d.
+- The new inference-mode numerical regression gate passed:
+  **7 passed, 1 PyTorch sparse-CSR beta warning** in 7.81 s.
+- Original M37 checkpoint SHA-256:
+  01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8.
+  Same checkpoint as the previous preloaded run.
+- Reused the real HDF5-derived generic 64-partition CSR plan. Node
+  count 16,974,593; largest owned/read partitions:
+  274,625 / 312,064 nodes. No Cartesian topology optimization.
+- Plan opening: 0.14267 seconds. Host RSS before plan 1.09088 GiB;
+  after plan 1.24048 GiB; peak before forward 1.61804 GiB.
+- Full model forward: **108.94849 seconds**; finite output with
+  shape [16,974,593, 5], flow_time=0.0.
+  Total Python runtime: **110.43804 seconds**, excluding separate
+  pytest gate and process/SLURM container startup.
+- Peak process RSS throughout execution: **19.98260 GiB**;
+  end-of-forward RSS: 3.04419 GiB.
+  Peak GPU allocation: **2.25521 GiB**; reserved: **7.67969 GiB**.
+- Reported channel means and standard deviations agree very closely
+  with job 464863's preloaded results. This is statistical summary
+  consistency, not an elementwise M37 equivalence test.
+- Nonfatal stderr: CUDA compatibility read-only filesystem warning
+  from Singularity cleanup and PyTorch sparse-CSR beta warning.
+
+### Memory/latency tradeoff at 64 partitions
+
+| Metric | Preload (464863) | Lazy (464888) | Change |
+|---|---:|---:|---:|
+| Plan setup | 8.854 s | 0.143 s | ~62x shorter |
+| Host RSS after plan | 23.0956 GiB | 1.2405 GiB | -94.6% |
+| Peak process RSS | 31.7054 GiB | 19.9826 GiB | -37.0% |
+| Full forward | 171.2683 s | 108.9485 s | -36.4% |
+| Peak GPU allocated | 2.2552 GiB | 2.2552 GiB | unchanged |
+| Peak GPU reserved | 7.6797 GiB | 7.6797 GiB | unchanged |
+
+**Interpretation:** the lazy partition mode demonstrated much lower
+CPU memory consumption and shorter wall time in these *single*
+successful trials on different Grace hosts. These are measured
+differences, not yet a causal performance claim: hardware locality,
+filesystem caching and CPU memory pressure may confound the speed
+comparison. Full run-to-run latency variance is not yet established.
+
+**Next computational experiment:** repeat successful forwards using
+identical partitions and both load strategies (distinct report
+folders), preferably on the same Grace host when available. Next,
+reuse the global one-hop CSR but repartition 257^3 into varying
+block counts (e.g. 16/32/64/128) and measure peak CPU RSS, GPU peak,
+preparation time and per-forward runtime. For smaller partition
+counts, explicitly raise the per-partition owned-node guard only
+if the available Grace memory budget justifies it. Avoid any
+generative-quality or spectrum claims.
