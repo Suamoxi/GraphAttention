@@ -119,3 +119,23 @@ reduce cross-host effects.
 All jobs request grace, one GPU, four CPUs and four hours with **no
 explicit --mem directive**. As usual, the user launches sbatch after
 pulling the commit; no asynchronous jobs are submitted by ChatGPT.
+
+## Actual partition-preparation outcome — Grace job 464950
+
+After fixing the Python syntax error in the initial preparation attempt,
+the rerun on commit 1afe6909 passed 11/11 regression tests and built
+all three layouts without touching the immutable base CSR.
+
+| Layout | Max owned | Max owned+halo read | Halo reads across partitions | Repartition time |
+|---|---:|---:|---:|---:|
+| 16 (4x2x2) | 1,081,665 | 1,165,192 | 1,328,176 | 57.289 s |
+| 32 (4x4x2) | 545,025 | 603,396 | 1,864,792 | 55.084 s |
+| 128 (8x4x4) | 139,425 | 164,480 | 3,486,976 | 49.905 s |
+
+Each layout conserved exactly 101,451,264 directed local edges
+and 303,167,994 exact-two-hop directed edges, including edges
+crossing ownership boundaries. These totals are a useful structural
+gate but do not establish full-output equivalence. The next stage
+is the paired repeated 64-partition lazy/preload benchmark followed
+by the partition-count sweep. No new timing or memory results for
+these forward benchmarks have yet been reported.

@@ -865,3 +865,31 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   suite remains a prerequisite to repartitioning.
 - Status: patch committed; corrected preparation job not yet run.
   Reuse scripts/slurm/m41_4_257_scaling_prepare.slurm after git pull.
+
+### M41.4 scaling preparation completed — Grace job 464950 (2026-10-14)
+
+- Grace host calypso-grace03, source revision
+  1afe690954128cde0229bfc7473c0301bd0aa75a.
+  Static Python compilation passed; **11 unit tests passed**,
+  with one nonfatal PyTorch sparse-CSR beta warning.
+- Reused the existing real 257^3 one-hop disk CSR; global topology
+  remained 101,451,264 directed one-hop edges and 303,167,994
+  directed exact-two-hop edges under every ownership assignment.
+  16, 32 and 128-partition plans were created successfully.
+- 16 partitions (4x2x2): max owned 1,081,665; max read 1,165,192;
+  1,328,176 extra halo reads across parts (factor 1.07824494);
+  repartition 57.2888 s (halo construction 56.0791 s).
+- 32 partitions (4x4x2): max owned 545,025; max read 603,396;
+  1,864,792 extra halo reads (factor 1.10985783);
+  repartition 55.0841 s (halo construction 53.9862 s).
+- 128 partitions (8x4x4): max owned 139,425; max read 164,480;
+  3,486,976 extra halo reads (factor 1.20542325);
+  repartition 49.9054 s (halo construction 48.7657 s).
+- No Cartesian-specific optimization was used. Singularity emitted
+  only harmless read-only CUDA compat filesystem cleanup warnings
+  on stderr. Note: matching global edge *counts* is not a substitute
+  for the forthcoming elementwise output comparison.
+- **Status: all requested partition-count variants PREPARED.
+  Repeated forward and 16/32/64/128 scalability benchmarks NOT
+  YET RUN.** Next: sbatch scripts/slurm/m41_4_257_scaling_bench.slurm
+  with default repeated series at 64 partitions.
