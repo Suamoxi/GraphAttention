@@ -809,3 +809,43 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
 - Status: **M41.4 257^3 lazy forward successfully demonstrated**,
   next performance gates are reproducibility and partition-count
   scaling. No generative-quality assessment is being pursued.
+
+### M41.4 repeated GH200 and partition-count scalability sweep (ready for Grace)
+
+- Scope **only computational scalability**. The established single-model
+  257^3 lazy forward on job 464888 was 108.948 s, peak process RSS
+  19.983 GiB, peak GPU allocation 2.255 GiB. Preloaded job 464863
+  was 171.268 s, process RSS peak 31.705 GiB. These are prior
+  one-trial observations on different Grace hosts, not controlled
+  repeated evidence.
+- New generic CSR layout tool: scripts/m41_4_repartition.py reuses
+  100% of the immutable 64-partition base one-hop CSR and model
+  coordinates with symlinks; recomputes owned-query exact-two-hop
+  only for 16 (4x2x2), 32 (4x4x2), and 128 (8x4x4) blocks.
+  Reuses the existing 64-partition topology directly.
+  Verifies global incoming one-hop and exact-two-hop total counts
+  for each layout; avoids any Cartesian special case or global A^2.
+- New runner: scripts/benchmark_m41_4_scalability.py uses a
+  fresh subprocess for every forward on one allocated Grace node.
+  Repeated series: 64 partitions, lazy vs preload, three runs each,
+  alternated AB/BA/AB. Sweep series: 16,32,64,128 partitions,
+  lazy mode, two runs each. Same M37 checkpoint and deterministic
+  input seed; no Heun and no generative quality evaluation.
+- New traceability: scripts/m41_4_generic_large.py records forward
+  seed and complete output SHA-256. First trial per strategy/layout
+  writes full float32 output, outside the forward time measurement.
+  scripts/summarize_m41_4_scalability.py reports median/mean/stddev
+  forward time, process RSS, GPU peaks, halo read amplification,
+  plan setup, and chunked **elementwise** max-abs/RMS/relative-L2
+  consistency against 64-partition lazy reference at atol=rtol=2e-4.
+  Outputs: scaling_summary.json, .csv and .md.
+- Grace scripts: scripts/slurm/m41_4_257_scaling_prepare.slurm and
+  scripts/slurm/m41_4_257_scaling_bench.slurm. Both use grace,
+  gpu:1, cpus-per-task=4, time=04:00:00 with **no --mem limit**.
+  The preparation script runs previous irregular-mesh M37
+  numerical equivalence tests and new unit regressions before
+  processing the real 257^3 graph.
+- **Status: code prepared; new repartition experiments and repeated
+  forward measurements NOT YET RUN on Grace**. Do not claim scaling
+  curves or an optimal partition count until results arrive.
+  See docs/M41_4_SCALABILITY_SWEEP.md.

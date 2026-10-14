@@ -250,6 +250,8 @@ def _inference(args) -> dict:
             "status": "full_highres_forward_passed", "flow_time": 0.0,
             "nodes": n, "output_shape": list(output.shape),
             "forward_seconds": time.perf_counter()-t0,
+            "seed": args.seed,
+            "output_sha256": hashlib.sha256(memoryview(output.numpy())).hexdigest(),
             "output_mean": output.mean(0).tolist(),
             "output_std": output.std(0).tolist(),
             "gpu_peak_allocated_gib": torch.cuda.max_memory_allocated(device)/1024**3,
