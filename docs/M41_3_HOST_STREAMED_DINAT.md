@@ -288,9 +288,12 @@ and
 The script explicitly binds `/archivenfs` into Singularity and checks
 both paths before launching HDF5 inspection. If the Re150/Ma0.3
 subdirectory differs on Grace, override `M41_3_DATA_BASE` or set
-`MESH_FILE` and `SNAPSHOT_FILE` individually. The job is CPU-only;
-supply `sbatch --partition=<cpu partition>` if the default partition
-requires a GPU.
+`MESH_FILE` and `SNAPSHOT_FILE` individually. The Slurm script now explicitly
+requests the `grace` partition, one GPU, four CPUs and four hours,
+matching the established Grace job configuration. There is no
+`#SBATCH --mem` limit in the script (site defaults/policies still apply).
+The HDF5 metadata preflight itself uses CPU computation; it does not yet
+perform GPU inference.
 
 ```bash
 cd /scratch/coop/theret/GraphAttention

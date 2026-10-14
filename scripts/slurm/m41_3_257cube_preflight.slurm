@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=m41_3_257_preflight
-#SBATCH --time=00:45:00
-#SBATCH --cpus-per-task=2
-#SBATCH --mem=8G
+#SBATCH --time=04:00:00
+#SBATCH --partition=grace
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
 #SBATCH --output=/scratch/coop/theret/GraphAttention/%x_%j.out
 #SBATCH --error=/scratch/coop/theret/GraphAttention/%x_%j.err
 
-# Metadata-only, CPU-only HDF5 inspection. This deliberately does NOT ask for a
-# GPU and does NOT call GraphTaskCollator or build the full two-hop graph.
-# Supply the appropriate Slurm partition with sbatch --partition=<cpu partition>
-# if Calypso's default partition does not accept CPU-only jobs.
+# Reserve one GPU on Grace to request the known working cluster resources.
+# The HDF5 metadata inspection is CPU-only and does not run inference.
+# Do NOT call GraphTaskCollator or build the full two-hop graph.
 set -euo pipefail
 
 REPO=/scratch/coop/theret/GraphAttention
@@ -37,7 +37,8 @@ echo "M41.3: 257^3 real mesh metadata and indexing preflight"
 echo "Mesh: $MESH_FILE"
 echo "Snapshot: $SNAPSHOT_FILE"
 echo "Report: $OUT"
-echo "No full graph construction. No GPU. No trained model or sampler invoked."
+echo "Allocated host: $(hostname)"
+echo "No full graph construction. No GPU computation. No trained model or sampler invoked."
 
 singularity exec -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m pytest tests/unit/test_m41_3_large_hdf5_preflight.py -q
