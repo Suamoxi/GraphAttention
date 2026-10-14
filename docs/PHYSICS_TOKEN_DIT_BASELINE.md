@@ -1,7 +1,8 @@
 # Standalone Physics-Token DiT (Transolver-style global-state experiment)
 
-**Status: code/config/tests and Slurm pilot prepared; Calypso training, GH200
-timings, and generated-field quality are NOT yet measured.**
+**Status: GH200 10-epoch training integration pilot PASSED (job 462860,
+2026-10-13). Generation quality and convergence-matched comparisons
+against M37/M38 remain untested.**
 
 ## Objective: isolate learned global communication
 
@@ -181,6 +182,47 @@ The generation script uses the saved `resolved_config.yaml` and the
 original generic sampler; it does **not** use M37 checkpoints. The
 generated test set can then be compared to M37/M38 with the existing
 statistical/spectral tools.
+
+## GH200 integration pilot: job 462860 (2026-10-13)
+
+The first training pilot completed under Git commit
+`6b65f01aafcf55019f18693e3f7871084708b123`
+after 32 passing unit/regression tests.
+
+| Metric | Result |
+|---|---:|
+| Model parameters | 2,938,285 |
+| Best validation Flow Matching velocity MSE | 1.42555245 (epoch 9) |
+| Test Flow Matching velocity MSE at best checkpoint | 1.46680478 |
+| Initial validation MSE, epoch 0 | 1.75708347 |
+| Fit wall time | 859.527 seconds |
+| Mean epoch compute time | 85.7592 seconds |
+| Peak allocated / reserved GPU memory | 22.1048 / 22.7324 GiB |
+| Node count per sample | 35,937 |
+| Total / train / validation / test samples | 1,262 / 883 / 189 / 190 |
+| Model | 10 layers, hidden 128, four heads, 64 tokens/head |
+| Microbatch / gradient accumulation | 4 / 4 |
+
+The validation metric is still decreasing, although the rate of
+improvement has slowed substantially after epoch 3. **Ten epochs
+are not enough to assess convergence or generative realism.**
+No generated-field quality, energy-spectrum, or model-speed
+comparison against M37/M38 is established by this training log.
+
+The common training runner writes `last.pt` every epoch and resumes
+from that checkpoint when `generative.resume=true`. To continue the
+*same run* without changing architecture, batch size or optimizer:
+
+```bash
+export MAX_EPOCHS=100
+sbatch scripts/slurm/physics_token_dit_3d_train.slurm
+```
+
+This continues from epoch 10 through epoch 99, rather than starting a
+new run. The 1000-epoch compute-only extrapolation from this pilot is
+~23.8 hours; the current Slurm script has a 12-hour limit, so a
+1000-epoch target requires resumable subsequent jobs or an approved
+longer job. These are estimates, not new GH200 measurements.
 
 ## Follow-up only if successful
 

@@ -663,8 +663,27 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   `include_self_attention` and `sparse_attention_backend`.
   Both **tests only** were corrected, and the unsupported interleaved
   layout now has a rejection regression test. Neither architecture
-  nor model weights changed. GH200 retest and training remain pending.
-- Status: **PILOT DID NOT REACH TRAINING**. No GH200 training curves,
-  loss, spectra or `257^3` scaling claims.
+  nor model weights changed.
+- GH200 job **462860**, started 2026-10-13 with commit
+  `6b65f01aafcf55019f18693e3f7871084708b123`:
+  **32 regression tests passed**. Standalone Physics-Token DiT
+  completed its configured 10-epoch pilot (epochs 0–9) without
+  failure. Best validation Flow Matching velocity MSE **1.42555245**
+  at epoch 9, held-out test MSE **1.46680478**; 2,938,285 parameters.
+  Mean epoch compute time **85.7592 s**, fit wall **859.527 s**,
+  peak GPU allocated **22.1048 GiB**, reserved **22.7324 GiB**.
+  Data: 35,937 nodes/sample, 1,262 samples (883/189/190
+  train/validation/test), microbatch 4, gradient accumulation 4,
+  64 tokens/head, 10 layers, hidden 128, four heads, FP32.
+  The validation loss fell from 1.75708 to 1.42555, with slower
+  improvement after epoch 3. This validates training integration,
+  **not** convergence or generated-field spectral quality.
+- Status: **10-EPOCH GH200 TRAINING PILOT PASSED**.
+  No generative spectra or `257^3` scaling claims.
+  Run directory:
+  `/scratch/coop/theret/GraphAttention_runs/physics_token_3d_flow_h128_l10_h4_g64_b4_acc4`.
+  Further steps: optional 50-step Heun generation smoke on this
+  checkpoint and resume same configuration to 100 epochs before
+  assessing a 1000-epoch matched convergence comparison.
   Full design/limitations: `docs/PHYSICS_TOKEN_DIT_BASELINE.md`.
 
