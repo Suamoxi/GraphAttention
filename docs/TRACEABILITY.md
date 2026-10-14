@@ -737,7 +737,8 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
 - Regression gate: tests/unit/test_m41_4_generic_csr.py verifies
   irregular shuffled hexahedral and tetrahedral input graph
   construction, exact-two-hop exclusion/deduplication and full M37
-  output parity including self-loop variants.
+  output parity including self-loop variants; additionally verifies
+  complete numerical forward parity on a truly unstructured tet mesh.
 - Grace stages:
   scripts/slurm/m41_4_generic_257_prepare.slurm runs the unstructured
   gate BEFORE touching 257^3, then builds CSR/partitions from the real

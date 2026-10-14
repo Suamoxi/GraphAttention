@@ -101,9 +101,14 @@ jobs to the same generation directory.
   graph and no full GPU hidden tensor are constructed.
 - Coordinate units must match the physical-nondimensionalization
   convention used in M37 training. The preparation runner supports
-  M41_4_COORD_DIVISOR; its default 1.0 is suitable for a
-  compatibility/memory experiment, NOT evidence of physically
-  comparable geometry or generated CFD statistics.
+  M41_4_COORD_DIVISOR. For the supplied Re150/Ma0.3 hip.in, the
+  box side is 0.0006227710672453675 m; this is the default
+  coordinate divisor in the Grace preparation job to reproduce
+  a unit-box coordinate convention. M37 used its own source
+  HIT_LES_FORCED box length 0.0005668079275737893 m as L_ref.
+  Matching these dimensionless coordinate conventions is necessary
+  but does NOT establish statistical transfer across different
+  Reynolds and Mach numbers.
 - The M37 checkpoint was trained on the much smaller HIT_LES_FORCED
   dataset, not this Re150/Ma0.3 257^3 simulation. A successful forward
   or Heun rollout demonstrates execution feasibility, not quality.

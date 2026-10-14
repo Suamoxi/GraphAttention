@@ -20,7 +20,7 @@ MESH_FILE=${MESH_FILE:-${BASE}/MESH/mesh.mesh.h5}
 SNAPSHOT_FILE=${SNAPSHOT_FILE:-${BASE}/SOLUT/solut_hit_00000001.h5}
 GRAPH_ROOT=${GRAPH_ROOT:-/scratch/coop/theret/GraphAttention_runs/m41_4_257_generic_graph}
 BLOCKS=${M41_4_BLOCKS:-"4 4 4"}
-COORD_DIVISOR=${M41_4_COORD_DIVISOR:-1.0}
+COORD_DIVISOR=${M41_4_COORD_DIVISOR:-0.0006227710672453675}
 MAX_OWNED=${M41_4_MAX_OWNED:-400000}
 TESTS=${M41_4_TESTS:-"tests/unit/test_m41_4_generic_csr.py tests/unit/test_streamed_dinat.py tests/unit/test_owned_query_dinat.py tests/unit/test_geometry_connectivity.py"}
 cd "$REPO"

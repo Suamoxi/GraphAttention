@@ -92,6 +92,12 @@ def owned_query_edge_keys(
         targets = owned[start:start+chunk_targets].astype(np.int64)
         first_source, first_target = _expand_incoming(csr, targets)
         direct = np.unique(_edge_keys(first_source, first_target, n))
+        walk_count = int(np.sum(csr.indptr[first_source+1] - csr.indptr[first_source], dtype=np.int64))
+        if walk_count > 2000000:
+            raise MemoryError(
+                "more than two million length-two paths in one owned-query batch; "
+                "reduce --chunk-targets to bound intermediate memory"
+            )
         second_source, second_target = _expand_incoming(csr, first_source)
         # second_target is the intermediate key/node, not the final target.
         del second_target

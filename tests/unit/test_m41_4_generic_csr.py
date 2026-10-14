@@ -201,3 +201,68 @@ def test_reject_wrong_indexing_and_unsized_partitions(tmp_path):
             csr, np.zeros(len(coords), np.int32),
             output_dir=tmp_path/"huge", max_owned_nodes=4,
         )
+
+
+def test_true_unstructured_tetrahedral_m37_full_forward_parity(tmp_path):
+    """M37 numerical parity on non-Cartesian tetrahedral connectivity."""
+    vertices = np.array([
+        [-0.7, 0.2, 0.1], [1.5, -0.2, 0.3], [0.2, 1.4, 0.7],
+        [-0.4, 0.5, 2.2], [2.1, 1.0, 1.8], [1.1, -0.9, 2.5],
+        [0.8, 1.6, -1.3],
+    ], dtype=np.float32)
+    cells = np.array([
+        [5, 1, 3, 2], [6, 4, 3, 5], [2, 3, 4, 7], [4, 5, 6, 7],
+    ], dtype=np.uint64)
+    mesh = tmp_path/"irregular_tet.h5"
+    with h5py.File(mesh, "w") as h5:
+        h5.create_group("Connectivity").create_dataset("tet->node", data=cells)
+    build_hdf5_disk_csr(
+        mesh, num_nodes=len(vertices), output_dir=tmp_path/"csr",
+        element_type="tet", connectivity_path="Connectivity/tet->node",
+        chunk_cells=2, bucket_nodes=2,
+    )
+    graph = DiskCSR.open(tmp_path/"csr")
+    source, target = [], []
+    for j in range(len(vertices)):
+        neighbors = graph.indices[graph.indptr[j]:graph.indptr[j+1]]
+        source.extend(int(i) for i in neighbors)
+        target.extend([j]*len(neighbors))
+    edge_index = torch.tensor([source, target], dtype=torch.long)
+    dilated = exact_two_hop_edge_index(edge_index, len(vertices))
+    owners = spatial_owners(vertices, blocks=(2,1,2), chunk_nodes=3)
+    build_partition_files(
+        graph, owners, output_dir=tmp_path/"parts",
+        chunk_targets=2, max_owned_nodes=5,
+        include_self_attention=True,
+    )
+    torch.manual_seed(429)
+    model = AlternatingDilatedGeometricDiT(
+        in_channels=5, out_channels=5, hidden_dim=32, num_heads=4,
+        num_layers=4, spatial_dim=3, conditioning_channels=1,
+        sparse_attention_backend="torch_sparse",
+        include_self_attention=True,
+    ).eval()
+    with torch.no_grad():
+        for block in model.blocks:
+            torch.nn.init.normal_(block.adaLN_modulation[-1].weight, std=0.025)
+            torch.nn.init.normal_(block.adaLN_modulation[-1].bias, std=0.045)
+        torch.nn.init.normal_(model.final_layer.projection.weight, std=0.08)
+        x = torch.randn(len(vertices), 5)
+        cond = torch.tensor([[350.0]], dtype=torch.float32)
+        xyz = torch.tensor(vertices)
+        expected = model(
+            x, coords=xyz, edge_index=edge_index,
+            attention_edge_indices={"dilated": dilated},
+            conditioning=cond,
+        )
+        model._torch_sparse_topology_cache.clear()
+        model._self_attention_edge_cache.clear()
+        plan = build_disk_streamed_dinat_plan(
+            model, coords=xyz, partition_dir=tmp_path/"parts", preload=False,
+        )
+        observed = forward_streamed_dinat(
+            model, x, plan=plan, conditioning=cond,
+        )
+        torch.testing.assert_close(
+            observed, expected, atol=2e-4, rtol=2e-4,
+        )

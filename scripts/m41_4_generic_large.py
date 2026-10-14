@@ -216,12 +216,12 @@ def _inference(args) -> dict:
         with torch.inference_mode():
             output = forward_streamed_dinat(
                 model, noise, plan=plan,
-                conditioning=torch.tensor([[0.5*float(cfg.task.time_embedding_scale)]], dtype=torch.float32),
+                conditioning=torch.tensor([[0.0]], dtype=torch.float32),
             )
         if not torch.isfinite(output).all():
             raise ValueError("nonfinite full high-resolution forward result")
         report = {
-            "status": "full_highres_forward_passed",
+            "status": "full_highres_forward_passed", "flow_time": 0.0,
             "nodes": n, "output_shape": list(output.shape),
             "forward_seconds": time.perf_counter()-t0,
             "output_mean": output.mean(0).tolist(),
