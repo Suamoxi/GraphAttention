@@ -48,6 +48,15 @@ test -s "$BASE_PREP/prepare.json" || { echo "Missing prepared 64-partition base"
 mkdir -p "$SWEEP_ROOT/benchmarks/$SERIES"
 echo "M41.4 $SERIES: layouts=$LAYOUTS strategies=$STRATEGIES repeats=$REPEATS"
 echo "Host $(hostname), commit $(git rev-parse HEAD)"
+echo "==== static Python syntax gate (before pytest or large graph work) ===="
+singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
+    "$PYTHON" -m py_compile \
+    scripts/m41_4_repartition.py \
+    scripts/benchmark_m41_4_scalability.py \
+    scripts/summarize_m41_4_scalability.py \
+    scripts/m41_4_generic_large.py \
+    tests/unit/test_m41_4_scaling.py
+
 nvidia-smi
 
 for layout in $LAYOUTS; do

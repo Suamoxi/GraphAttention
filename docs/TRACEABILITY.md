@@ -849,3 +849,19 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   forward measurements NOT YET RUN on Grace**. Do not claim scaling
   curves or an optimal partition count until results arrive.
   See docs/M41_4_SCALABILITY_SWEEP.md.
+
+
+### M41.4 scaling preparation job 464928 — failure and correction
+
+- Job 464928 on calypso-grace04, revision 2b349a16, stopped during
+  pytest collection with a SyntaxError in
+  scripts/benchmark_m41_4_scalability.py line 35: the
+  _plan crossover list comprehension missed a closing parenthesis.
+  No 16/32/128 partition plans were constructed. The original
+  64-partition graph/CSR was not changed.
+- Fixed the unmatched parenthesis; both scaling Slurm scripts now
+  run python -m py_compile for the new scripts before pytest or
+  launching a GH200 benchmark. The original irregular-mesh regression
+  suite remains a prerequisite to repartitioning.
+- Status: patch committed; corrected preparation job not yet run.
+  Reuse scripts/slurm/m41_4_257_scaling_prepare.slurm after git pull.

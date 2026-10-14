@@ -32,7 +32,7 @@ def _plan(repeats: int, strategies: tuple[str, ...]) -> list[tuple[int, str]]:
         raise ValueError("strategies must be lazy and/or preload")
     # AB, BA, AB ...; always start from caller-specified canonical order.
     return [(r, mode) for r in range(1, repeats + 1)
-            for mode in (strategies if r % 2 else tuple(reversed(strategies))]
+            for mode in (strategies if r % 2 else tuple(reversed(strategies)))]
 
 
 def _validate_report(report: dict, *, num_nodes: int, partitions: int,
