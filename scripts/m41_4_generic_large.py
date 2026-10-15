@@ -34,6 +34,7 @@ from graph_attention.geometry.partition_csr import (
 from graph_attention.models.dinat_dit import AlternatingDilatedGeometricDiT
 from graph_attention.models.disk_streamed_dinat import build_disk_streamed_dinat_plan
 from graph_attention.models.streamed_dinat import forward_streamed_dinat
+from graph_attention.models.streamed_stage_profile import StreamedStageProfiler
 from scripts.generate_generative import _load_standardizers
 
 
@@ -238,11 +239,13 @@ def _inference(args) -> dict:
     if args.mode == "forward":
         generator = torch.Generator(device="cpu").manual_seed(args.seed)
         noise = torch.randn((n, len(names)), generator=generator, dtype=torch.float32)
+        profiler = StreamedStageProfiler() if args.profile_stages else None
         t0 = time.perf_counter()
         with torch.inference_mode():
             output = forward_streamed_dinat(
                 model, noise, plan=plan,
                 conditioning=torch.tensor([[0.0]], dtype=torch.float32),
+                stage_profiler=profiler,
             )
         if not torch.isfinite(output).all():
             raise ValueError("nonfinite full high-resolution forward result")
@@ -258,6 +261,7 @@ def _inference(args) -> dict:
             "gpu_peak_reserved_gib": torch.cuda.max_memory_reserved(device)/1024**3,
             "checkpoint_sha256": ckpt_digest,
             "preload_partitions": args.preload_partitions,
+            "diagnostic_profile_enabled": profiler is not None,
             "plan_load_seconds": plan_seconds,
             "host_memory_before_plan": host_memory_before_plan,
             "host_memory_after_plan": host_memory_after_plan,
@@ -267,6 +271,8 @@ def _inference(args) -> dict:
             "max_partition_read_nodes": prep["max_partition_read_nodes"],
             "total_wall_seconds": time.perf_counter()-started,
         }
+        if profiler is not None:
+            report["stage_profile"] = profiler.report()
         _report(args.output_dir/"forward.json", report)
         if args.save_forward:
             args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -399,6 +405,10 @@ def main() -> None:
     infer.add_argument("--preload-partitions", action="store_true")
     infer.add_argument("--seed", type=int, default=5678)
     infer.add_argument("--save-forward", action="store_true")
+    infer.add_argument(
+        "--profile-stages", action="store_true",
+        help="Synchronized per-stage diagnostics; NOT comparable to unprofiled latency",
+    )
     infer.add_argument("--steps", type=int, default=50)
     infer.add_argument("--max-steps-this-run", type=int, default=1)
     args = p.parse_args()
@@ -407,6 +417,8 @@ def main() -> None:
     else:
         if args.steps < 1 or args.max_steps_this_run < 1:
             raise ValueError("steps and max_steps_this_run must be positive")
+        if args.profile_stages and args.mode != "forward":
+            raise ValueError("--profile-stages currently supports forward mode only")
         _inference(args)
 
 

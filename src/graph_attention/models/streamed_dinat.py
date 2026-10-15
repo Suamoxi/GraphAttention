@@ -12,11 +12,14 @@ host: topology construction is NOT yet an out-of-core graph builder.
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
+import time
 
 import torch
 
 from .dinat_dit import AlternatingDilatedGeometricDiT
+from .streamed_stage_profile import StreamedStageProfiler
 from .dit_common import _modulate
 from .owned_query_dinat import (
     OwnedQueryPartition,
@@ -143,6 +146,36 @@ def _initial_owned(
     return model.input_projection(inputs) + model.coordinate_projection(coords)
 
 
+def _phase(
+    profile: StreamedStageProfiler | None, name: str,
+    *, device: torch.device, layer_index: int | None = None,
+):
+    """The ordinary numerical path has no CUDA synchronization added."""
+    return (
+        profile.measure(name, device=device, layer_index=layer_index)
+        if profile is not None else nullcontext()
+    )
+
+
+def _partition_iterator(
+    partitions,
+    profile: StreamedStageProfiler | None,
+    *, device: torch.device, layer_index: int | None = None,
+):
+    """Capture NPZ/CSR materialization without retaining prior partitions."""
+    if profile is None:
+        yield from partitions
+        return
+    iterator = iter(partitions)
+    while True:
+        with profile.measure("partition_metadata_load", device=device, layer_index=layer_index):
+            try:
+                part = next(iterator)
+            except StopIteration:
+                return
+        yield part
+
+
 def _update_owned(
     block: torch.nn.Module,
     current_host: torch.Tensor,
@@ -151,39 +184,56 @@ def _update_owned(
     layer_index: int,
     shifts: tuple[torch.Tensor, ...],
     device: torch.device,
+    stage_profiler: StreamedStageProfiler | None = None,
 ) -> torch.Tensor:
-    """Only one partition's hidden/QKV/attention/MLP tensors live on GPU."""
+    """Only one partition's hidden/QKV/attention/MLP tensors live on GPU.
+
+    Optional profiling inserts CUDA synchronization around disjoint phases.
+    With no profiler these operations and their order match M41.3.
+    """
     shift_attn, scale_attn, gate_attn, shift_mlp, scale_mlp, gate_mlp = shifts
     nodes = part.nodes
-    read_hidden = current_host.index_select(0, nodes.read_global).to(device)
-    owned_local = nodes.owned_local.to(device)
+    with _phase(stage_profiler, "cpu_hidden_gather", device=device, layer_index=layer_index):
+        host_hidden = current_host.index_select(0, nodes.read_global)
+    with _phase(stage_profiler, "h2d_hidden_and_owned_indices", device=device, layer_index=layer_index):
+        read_hidden = host_hidden.to(device)
+        owned_local = nodes.owned_local.to(device)
+    del host_hidden
 
-    attention_input = _modulate(block.norm1(read_hidden), shift_attn, scale_attn)
-    attention_module = block.attention
-    qkv = attention_module.qkv(attention_input).reshape(
-        read_hidden.shape[0], 3, attention_module.num_heads, attention_module.head_dim
-    )
+    with _phase(stage_profiler, "gpu_norm_qkv", device=device, layer_index=layer_index):
+        attention_input = _modulate(block.norm1(read_hidden), shift_attn, scale_attn)
+        attention_module = block.attention
+        qkv = attention_module.qkv(attention_input).reshape(
+            read_hidden.shape[0], 3, attention_module.num_heads, attention_module.head_dim
+        )
     attention = nodes.local if layer_index % 2 == 0 else nodes.dilated
     topology = part.local if layer_index % 2 == 0 else part.dilated
-    # Edge indices are only used for their edge count in _owned_context.
-    # Transfer displacements and rectangular CSR, but not a global graph.
-    staged_attention = replace(
-        attention, displacement=attention.displacement.to(device)
-    )
-    scores = _owned_context(
-        attention_module,
-        qkv[:, 0].index_select(0, owned_local),
-        qkv[:, 1],
-        qkv[:, 2],
-        staged_attention,
-        _gpu_topology(topology, device),
-    )
-    owned_hidden = read_hidden.index_select(0, owned_local)
-    owned_hidden = owned_hidden + gate_attn * attention_module.out_proj(
-        scores.reshape(owned_local.numel(), model_hidden_dim(block))
-    )
-    mlp_input = _modulate(block.norm2(owned_hidden), shift_mlp, scale_mlp)
-    return owned_hidden + gate_mlp * block.mlp(mlp_input)
+
+    # Displacements and rectangular CSR are moved only for this partition;
+    # the original M37 edge sets and sparse attention are unchanged.
+    with _phase(stage_profiler, "h2d_attention_topology_geometry", device=device, layer_index=layer_index):
+        staged_attention = replace(
+            attention, displacement=attention.displacement.to(device)
+        )
+        staged_topology = _gpu_topology(topology, device)
+    with _phase(stage_profiler, "gpu_attention_context", device=device, layer_index=layer_index):
+        scores = _owned_context(
+            attention_module,
+            qkv[:, 0].index_select(0, owned_local),
+            qkv[:, 1],
+            qkv[:, 2],
+            staged_attention,
+            staged_topology,
+        )
+    with _phase(stage_profiler, "gpu_attention_out_residual", device=device, layer_index=layer_index):
+        owned_hidden = read_hidden.index_select(0, owned_local)
+        owned_hidden = owned_hidden + gate_attn * attention_module.out_proj(
+            scores.reshape(owned_local.numel(), model_hidden_dim(block))
+        )
+    with _phase(stage_profiler, "gpu_mlp", device=device, layer_index=layer_index):
+        mlp_input = _modulate(block.norm2(owned_hidden), shift_mlp, scale_mlp)
+        result = owned_hidden + gate_mlp * block.mlp(mlp_input)
+    return result
 
 
 def model_hidden_dim(block: torch.nn.Module) -> int:
@@ -198,6 +248,7 @@ def forward_streamed_dinat(
     plan: StreamedDiNATPlan,
     conditioning: torch.Tensor | None,
     return_layer_states: bool = False,
+    stage_profiler: StreamedStageProfiler | None = None,
 ) -> torch.Tensor | tuple[torch.Tensor, list[torch.Tensor]]:
     """Run M37 layer-by-layer with CPU global buffers and GPU-local working sets.
 
@@ -241,38 +292,60 @@ def forward_streamed_dinat(
     condition = model._condition_embedding(
         probe, batch_index=None, conditioning=conditioning
     )
-    input_host = inputs.detach().to("cpu")
-    hidden = _host_buffer(plan, model.hidden_dim)
-    next_hidden = _host_buffer(plan, model.hidden_dim)
+    forward_start = time.perf_counter() if stage_profiler is not None else None
+    with _phase(stage_profiler, "host_buffer_initialization", device=device):
+        input_host = inputs.detach().to("cpu")
+        hidden = _host_buffer(plan, model.hidden_dim)
+        next_hidden = _host_buffer(plan, model.hidden_dim)
 
-    for part in plan.partitions:
-        result = _initial_owned(model, input_host, plan, part).to("cpu")
-        hidden.index_copy_(0, part.nodes.owned_global, result)
+    for part in _partition_iterator(plan.partitions, stage_profiler, device=device):
+        with _phase(stage_profiler, "initial_projection_and_readback", device=device):
+            result = _initial_owned(model, input_host, plan, part).to("cpu")
+        with _phase(stage_profiler, "initial_cpu_scatter", device=device):
+            hidden.index_copy_(0, part.nodes.owned_global, result)
     del input_host
 
     states: list[torch.Tensor] = []
     for layer_index, block in enumerate(model.blocks):
-        modulation = block.adaLN_modulation(condition)
-        shifts = modulation.chunk(6, dim=-1)
+        layer_start = time.perf_counter() if stage_profiler is not None else None
+        with _phase(stage_profiler, "gpu_layer_modulation", device=device, layer_index=layer_index):
+            modulation = block.adaLN_modulation(condition)
+            shifts = modulation.chunk(6, dim=-1)
 
         # Jacobi synchronization: ALL partitions read the immutable previous
         # hidden buffer. Nothing reads current-layer output until the next layer.
-        for part in plan.partitions:
-            updated = _update_owned(
+        # Blocking GPU->CPU readback of owned states is the effective barrier.
+        for part in _partition_iterator(
+            plan.partitions, stage_profiler, device=device, layer_index=layer_index
+        ):
+            predicted = _update_owned(
                 block, hidden, part, layer_index=layer_index,
-                shifts=shifts, device=device,
-            ).to("cpu")
-            next_hidden.index_copy_(0, part.nodes.owned_global, updated)
-        hidden, next_hidden = next_hidden, hidden
+                shifts=shifts, device=device, stage_profiler=stage_profiler,
+            )
+            with _phase(stage_profiler, "d2h_owned_readback", device=device, layer_index=layer_index):
+                updated = predicted.to("cpu")
+            with _phase(stage_profiler, "cpu_owned_scatter", device=device, layer_index=layer_index):
+                next_hidden.index_copy_(0, part.nodes.owned_global, updated)
+        with _phase(stage_profiler, "jacobi_buffer_swap", device=device, layer_index=layer_index):
+            hidden, next_hidden = next_hidden, hidden
         if return_layer_states:
             states.append(hidden.clone())
+        if stage_profiler is not None:
+            stage_profiler.layer_wall_seconds[layer_index] = time.perf_counter() - layer_start
 
     output_host = _host_buffer(plan, model.out_channels)
-    for part in plan.partitions:
+    for part in _partition_iterator(plan.partitions, stage_profiler, device=device):
         owned = part.nodes.owned_global
-        owned_hidden = hidden.index_select(0, owned).to(device)
-        updated = model.final_layer(owned_hidden, condition, batch_index=None)
-        output_host.index_copy_(0, owned, updated.to("cpu"))
+        with _phase(stage_profiler, "final_projection_and_readback", device=device):
+            owned_hidden = hidden.index_select(0, owned).to(device)
+            updated = model.final_layer(owned_hidden, condition, batch_index=None)
+            result = updated.to("cpu")
+        with _phase(stage_profiler, "final_cpu_scatter", device=device):
+            output_host.index_copy_(0, owned, result)
     # The original sampler retains global *physical* states, not hidden states.
-    output = output_host.to(inputs.device)
+    with _phase(stage_profiler, "output_return_to_input_device", device=device):
+        output = output_host.to(inputs.device)
+    if stage_profiler is not None:
+        stage_profiler._sync(device)
+        stage_profiler.forward_wall_seconds = time.perf_counter() - forward_start
     return (output, states) if return_layer_states else output

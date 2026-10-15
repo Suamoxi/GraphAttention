@@ -321,3 +321,52 @@ def test_actual_fifty_step_heun_task_reuses_cpu_streamed_plan():
     assert adapter.calls == 100
     assert torch.equal(original_noise[0], streamed_noise[0])
     torch.testing.assert_close(generated, original, atol=2e-4, rtol=2e-4)
+
+
+def test_optional_stage_profiler_preserves_cpu_forward():
+    """Diagnostic markers do not modify M37 output, including Jacobi updates."""
+    from graph_attention.models.streamed_stage_profile import StreamedStageProfiler
+
+    coords, edges = _mesh(nx=4, ny=3, nz=3)
+    attention = build_attention_edge_indices(
+        edges, len(coords), {"dilated": "exact_two_hop"}
+    )
+    model = _model()
+    owners = coordinate_block_partition_ids(coords, blocks=(2, 2, 1))
+    plan = build_streamed_dinat_plan(
+        model, coords=coords, edge_index=edges,
+        attention_edge_indices=attention, partition_ids=owners,
+    )
+    torch.manual_seed(34990)
+    fields = torch.randn(len(coords), model.in_channels)
+    conditioning = torch.tensor([[40.0]], dtype=torch.float32)
+    with torch.inference_mode():
+        reference = forward_streamed_dinat(
+            model, fields, plan=plan, conditioning=conditioning
+        )
+        profiler = StreamedStageProfiler()
+        observed = forward_streamed_dinat(
+            model, fields, plan=plan, conditioning=conditioning,
+            stage_profiler=profiler,
+        )
+    torch.testing.assert_close(observed, reference, atol=5e-5, rtol=5e-5)
+    details = profiler.report()
+    assert details["timing_method"] == "synchronized_wall_seconds_not_cuda_kernel_time"
+    assert details["profiled_forward_wall_seconds"] > 0.0
+    assert details["synchronization_calls"] == 0  # CPU-only test
+    n_parts = len(plan.partitions)
+    n_layers = len(model.blocks)
+    for stage in (
+        "partition_metadata_load", "cpu_hidden_gather",
+        "h2d_hidden_and_owned_indices", "gpu_norm_qkv",
+        "h2d_attention_topology_geometry", "gpu_attention_context",
+        "gpu_attention_out_residual", "gpu_mlp",
+        "d2h_owned_readback", "cpu_owned_scatter", "jacobi_buffer_swap",
+    ):
+        assert details["stage_seconds"][stage] >= 0
+        assert details["stage_calls"][stage] > 0
+    assert details["stage_calls"]["gpu_attention_context"] == n_parts * n_layers
+    assert details["stage_calls"]["jacobi_buffer_swap"] == n_layers
+    assert len(details["layer_wall_seconds"]) == n_layers
+    assert len(details["layers_stage_seconds"]) == n_layers
+    assert details["stage_total_seconds"] <= details["profiled_forward_wall_seconds"] * 1.1

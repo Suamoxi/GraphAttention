@@ -993,3 +993,46 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   sparse attention and layerwise synchronization.
   No generative-quality or spectral analysis is included.
   See docs/M41_4_SCALABILITY_SWEEP.md.
+
+
+### M41.5 matched-host 32-vs-64 repetition and stage profiling (implementation)
+
+- Motivation: M41.4 fixed 257^3 sweep gave 32 lazy median
+  106.2875 s (n=2) versus 64 lazy 110.6150 s (n=2),
+  with peak GPU allocated 4.414 vs 2.255 GiB.
+  Two runs per layout were insufficient to prove a stable ~4%
+  speed advantage or diagnose bottlenecks.
+- New optional StreamedStageProfiler:
+  src/graph_attention/models/streamed_stage_profile.py;
+  src/graph_attention/models/streamed_dinat.py adds stage_profiler
+  parameter (None by default). Captures disjoint synchronized
+  wall-clock totals for lazy CPU partition assembly, host hidden
+  gathers, hidden+index H2D, QKV, CSR/geometry H2D, geometric
+  sparse attention context, output projection, MLP, owned D2H,
+  CPU scatter, and Jacobi pointer swap. Also records initial/final
+  projection, per-layer times and even/odd local/exact-2-hop
+  attention differences. Synchronized profiles intentionally add
+  overhead; these are not pure GPU kernel timings.
+- scripts/m41_4_generic_large.py adds opt-in --profile-stages,
+  only for single forward, and writes stage_profile to the existing
+  forward.json contract. Normal forwards remain unprofiled.
+- scripts/benchmark_m41_5_paired_profile.py runs 6 AB/BA
+  alternating matched-host 32/64 unprofiled repetitions EACH
+  in fresh subprocesses (12 baseline timings), then one separate
+  profiled diagnostic forward per layout (2 more forwards).
+  Verifies same checkpoint, seed, graph, lazy strategy and
+  complete first-trial elementwise output parity; writes
+  progress.json and summary.json with stage and layer breakdowns.
+  Reuses previously prepared 32/64 partitions, no CSR rebuild.
+- scripts/slurm/m41_5_257_paired_profile.slurm reserves
+  Grace, 1 GPU, 4 CPUs, 4 hours, no explicit --mem. Runs
+  Python syntax-compilation preflight, existing M41.3+M41.4
+  numerical regressions and new M41.5 unit tests before GPU trials.
+- tests/unit/test_streamed_dinat.py verifies optional profiling
+  leaves numerical predictions unchanged on a small graph.
+  tests/unit/test_m41_5_paired_profile.py checks AB/BA order,
+  immutable 32/64 CSR mapping and profile metadata integrity.
+- **Status: code prepared on GitHub, Grace job NOT YET RUN**.
+  Do not report new CPU/GPU stage time shares or 32-vs-64
+  performance statistics until the user's benchmark summary arrives.
+  Instructions: docs/M41_5_PAIRED_PROFILE.md.
