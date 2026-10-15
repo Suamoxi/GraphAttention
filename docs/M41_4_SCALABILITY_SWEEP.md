@@ -139,3 +139,51 @@ gate but do not establish full-output equivalence. The next stage
 is the paired repeated 64-partition lazy/preload benchmark followed
 by the partition-count sweep. No new timing or memory results for
 these forward benchmarks have yet been reported.
+
+
+## Completed 64-partition repeated experiment — 2026-10-15
+
+Uploaded scaling_summary.json reports **6/6 completed full forwards**
+on the same fixed 16,974,593-node mesh, unchanged checkpoint and
+input seed 5678. Layout 4x4x4 was used for both loading policies.
+
+| Metric | Lazy (n=3) | Preloaded (n=3) |
+|---|---:|---:|
+| Median forward (s) | 109.9363 | 160.5281 |
+| Mean forward (s) | 110.9415 | 158.8194 |
+| Standard deviation forward (s) | 2.2118 | 14.7195 |
+| Forward range (s) | 109.4109–113.4773 | 143.3201–172.6099 |
+| Median CPU peak process RSS (GiB) | 19.9460 | 31.6921 |
+| Median metadata setup (s) | 0.1488 | 8.0998 |
+| GPU peak allocated (GiB) | 2.2552 | 2.2552 |
+| GPU peak reserved (GiB) | 7.6797 | 7.6797 |
+
+Relative to preloading, lazy mode reduced median forward time
+by **31.52%**, median peak process RSS by **37.06%**, and
+metadata setup time by **98.16%**. The runs were alternated
+within the same allocated Grace job. Results are consistent with
+the earlier single-run comparison but still have only three
+repetitions and may depend on host memory locality/caching.
+
+First full saved lazy/preloaded outputs agree at
+max_abs=3.09944e-6, RMS=2.94397e-7, relative_L2=2.91160e-7,
+zero violations at atol=rtol=2e-4 across 84,872,965 elements.
+All three forward outputs within each strategy had distinct
+SHA-256 digests: **not bitwise reproducible**. No other repeat
+was compared elementwise by the uploaded summary.
+
+The 16/32/64/128 partition-count sweep is the outstanding next
+experiment. All requisite partition plans were previously
+prepared (job 464950). Run without rebuilding one-hop CSR:
+
+~~~bash
+cd /scratch/coop/theret/GraphAttention
+git pull --rebase
+M41_4_SCALING_SERIES=sweep \
+    sbatch scripts/slurm/m41_4_257_scaling_bench.slurm
+~~~
+
+The sweep defaults to **lazy** loading, two fresh-process forwards
+per layout, and elementwise first-trial comparisons to the saved
+64-partition lazy baseline. Results and scaling curves remain
+unknown until that job completes.

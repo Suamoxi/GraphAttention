@@ -893,3 +893,45 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   Repeated forward and 16/32/64/128 scalability benchmarks NOT
   YET RUN.** Next: sbatch scripts/slurm/m41_4_257_scaling_bench.slurm
   with default repeated series at 64 partitions.
+
+
+### M41.4 controlled 64-partition repeated benchmarking — 2026-10-15
+
+- User-provided scaling_summary.json: **status=complete**, 6 successful
+  257^3 M37 full-forward runs. Same trained checkpoint
+  SHA-256 01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8,
+  seed 5678, same 64 generic partitions (4x4x4). Paired
+  lazy/preload execution was alternating on a single Grace allocation.
+- **Lazy metadata** (3 runs): forward median 109.93632978 s,
+  mean 110.94150744 s, stddev 2.21175632 s, range
+  109.41085269–113.47733984 s. Plan setup median 0.14882411 s.
+  Peak process CPU RSS median 19.94598389 GiB; GPU allocated peak
+  2.25520754 GiB, reserved peak 7.67968750 GiB.
+- **Preloaded metadata** (3 runs): forward median 160.52806298 s,
+  mean 158.81935265 s, stddev 14.71946937 s, range
+  143.32010042–172.60989456 s. Plan setup median 8.09983721 s.
+  Peak process CPU RSS median 31.69207764 GiB; GPU allocated peak
+  2.25520754 GiB, reserved peak 7.67968750 GiB.
+- Paired median difference: lazy is 50.5917 s (31.52%) faster
+  and consumes 11.7461 GiB (37.06%) less peak process RSS.
+  These measurements corroborate the previous single-run trend.
+  Three trials still do not isolate cache/NUMA placement and
+  filesystem effects or establish universality across workloads.
+- First saved lazy_r01 vs preload_r01 outputs (both full
+  [16,974,593,5], 84,872,965 values):
+  max absolute error 3.0994415283203125e-06,
+  RMS 2.9439706098298345e-07,
+  relative L2 2.91160194768591e-07,
+  zero entries violating atol=rtol=2e-4.
+  These are *partitioned-to-partitioned* comparisons, not
+  same-size unpartitioned M37 parity.
+- Output SHA-256 counts were three distinct values in each of
+  the three-run strategy groups. Outputs are therefore not
+  bitwise deterministic; the attached report only performs a
+  complete elementwise comparison for the first stored output
+  from each strategy. Do not claim all six are elementwise equal.
+- **Next stage NOT YET RUN**: 16/32/64/128 partition-count sweep,
+  two fresh-process lazy forwards per layout, with saved first-trial
+  full-output comparisons against the 64-partition lazy baseline.
+  Use M41_4_SCALING_SERIES=sweep and the existing scaling bench
+  Slurm job; do not rebuild the global CSR.
