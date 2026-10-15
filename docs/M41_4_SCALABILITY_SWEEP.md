@@ -187,3 +187,71 @@ The sweep defaults to **lazy** loading, two fresh-process forwards
 per layout, and elementwise first-trial comparisons to the saved
 64-partition lazy baseline. Results and scaling curves remain
 unknown until that job completes.
+
+
+## Full 16/32/64/128 partition sweep completed — 2026-10-15
+
+The uploaded scaling summary reports **status=complete and 14
+successful forward runs overall**, consisting of six repeated
+64-partition lazy/preloaded trials and eight additional lazy
+partition-count trials (two per layout). All used the same 257^3
+node graph, unchanged M37 checkpoint and deterministic seed 5678.
+
+### Fixed-graph lazy benchmark
+
+| Partitions | Layout | Forward median (s) | Forward min–max (s) | Peak CPU RSS median (GiB) | GPU peak allocated (GiB) | GPU peak reserved (GiB) | Halo read factor |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 16 | 4x2x2 | 108.2767 | 107.5813–108.9720 | 23.1401 | 8.6786 | 31.7637 | 1.078245 |
+| **32** | **4x4x2** | **106.2875** | **105.1422–107.4327** | **20.9924** | **4.4139** | **18.8223** | **1.109858** |
+| 64 | 4x4x4 | 110.6150 | 108.4702–112.7597 | 19.9520 | 2.2552 | 7.6797 | 1.141713 |
+| 128 | 8x4x4 | 119.0989 | 116.1027–122.0952 | 19.4791 | 1.1759 | 4.4434 | 1.205423 |
+
+**Interpretation:** Among these four tested layouts, 32 lazy
+had the shortest observed median wall time (106.29 s).
+It was approximately 4% faster than 64 lazy; 64 used roughly
+half of its GPU-allocated peak memory. 16 consumed more CPU
+and GPU memory than 32 despite being slightly slower in this
+small sample. At 128 partitions memory is lower but halo
+amplification reaches ~1.205 and per-forward latency rises
+to ~119 s. This is a fixed-node-count partition sweep, not
+a graph-size scaling curve or proof of an asymptotic law.
+
+GPU-allocated peak shrinks strongly when doubling partitions:
+8.679 -> 4.414 -> 2.255 -> 1.176 GiB. CPU RSS is relatively
+flat near 20 GiB above 32 partitions. For context the two
+full global CPU FP32 hidden-state buffers at H=128 require
+approximately 16.188 GiB before accounting for graph/topology,
+coordinates, temporary tensors and Python overhead. Peak RSS
+captures the complete process, not a tensor-by-tensor breakdown.
+
+### Numerical check
+
+Six saved full outputs (first trial of each displayed experiment,
+including the reference itself) were compared in bounded chunks,
+84,872,965 values each. Maximum cross-configuration absolute
+difference was 3.337860107421875e-6; relative L2 errors were
+about 2.91e-7. **No element exceeded atol+rtol*abs(reference)
+with atol=rtol=2e-4**. Repeated outputs had different SHA-256
+digests, so they are not bitwise reproducible. Not all 14
+complete outputs were saved for elementwise comparisons.
+This is partition-to-partition numerical consistency, not
+same-size unpartitioned M37 reference equivalence.
+
+### Implications and next experiments
+
+- Use **32 lazy partitions** as the current lowest-latency
+  M41.4 setting for the 257^3 graph.
+- Use **64 lazy partitions** when GPU headroom or bounded
+  per-partition allocations are higher priorities; the measured
+  forward penalty relative to 32 was only ~4.1% in this sweep.
+- Repeat the 32-vs-64 comparison more times under one matched
+  allocation before declaring a statistically stable optimum.
+  The present sweep has just two samples per partition count.
+- Profile partition metadata loading, CPU->GPU staging, GPU
+  sparse attention/block execution, CPU RAM allocation and
+  layerwise barriers separately. This is the next route to
+  improving forward throughput without changing model math.
+- No further 16/32/64/128 partition preparation is needed.
+  All 14 recorded forwards completed and all saved-output
+  tolerance comparisons passed. Physical-field quality,
+  Heun sampling quality and spectra remain outside scope.

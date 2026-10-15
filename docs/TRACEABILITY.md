@@ -935,3 +935,61 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   full-output comparisons against the 64-partition lazy baseline.
   Use M41_4_SCALING_SERIES=sweep and the existing scaling bench
   Slurm job; do not rebuild the global CSR.
+
+
+### M41.4 full 257^3 partition-count scalability sweep — 2026-10-15
+
+- Uploaded complete scaling_summary(1).json, scaling_summary.md and
+  scaling_summary.csv. All **14/14** forwards completed: the previous
+  paired 64-partition lazy/preload experiment (3+3 forwards), plus
+  eight new lazy forwards (2 each at 16, 32, 64, 128 partitions).
+  Identical graph, strict M37 checkpoint SHA-256
+  01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8
+  and random seed 5678. No Cartesian topology shortcut.
+- Fixed-graph sweep results (median over two forward runs each):
+    partitions | spatial bins | latency seconds | peak CPU RSS GiB |
+    peak GPU allocated GiB | peak GPU reserved GiB | read amplification
+    16   | 4x2x2 | 108.27666 | 23.14008 | 8.67859 | 31.76367 | 1.078245
+    32   | 4x4x2 | 106.28746 | 20.99243 | 4.41387 | 18.82227 | 1.109858
+    64   | 4x4x4 | 110.61497 | 19.95197 | 2.25521 |  7.67969 | 1.141713
+    128  | 8x4x4 | 119.09893 | 19.47910 | 1.17587 |  4.44336 | 1.205423
+- Forward run ranges (seconds):
+  16: 107.58132–108.97200;
+  32: 105.14218–107.43273;
+  64: 108.47022–112.75972;
+  128: 116.10270–122.09517.
+  Forward median at 32 partitions is ~3.91% shorter than 64's;
+  increasing to 128 raises latency ~12.05% relative to 32.
+  Sample size n=2 is too small to establish a robust optimum.
+- The GPU peak allocated memory approximately halves at each
+  doubling of partition count, from 8.68 GiB (16) to 1.18 GiB
+  (128); CPU process RSS moves much less, consistent with global
+  hidden-state buffer memory floor. Two FP32 hidden-state buffers
+  at N=16,974,593 and H=128 alone account for 16.1882 GiB.
+  This buffer calculation is theoretical; it does not decompose
+  measured RSS into precise tensor contributions.
+- First full saved forward for each of 16,32,64,128 and earlier
+  64-preload was compared to original 64-lazy first run.
+  Every comparison covered 84,872,965 elements, max absolute
+  error at most 3.337860107421875e-6,
+  relative L2 approximately 2.91e-7, and **zero tolerance
+  violations at atol=rtol=2e-4**.
+  14 individual output hashes are not all equal; only the six
+  saved outputs received chunked elementwise comparison, so do
+  not claim exact bitwise reproducibility or unpartitioned
+  full-M37 257^3 parity.
+- **Result:** 32-partition lazy is the fastest *measured*
+  candidate for fixed-graph forward latency. 64 lazy gives
+  nearly half as much allocated GPU memory at a modest
+  latency penalty (~4.1% relative to the 32-partition time).
+  16 is dominated by 32 on both measured runtime and memory
+  in this data. 128 is appropriate if minimizing GPU memory
+  is more important than latency.
+- **Status: full partition-count sweep COMPLETE**, no additional
+  graph preparation required. Recommended next computational
+  investigation: additional repetitions comparing 32 and 64
+  with matched Grace node and profiling to separate CPU host
+  operations, partition metadata load, CPU->GPU transfers,
+  sparse attention and layerwise synchronization.
+  No generative-quality or spectral analysis is included.
+  See docs/M41_4_SCALABILITY_SWEEP.md.
