@@ -225,11 +225,13 @@ def _inference(args) -> dict:
     plan = build_disk_streamed_dinat_plan(
         model, coords=coords, partition_dir=root/"partitions",
         preload=args.preload_partitions, pin_memory=False,
+        metadata_mode=args.metadata_mode,
+        metadata_cache_dir=args.metadata_cache_dir,
     )
     plan_seconds = time.perf_counter()-plan_started
     host_memory_after_plan = _host_memory_stats()
     print(f"[infer] partition plan ready in {plan_seconds:.1f}s; "
-          f"preload={args.preload_partitions}, "
+          f"preload={args.preload_partitions}, metadata={args.metadata_mode}, "
           f"host RSS={host_memory_after_plan['rss_current_gib']:.2f}GiB, "
           f"host peak={host_memory_after_plan['rss_peak_gib']:.2f}GiB", flush=True)
     n = prep["num_nodes"]
@@ -261,6 +263,9 @@ def _inference(args) -> dict:
             "gpu_peak_reserved_gib": torch.cuda.max_memory_reserved(device)/1024**3,
             "checkpoint_sha256": ckpt_digest,
             "preload_partitions": args.preload_partitions,
+            "metadata_mode": args.metadata_mode,
+            "metadata_cache_dir": str(args.metadata_cache_dir.resolve(strict=True))
+                if args.metadata_cache_dir is not None else None,
             "diagnostic_profile_enabled": profiler is not None,
             "plan_load_seconds": plan_seconds,
             "host_memory_before_plan": host_memory_before_plan,
@@ -403,6 +408,9 @@ def main() -> None:
     infer.add_argument("--output-dir", type=Path, required=True)
     infer.add_argument("--mode", choices=["forward", "heun"], default="forward")
     infer.add_argument("--preload-partitions", action="store_true")
+    infer.add_argument("--metadata-mode", choices=["baseline", "selective", "mmap"],
+                       default="baseline")
+    infer.add_argument("--metadata-cache-dir", type=Path, default=None)
     infer.add_argument("--seed", type=int, default=5678)
     infer.add_argument("--save-forward", action="store_true")
     infer.add_argument(
@@ -419,6 +427,8 @@ def main() -> None:
             raise ValueError("steps and max_steps_this_run must be positive")
         if args.profile_stages and args.mode != "forward":
             raise ValueError("--profile-stages currently supports forward mode only")
+        if args.mode == "heun" and args.metadata_mode != "baseline":
+            raise ValueError("M41.6 optimization experiment is forward-only until validated")
         _inference(args)
 
 

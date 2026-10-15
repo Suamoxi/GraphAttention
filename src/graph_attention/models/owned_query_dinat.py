@@ -31,7 +31,7 @@ class OwnedQueryTopology:
     pattern: torch.Tensor
     row_indices: torch.Tensor
     col_indices: torch.Tensor
-    edge_order: torch.Tensor
+    edge_order: torch.Tensor | None
 
     @property
     def num_queries(self) -> int:
@@ -164,7 +164,9 @@ def _owned_context(
     topology: OwnedQueryTopology,
 ) -> torch.Tensor:
     """Aggregate only owned rows; Q/K/V have already been projected globally."""
-    if attention.edge_index.shape[1] == 0:
+    # A selective loader may omit the redundant 2xE edge_index tensor.
+    # The CSR columns are the authoritative edges used by sampled_addmm.
+    if topology.col_indices.numel() == 0:
         return torch.zeros_like(query)
 
     # Native sampled CSR Q_owners @ K_read^T, with shape [owned, read].
@@ -180,7 +182,12 @@ def _owned_context(
         )
         scores_by_head.append(sampled.values())
     scores = torch.stack(scores_by_head, dim=1)
-    scores = scores + attention_module.geometry_mlp(attention.displacement)[topology.edge_order]
+    geometric_bias = attention_module.geometry_mlp(attention.displacement)
+    # Pre-sorted generic partition files already align displacement with
+    # CSR order, so the optimized path can elide an identity permutation.
+    if topology.edge_order is not None:
+        geometric_bias = geometric_bias[topology.edge_order]
+    scores = scores + geometric_bias
 
     target = topology.row_indices
     by_head = target[:, None].expand(-1, attention_module.num_heads)

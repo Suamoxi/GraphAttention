@@ -7,6 +7,7 @@ loaded lazily from disk or preloaded into host RAM when available.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -22,49 +23,65 @@ from .partitioned_dinat import DiNATPartitionPlan, OwnedHaloPartition, Partition
 from .streamed_dinat import StreamedDiNATPlan
 
 
+def _metadata_substage(profiler, name: str):
+    return profiler.metadata_detail(name) if profiler is not None else nullcontext()
+
+
 def _attention(
     source: torch.Tensor, target: torch.Tensor,
     *, owned_local: torch.Tensor, read_count: int,
     raw_coords: torch.Tensor, read_global: torch.Tensor,
+    compact: bool = False,
+    stage_profiler=None,
 ) -> tuple[PartitionAttention, OwnedQueryTopology]:
-    """Build target-major rectangular CSR and aligned displacement."""
-    row = torch.searchsorted(owned_local, target)
-    if row.numel() and (
-        bool((row >= owned_local.numel()).any())
-        or not torch.equal(owned_local[row], target)
-    ):
-        raise ValueError("an attention target is not owned")
-    if row.numel() > 1 and bool((row[1:] < row[:-1]).any()):
-        raise ValueError("attention edge targets must be sorted")
-    if row.numel() > 1:
-        keys = row * read_count + source
-        if bool((keys[1:] <= keys[:-1]).any()):
-            raise ValueError("attention CSR edges must be strictly target/source sorted")
-    counts = torch.bincount(row, minlength=int(owned_local.numel()))
-    crow = torch.cat((counts.new_zeros(1), counts.cumsum(0)))
-    # CSR indices are int64 by contract; source columns are local read IDs.
-    values = torch.ones(len(source), dtype=torch.float32)
-    with torch.inference_mode(False):
-        pattern = torch.sparse_csr_tensor(
-            crow, source, values,
-            size=(int(owned_local.numel()), read_count),
-            dtype=torch.float32, device="cpu",
-        )
-    edges = torch.stack((source, target), dim=0)
-    raw_source = raw_coords.index_select(0, read_global[source])
-    raw_target = raw_coords.index_select(0, read_global[target])
+    """Build exact target-major rectangular CSR and aligned displacement.
+
+    Existing M41.4 construction uses the original full edge_index and
+    identity edge_order. The selective path elides those redundant
+    arrays, but only for partition files already target/source sorted.
+    """
+    with _metadata_substage(stage_profiler, "metadata_csr_assembly"):
+        row = torch.searchsorted(owned_local, target)
+        if row.numel() and (
+            bool((row >= owned_local.numel()).any())
+            or not torch.equal(owned_local[row], target)
+        ):
+            raise ValueError("an attention target is not owned")
+        if row.numel() > 1 and bool((row[1:] < row[:-1]).any()):
+            raise ValueError("attention edge targets must be sorted")
+        if row.numel() > 1:
+            keys = row * read_count + source
+            if bool((keys[1:] <= keys[:-1]).any()):
+                raise ValueError("attention CSR edges must be strictly target/source sorted")
+        counts = torch.bincount(row, minlength=int(owned_local.numel()))
+        crow = torch.cat((counts.new_zeros(1), counts.cumsum(0)))
+        values = torch.ones(len(source), dtype=torch.float32)
+        with torch.inference_mode(False):
+            pattern = torch.sparse_csr_tensor(
+                crow, source, values,
+                size=(int(owned_local.numel()), read_count),
+                dtype=torch.float32, device="cpu",
+            )
+        if compact:
+            # _owned_context reads CSR columns, not the physical edge_index.
+            # All canonical partition files have identity edge ordering.
+            edges = torch.empty((2, 0), dtype=torch.long)
+            edge_order = None
+        else:
+            edges = torch.stack((source, target), dim=0)
+            edge_order = torch.arange(len(source), dtype=torch.long)
+    with _metadata_substage(stage_profiler, "metadata_relative_displacement"):
+        raw_source = raw_coords.index_select(0, read_global[source])
+        raw_target = raw_coords.index_select(0, read_global[target])
+        displacement = raw_source - raw_target
     attn = PartitionAttention(
-        edge_index=edges,
-        displacement=raw_source - raw_target,
-        sparse_topology=None,
+        edge_index=edges, displacement=displacement, sparse_topology=None,
     )
     topology = OwnedQueryTopology(
         pattern=pattern, row_indices=row, col_indices=source,
-        # Edge storage is already target-major; no reordering needed.
-        edge_order=torch.arange(len(source), dtype=torch.long),
+        edge_order=edge_order,
     )
     return attn, topology
-
 
 @dataclass
 class DiskPartitionCollection(Sequence[OwnedQueryPartition]):
@@ -77,37 +94,48 @@ class DiskPartitionCollection(Sequence[OwnedQueryPartition]):
 
     @torch.inference_mode(False)
     def __getitem__(self, index: int | slice):
-        """Load ordinary CSR/indices even when the forward is in inference mode.
-
-        Lazy loading occurs inside torch.inference_mode() in M41.4 whereas
-        preloading happens beforehand. Creating the CSR and its component
-        tensors under inference mode can break CSR .to(cuda) with
-        `Cannot set version_counter for inference tensor`. Turn it off for
-        the entire assembly, not merely the sparse_csr_tensor call.
-        """
+        """Load normal (versioned) CPU CSR metadata, including both families."""
         if isinstance(index, slice):
             return tuple(self[i] for i in range(*index.indices(self.count)))
+        return self._load_partition(index, None)
+
+    @torch.inference_mode(False)
+    def _load_partition(self, index: int, stage_profiler=None) -> OwnedQueryPartition:
         if index < 0:
             index += self.count
         if index < 0 or index >= self.count:
             raise IndexError(index)
-        with np.load(self.directory / f"partition_{index:05d}.npz", allow_pickle=False) as data:
-            owned = torch.from_numpy(data["owned"].astype(np.int64))
-            read = torch.from_numpy(data["read"].astype(np.int64))
+        # This is the original full partition materialization, with optional
+        # CPU-only substage timers. No files or numerical semantics change.
+        with _metadata_substage(stage_profiler, "metadata_npz_decode"):
+            with np.load(
+                self.directory / f"partition_{index:05d}.npz", allow_pickle=False
+            ) as data:
+                raw_owned = data["owned"]
+                raw_read = data["read"]
+                raw_s1 = data["local_source"]
+                raw_t1 = data["local_target"]
+                raw_s2 = data["dilated_source"]
+                raw_t2 = data["dilated_target"]
+        with _metadata_substage(stage_profiler, "metadata_index_conversion"):
+            owned = torch.from_numpy(raw_owned.astype(np.int64))
+            read = torch.from_numpy(raw_read.astype(np.int64))
             owned_local = torch.searchsorted(read, owned)
             if owned_local.numel() and not torch.equal(read[owned_local], owned):
                 raise ValueError("owned nodes absent from read set")
-            s1 = torch.from_numpy(data["local_source"].astype(np.int64))
-            t1 = torch.from_numpy(data["local_target"].astype(np.int64))
-            s2 = torch.from_numpy(data["dilated_source"].astype(np.int64))
-            t2 = torch.from_numpy(data["dilated_target"].astype(np.int64))
+            s1 = torch.from_numpy(raw_s1.astype(np.int64))
+            t1 = torch.from_numpy(raw_t1.astype(np.int64))
+            s2 = torch.from_numpy(raw_s2.astype(np.int64))
+            t2 = torch.from_numpy(raw_t2.astype(np.int64))
         local_attn, local_topo = _attention(
             s1, t1, owned_local=owned_local,
             read_count=len(read), raw_coords=self.raw_coords, read_global=read,
+            stage_profiler=stage_profiler,
         )
         dilated_attn, dilated_topo = _attention(
             s2, t2, owned_local=owned_local,
             read_count=len(read), raw_coords=self.raw_coords, read_global=read,
+            stage_profiler=stage_profiler,
         )
         nodes = OwnedHaloPartition(
             partition_id=index, owned_global=owned,
@@ -122,6 +150,13 @@ class DiskPartitionCollection(Sequence[OwnedQueryPartition]):
         for i in range(self.count):
             yield self[i]
 
+    def iter_for_pass(self, kind: str, *, stage_profiler=None) -> Iterator[OwnedQueryPartition]:
+        """Legacy reference deliberately loads both topologies for every pass."""
+        if kind not in ("owned", "local", "dilated"):
+            raise ValueError("unexpected partition pass kind")
+        for i in range(self.count):
+            yield self._load_partition(i, stage_profiler)
+
 
 @torch.inference_mode(False)
 @torch.no_grad()
@@ -132,6 +167,8 @@ def build_disk_streamed_dinat_plan(
     partition_dir: Path,
     preload: bool = False,
     pin_memory: bool = False,
+    metadata_mode: str = "baseline",
+    metadata_cache_dir: Path | None = None,
 ) -> StreamedDiNATPlan:
     """Open generic CSR partitions without global 1/2-hop edge tensors.
 
@@ -152,6 +189,12 @@ def build_disk_streamed_dinat_plan(
         raise ValueError("requires float32 model parameters")
     if pin_memory and model.input_projection.weight.device.type != "cuda":
         raise ValueError("pin_memory requires CUDA model")
+    if metadata_mode not in ("baseline", "selective", "mmap"):
+        raise ValueError("metadata_mode must be baseline, selective, or mmap")
+    if preload and metadata_mode != "baseline":
+        raise ValueError("preload is only valid with the legacy baseline metadata loader")
+    if metadata_mode == "mmap" and metadata_cache_dir is None:
+        raise ValueError("mmap metadata mode requires a compiled --metadata-cache-dir")
     directory = Path(partition_dir).expanduser().resolve(strict=True)
     meta = json.loads((directory / "partitions.json").read_text())
     if meta["status"] != "complete" or meta["num_nodes"] != len(coords):
@@ -169,13 +212,28 @@ def build_disk_streamed_dinat_plan(
         )
     elif model.coordinate_normalization != "none":
         raise ValueError("unsupported coordinate normalization")
-    partitions: Sequence[OwnedQueryPartition] = DiskPartitionCollection(
-        directory, coords.detach().clone(), n_parts
-    )
-    if preload:
-        # Optional RAM cache for repeated ODE evaluations. The disk-backed
-        # default never holds all partition edge metadata simultaneously.
-        partitions = tuple(partitions)
+    if metadata_mode == "baseline":
+        partitions: Sequence[OwnedQueryPartition] = DiskPartitionCollection(
+            directory, coords.detach().clone(), n_parts
+        )
+        if preload:
+            # The original M41.4 baseline remains available unchanged.
+            partitions = tuple(partitions)
+    elif metadata_mode == "selective":
+        from .selective_disk_dinat import SelectiveDiskPartitionCollection
+        partitions = SelectiveDiskPartitionCollection(
+            directory, coords.detach().clone(), n_parts,
+        )
+    else:
+        from .selective_disk_dinat import (
+            MappedDiskPartitionCollection, validate_mmap_cache,
+        )
+        cache_dir = Path(metadata_cache_dir).expanduser().resolve(strict=True)
+        validate_mmap_cache(
+            cache_dir, partition_dir=directory,
+            expected_nodes=len(coords), expected_partitions=n_parts,
+        )
+        partitions = MappedDiskPartitionCollection(cache_dir, n_parts)
     base = DiNATPartitionPlan(
         num_nodes=len(coords), spatial_dim=coords.shape[1],
         device=torch.device("cpu"), model_coords=model_coords,

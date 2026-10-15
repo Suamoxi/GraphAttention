@@ -129,7 +129,7 @@ def _gpu_topology(topology: OwnedQueryTopology, device: torch.device) -> OwnedQu
         pattern=topology.pattern.to(device),
         row_indices=topology.row_indices.to(device),
         col_indices=topology.col_indices.to(device),
-        edge_order=topology.edge_order.to(device),
+        edge_order=topology.edge_order.to(device) if topology.edge_order is not None else None,
     )
 
 
@@ -161,12 +161,19 @@ def _partition_iterator(
     partitions,
     profile: StreamedStageProfiler | None,
     *, device: torch.device, layer_index: int | None = None,
+    pass_kind: str = "owned",
 ):
     """Capture NPZ/CSR materialization without retaining prior partitions."""
+    # Legacy DiskPartitionCollection remains unchanged and loads both
+    # attention families. Optimized providers materialize only the
+    # requested family, or only owner IDs for first/final projection.
+    if hasattr(partitions, "iter_for_pass"):
+        iterator = iter(partitions.iter_for_pass(pass_kind, stage_profiler=profile))
+    else:
+        iterator = iter(partitions)
     if profile is None:
-        yield from partitions
+        yield from iterator
         return
-    iterator = iter(partitions)
     while True:
         with profile.measure("partition_metadata_load", device=device, layer_index=layer_index):
             try:
@@ -208,6 +215,8 @@ def _update_owned(
         )
     attention = nodes.local if layer_index % 2 == 0 else nodes.dilated
     topology = part.local if layer_index % 2 == 0 else part.dilated
+    if attention is None or topology is None:
+        raise ValueError("partition loader omitted active attention family")
 
     # Displacements and rectangular CSR are moved only for this partition;
     # the original M37 edge sets and sparse attention are unchanged.
@@ -320,7 +329,8 @@ def forward_streamed_dinat(
         # hidden buffer. Nothing reads current-layer output until the next layer.
         # Blocking GPU->CPU readback of owned states is the effective barrier.
         for part in _partition_iterator(
-            plan.partitions, stage_profiler, device=device, layer_index=layer_index
+            plan.partitions, stage_profiler, device=device, layer_index=layer_index,
+            pass_kind="local" if layer_index % 2 == 0 else "dilated",
         ):
             predicted = _update_owned(
                 block, hidden, part, layer_index=layer_index,

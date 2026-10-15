@@ -1091,3 +1091,66 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   measurements before claiming recovered peaks.**
 - Detailed results and next M41.6 optimization target:
   docs/M41_5_PAIRED_PROFILE.md. M41.5 test COMPLETE.
+
+
+### M41.6 optimized lazy metadata loading + mmap A/B/C benchmark (code ready)
+
+- Goal: remove the identified 78.5% synchronized forward time in
+  M41.5 lazy partition metadata preparation while keeping EXACT
+  original M37 graph edges, geometric offsets, weights, and
+  layerwise Jacobi hidden-buffer synchronization.
+- The existing M41.4 lazy full metadata reconstruction remains
+  available as metadata_mode=baseline (default). New
+  src/graph_attention/models/selective_disk_dinat.py implements
+  selective NPZ stage materialization: only owner IDs for initial/
+  final, and only one required local/exact-two-hop family per
+  transformer block. The alternate mmap mode reads precompiled
+  immutable .npy arrays for owned/read/CSR/displacement lazily,
+  without globally preloading all partition metadata into RAM.
+- For compiled mode, scripts/m41_6_compile_metadata.py generates
+  per-partition CPU CSR and source-minus-target displacement ONCE,
+  one physical partition at a time, from saved M41.4 NPZs;
+  original CSR and partition files remain immutable.
+  A completed cache is manifest-stamped, checks graph node/part
+  count and source partition manifest SHA-256, refuses overwrite,
+  and consumes additional scratch disk space.
+- src/graph_attention/models/streamed_dinat.py dispatches a stage
+  name to optimized providers while preserving legacy iteration,
+  and _owned_context checks original CSR columns for empty
+  attention and skips only verified identity edge permutation.
+  No model parameters, attention edge definition, numerical
+  schedule or mathematical attention formula changed.
+- StreamedStageProfiler now adds separately accounted CPU
+  metadata-detail timers for NPZ member extraction, index casts,
+  CSR assembly, raw-coordinate geometry displacement, mmap array
+  opening, and mmap CSR-wrapper creation. Parent stage timing is
+  NOT double-counted. mmap's deferred page faults and synchronized
+  CUDA timing overhead require careful interpretation.
+- scripts/m41_4_generic_large.py adds explicit
+  --metadata-mode baseline|selective|mmap and
+  --metadata-cache-dir (required for mmap).
+  Production Heun is deliberately restricted to the established
+  baseline mode until the optimization is validated.
+- tests/unit/test_m41_6_metadata.py compares the three modes
+  on shuffled irregular hex meshes including optional self
+  attention, validates full forward outputs at 2e-4, verifies
+  normal CSR tensor version counters under inference_mode(),
+  and tests stale mmap cache rejection and CLI plan guards.
+- Grace stage 1: scripts/slurm/m41_6_257_metadata_prepare.slurm
+  runs Python compile + M41.3/4/5/6 regression tests before
+  compiling mmap cache files for ALREADY PREPARED 32 and 64
+  partition layouts.
+- Grace stage 2: scripts/slurm/m41_6_257_metadata_bench.slurm
+  launches scripts/benchmark_m41_6_metadata.py:
+  three clean-process UNPROFILED repeats for each 32/64 layout
+  x baseline/selective/mmap loader (18 forwards), then six
+  SEPARATE synchronized diagnostic forwards and full first-trial
+  elementwise [16,974,593,5] checks. Same M37 checkpoint,
+  graph, and input seed. Results in
+  GraphAttention_runs/m41_6_257_metadata_benchmark/summary.json.
+  Scripts request grace, 1 GPU, 4 CPUs, 4h, NO explicit --mem.
+- **Status: code prepared on main; GH200 metadata optimization
+  and new M41.6 numerical tests not yet executed.**
+  Do not claim a speedup or parity result before cluster reports
+  have been returned and inspected. Documented at
+  docs/M41_6_METADATA_OPTIMIZATION.md.

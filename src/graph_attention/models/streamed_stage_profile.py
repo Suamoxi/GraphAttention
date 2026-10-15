@@ -30,6 +30,14 @@ class StreamedStageProfiler:
     layer_wall_seconds: dict[int, float] = field(default_factory=dict)
     forward_wall_seconds: float | None = None
     synchronization_calls: int = 0
+    # Nested CPU-only subtimings of partition_metadata_load. Kept separate
+    # from top-level stage_seconds to avoid double-counting wall time.
+    metadata_detail_seconds: dict[str, float] = field(
+        default_factory=lambda: defaultdict(float)
+    )
+    metadata_detail_calls: dict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
 
     def _sync(self, device: torch.device) -> None:
         if device.type == "cuda":
@@ -56,6 +64,16 @@ class StreamedStageProfiler:
                 stage_times[stage] += elapsed
                 stage_counts[stage] += 1
 
+    @contextmanager
+    def metadata_detail(self, label: str) -> Iterator[None]:
+        """Measure nested CPU-only metadata substeps (no GPU synchronization)."""
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.metadata_detail_seconds[label] += time.perf_counter() - started
+            self.metadata_detail_calls[label] += 1
+
     def report(self) -> dict:
         if self.forward_wall_seconds is None:
             raise RuntimeError("no profiled forward has completed")
@@ -64,6 +82,8 @@ class StreamedStageProfiler:
             "profiled_forward_wall_seconds": self.forward_wall_seconds,
             "stage_seconds": dict(sorted(self.stage_seconds.items())),
             "stage_calls": dict(sorted(self.stage_calls.items())),
+            "metadata_detail_seconds": dict(sorted(self.metadata_detail_seconds.items())),
+            "metadata_detail_calls": dict(sorted(self.metadata_detail_calls.items())),
             "stage_total_seconds": float(sum(self.stage_seconds.values())),
             "layer_wall_seconds": {
                 str(k): v for k, v in sorted(self.layer_wall_seconds.items())
