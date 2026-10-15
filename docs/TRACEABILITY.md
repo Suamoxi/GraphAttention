@@ -1036,3 +1036,58 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   Do not report new CPU/GPU stage time shares or 32-vs-64
   performance statistics until the user's benchmark summary arrives.
   Instructions: docs/M41_5_PAIRED_PROFILE.md.
+
+
+### M41.5 GH200 repeated pair benchmark and dominant metadata bottleneck (2026-10-15)
+
+- User-provided summary(20261015-125017).json:
+  **status=complete**, Grace host calypso-grace02; same full
+  16,974,593-node graph, M37 checkpoint digest
+  01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8,
+  seed=5678. Six matched 32-vs-64 lazy trials each, AB/BA
+  alternating order, plus one synchronized stage profile per layout.
+- Measured unprofiled medians: **32 parts 108.92652 s,
+  20.96698 GiB process peak RSS, 5.00052 GiB allocated GPU**;
+  **64 parts 113.94136 s, 19.81638 GiB process peak RSS,
+  2.54939 GiB allocated GPU**. All six paired trial
+  differences favored 32; mean 32-minus-64 -5.29196 s,
+  median speed advantage about 4.40%. Profiling changes
+  execution synchronization; profile and benchmark timings
+  must not be interchanged.
+- Synchronized profiler diagnosed **partition_metadata_load /
+  CPU CSR and displacement assembly** at 87.22078 s
+  (78.57% of profiled 111.1940 s) for 32 parts, and
+  91.96117 s (78.53% of profiled 117.2821 s) for 64.
+  Sparse geometric attention only 6.88949 s (32) and
+  6.562996 s (64); 32 one-hop vs two-hop attention
+  2.2365 vs 4.6530 s. The metadata category includes
+  CPU NPZ parsing, index casts, rectangular CSR creation,
+  raw-coordinate displacement construction, and timing
+  synchronization: NOT simply disk read bandwidth.
+- Source diagnosis: lazy DiskPartitionCollection.__getitem__
+  rebuilds *both* local and exact-two-hop attention plans
+  on all 12 model passes (initial + ten alternating layers
+  + final), despite only one edge family used per transformer
+  layer and neither used for initial/final projections.
+  This creates 384/768 materialized partition objects at
+  32/64 parts respectively; stage_call counts include 12
+  additional iterator exhaustion events.
+  The bottleneck makes CPU metadata reuse / on-demand
+  active-topology assembly the highest-priority M41.6 target.
+- Numerical consistency: first saved 32 vs 64 full outputs,
+  84,872,965 elements, max_abs 3.33786e-6,
+  relative_L2 2.911468e-7, violations 0 at
+  atol=rtol=2e-4; no 257^3 unpartitioned M37 reference.
+- Caution: GPU allocated peaks from M41.5 increased compared
+  with M41.4 (32: 4.41387->5.00052 GiB; 64:
+  2.25521->2.54939 GiB). The optional stage-instrumented
+  refactor held the staged GPU CSR topology in a local variable
+  through the MLP, whereas the original staged CSR was
+  constructed as a transient _owned_context argument.
+  A small follow-up patch now releases staged_topology
+  immediately after the attention context to restore the
+  original lifetime. **This is a likely cause, not yet
+  GH200-validated; require fresh memory/profile parity
+  measurements before claiming recovered peaks.**
+- Detailed results and next M41.6 optimization target:
+  docs/M41_5_PAIRED_PROFILE.md. M41.5 test COMPLETE.

@@ -138,5 +138,117 @@ DiT weights remain unchanged.
 - Only after establishing these bottlenecks, design a graph-size
   scaling experiment with comparable topology and field conventions.
 
-This document describes a new **unexecuted** benchmark until a Grace
-job and results are provided.
+The benchmark has now completed on Grace. See the measured results below.
+
+
+## Grace M41.5 results — October 15, 2026
+
+Source: submitted summary(20261015-125017).json (status=complete)
+from calypso-grace02. Exactly **12 unprofiled forwards** (six
+per layout) plus **two synchronized diagnostic forwards**
+completed using the identical 16,974,593-node graph, fixed
+checkpoint SHA-256
+01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8
+and seed=5678.
+
+### Unprofiled matched-host latency and memory
+
+| Metric | 32 lazy (n=6) | 64 lazy (n=6) |
+|---|---:|---:|
+| Median forward (s) | **108.92652** | 113.94136 |
+| Mean forward (s) | **109.23614** | 114.52810 |
+| Stddev forward (s) | 1.28484 | 1.75318 |
+| Forward min–max (s) | 108.10068–111.62242 | 112.75238–117.67505 |
+| Peak process RSS median (GiB) | 20.96698 | **19.81638** |
+| GPU peak allocated (GiB) | 5.00052 | **2.54939** |
+| GPU peak reserved (GiB) | 18.82227 | **7.67969** |
+| Partition plan opening median (s) | 0.15470 | 0.16271 |
+
+All SIX matched pairs favored 32 partitions: 32 was faster by
+6.053, 4.210, 6.698, 5.219, 6.077 and 3.494 seconds.
+The mean matched-pair difference is **5.292 s** and the
+median speed improvement is **4.40%** relative to the
+64-partition median. This is stronger confirmation of the
+speed advantage than the prior two-run sweep. The 64-plan
+retains lower CPU and GPU peak memory.
+
+Note: M41.5 measured a higher **GPU allocated peak**
+than M41.4 for BOTH layouts (32: 5.00052 vs 4.41387 GiB;
+64: 2.54939 vs 2.25521 GiB). Code review identified a
+likely tensor-lifetime regression in the optional profiling
+refactor: it kept the staged GPU CSR topology referenced
+after attention, through the residual and MLP. The original
+executor passed that CSR as a temporary argument and released
+it immediately after attention. A follow-up code patch
+explicitly deletes the staged topology after its attention
+call, restoring the intended lifetime. **GPU memory recovery
+is a hypothesis pending a new Grace validation**; do not
+reinterpret this result's actual M41.5 peak measurements.
+
+### Detailed synchronized diagnostics (not the unprofiled performance timings)
+
+| Stage | 32 lazy: seconds (% of profiled wall) | 64 lazy: seconds (% of profiled wall) |
+|---|---:|---:|
+| Full profiled forward | 111.1940 (100%) | 117.2821 (100%) |
+| **Partition metadata load/CPU assembly** | **87.2208 (78.57%)** | **91.9612 (78.53%)** |
+| Sparse geometric attention context | 6.8895 (6.20%) | 6.5630 (5.60%) |
+| Owned GPU-to-CPU readback | 3.7591 (3.39%) | 4.5550 (3.89%) |
+| CPU hidden-state gather | 3.1229 (2.81%) | 3.2773 (2.80%) |
+| CPU owned-state scatter | 2.6936 (2.43%) | 2.7143 (2.32%) |
+| GPU MLP | 1.7352 (1.56%) | 1.7711 (1.51%) |
+| GPU QKV and normalization | 0.9128 (0.82%) | 0.9888 (0.84%) |
+| H2D hidden and owned indices | 0.4649 (0.42%) | 0.6103 (0.52%) |
+| H2D rectangular topology/geometric displacement | 0.3798 (0.34%) | 0.4473 (0.38%) |
+
+The timings include explicit CUDA synchronization and do
+NOT isolate filesystem I/O from CPU parsing, CSR creation
+or relative geometry reconstruction. Fractions are of
+**synchronized, profiled wall time**, NOT measured fractions
+of the unprofiled benchmark.
+
+Of the attention-context stage, local one-hop attention
+used 2.2365 s (32) / 2.0436 s (64); exact-two-hop attention
+used 4.6530 s (32) / 4.5194 s (64). The two-hop operations
+are costlier, but this is NOT the principal bottleneck.
+
+**Fundamental source-level observation:** The lazy
+DiskPartitionCollection.__getitem__ reads NPZ arrays,
+converts all edge index arrays, assembles BOTH one-hop and
+exact-two-hop rectangular CSR objects, and recomputes BOTH
+relative-displacement tensors on EVERY partition iteration.
+There are 12 traversals of the graph per model forward:
+initial projection, ten alternating attention layers, and
+final projection. Each attention layer actually uses only
+ONE of the two attention types; the initial and final
+projection layers use NEITHER attention type.
+The 32- and 64-layout traversals therefore materialize
+384 and 768 partition objects respectively, even though
+their profiler reports count 396 and 780 stage calls
+(the difference of 12 is iterator-exhaustion overhead).
+
+**This is the next main optimization target**, not GPU
+sparse attention. A defensible next M41.6 task is to profile
+NPZ decompression/deserialization, CPU index conversion,
+CSR construction, and geometric displacement creation
+separately, then load only the edge family needed in each
+transformer layer. Initial/final projections need node
+ownership descriptors but not attention CSR. Keep global
+one-hop CSR immutable and maintain exact M37 output parity.
+Avoid fully preloading every CSR into RAM, which earlier
+M41.4 runs showed causes much larger CPU RSS and latency.
+
+### Numerical check
+
+The saved first 32- and 64-partition outputs were compared
+elementwise over 84,872,965 values:
+max_abs=3.337860107421875e-6,
+RMS=2.9438352099780447e-7,
+relative_L2=2.911468036662084e-7,
+zero violations at atol=rtol=2e-4. No same-size
+unpartitioned M37 reference exists, and the other
+ten unprofiled outputs were not saved for full comparison.
+
+**Status:** the M41.5 benchmark and diagnostic profile
+are COMPLETE; the follow-up staged-topology lifetime
+adjustment is COMMITTED but has not yet been retested
+on the GH200.

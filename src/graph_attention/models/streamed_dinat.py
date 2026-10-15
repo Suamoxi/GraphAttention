@@ -225,6 +225,10 @@ def _update_owned(
             staged_attention,
             staged_topology,
         )
+    # Before M41.5, the staged CSR was an inline argument to _owned_context
+    # and became unreachable immediately after that call. Keep that tensor
+    # lifetime (and peak GPU memory) in the optional profiler refactor.
+    del staged_topology
     with _phase(stage_profiler, "gpu_attention_out_residual", device=device, layer_index=layer_index):
         owned_hidden = read_hidden.index_select(0, owned_local)
         owned_hidden = owned_hidden + gate_attn * attention_module.out_proj(
