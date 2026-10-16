@@ -1149,8 +1149,79 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   graph, and input seed. Results in
   GraphAttention_runs/m41_6_257_metadata_benchmark/summary.json.
   Scripts request grace, 1 GPU, 4 CPUs, 4h, NO explicit --mem.
-- **Status: code prepared on main; GH200 metadata optimization
-  and new M41.6 numerical tests not yet executed.**
-  Do not claim a speedup or parity result before cluster reports
-  have been returned and inspected. Documented at
-  docs/M41_6_METADATA_OPTIMIZATION.md.
+- **Status update 2026-10-16: 257^3 benchmark complete**, 18
+  unprofiled and 6 diagnostic forwards (summary/progress uploaded).
+  All six saved full-output comparisons passed atol=rtol=2e-4.
+  Detailed performance and limitations are recorded below and in
+  docs/M41_6_METADATA_OPTIMIZATION.md. Stage-1 pytest log was not
+  included in uploaded artifacts.
+
+
+### M41.6 measured full-resolution metadata optimization — 2026-10-16
+
+- User-supplied summary(20261016-080737).json and progress.json:
+  **status=complete** (both), exactly 18 unprofiled + 6
+  synchronized diagnostic forwards, N=16,974,593 nodes, unchanged
+  M37 best.pt checkpoint SHA-256
+  01cf4dd6e6199d8b086d5737e6399059f520f25e386c02f6ab4eb4e7cc5764e8,
+  seed=5678, 32/64 saved layouts and baseline/selective/mmap modes.
+- Three-run forward median time at **32 parts**:
+  baseline 112.6702 s, selective **60.6660 s**, mmap 61.7896 s.
+  64 parts: baseline 119.7291 s, selective **63.9071 s**,
+  mmap 59.6087 s. Selective achieves 46.16%/46.62%
+  less wall time (~1.86x/1.87x) than respective baselines.
+  These are new M41.6 measurements, not earlier M41.5 baselines.
+- Mmap latency highly variable: at 32 partitions stddev
+  13.125 s and range 47.358–73.563 s, versus selective
+  stddev 3.202 s; at 64 stddev 16.582 s and range
+  55.580–86.102 s, versus selective stddev 1.786 s.
+  The 64 mmap **mean** 67.097 s is slower than selective
+  mean 64.457 s despite mmap's better single median.
+- CPU process peak RSS medians (GiB):
+  32 baseline 21.0725, selective 20.0785, mmap 19.3442;
+  64 baseline 19.8607, selective 19.2952, mmap 18.8331.
+  GPU peak allocated identical across all modes within each
+  layout: 4.67175 GiB (32) and 2.38414 GiB (64).
+  GPU reserved 18.82227 GiB (32), 7.67969 GiB (64).
+- Synchronized diagnostics show metadata load/assembly time
+  32: **89.798 / 39.126 / 8.142** seconds
+  baseline/selective/mmap. 64: **91.370 / 40.014 / 11.533**.
+  Sparse attention roughly unchanged ~6.5-6.9 s.
+  32 baseline CPU metadata substeps: CSR ~49.043 s,
+  geometry ~16.998 s, NPZ ~16.516 s, indices ~6.205 s.
+  32 selective: CSR ~19.384, geometry ~7.127,
+  NPZ ~7.896, indices ~4.199. Selective avoids
+  constructing the unused edge family and unneeded
+  initial/final projection topology.
+- Mmap has shifted costs: synchronized H2D topology/geometry
+  time 11.301 s (32) / 11.411 s (64), compared with
+  selective 0.324 s / 0.394 s. D2H owned-state readback
+  also rises to 9.937 s (32) / 8.048 s (64)
+  versus 3.801 s / 5.857 s selective. Suspect
+  deferred page faults, but page-fault/I/O counters are
+  absent. Mmap explicit metadata time is NOT total I/O.
+- **Numerical parity**: six saved complete [16,974,593,5]
+  outputs, 84,872,965 values each, compared to
+  64-partition baseline. Maximum abs discrepancy <=
+  3.337860107421875e-6, relative L2 ~2.91e-7,
+  **zero tolerance violations** at atol=rtol=2e-4.
+  This is partitioned numerical consistency, not
+  unpartitioned M37 parity or proof of bitwise equality.
+- **Host mismatch**: progress.json says initial host
+  calypso-grace02; summary.json says finishing host
+  calypso-grace01. The code preserves progress host
+  but reports current host when creating the final summary.
+  Resumption on a different allocation/host is plausible,
+  and no per-trial host metadata is stored. Do NOT claim
+  all three repeats within a mode ran on an identical host.
+  This can confound mmap variance and cache comparisons.
+- Practical low-latency **recommended mode: 32 selective**,
+  60.666 s median at CPU peak 20.078 GiB and GPU allocated
+  4.672 GiB. Low-HBM alternative: **64 selective**,
+  63.907 s at CPU peak 19.295 GiB, GPU 2.384 GiB.
+  Mmap remains experimental pending matched-host cache,
+  page-fault and per-trial I/O measurements. The next
+  computational optimization should reduce selective
+  CPU CSR assembly or stabilize mmap file residency.
+  No physics quality evaluation or M42 work performed.
+  See docs/M41_6_METADATA_OPTIMIZATION.md.
