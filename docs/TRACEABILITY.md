@@ -1394,3 +1394,44 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   **Status: implementation and new regression tests
   prepared, not yet executed on Grace. No 129^3
   checkpointed fit or speed claims until job results.**
+
+
+### M43-B1b actual Grace activation checkpointing result — 2026-10-19
+
+- Source user-uploaded summary(20261019-095457).json,
+  status checkpoint_passed; host calypso-grace04,
+  Slurm job 471143, git b1615f7a1a31bbd7c28e1b817f63c663c94f30e3.
+  M37 DiNAT-DiT h128/l10/h4, FP32 torch_sparse,
+  3,051,845 parameters, one sample per step.
+- Re54/Ma0.3 65^3, baseline 2/2 optimizer steps,
+  peak GPU allocated 41.41574 GiB, step-2 2.58769 s;
+  checkpointed 2/2 steps, peak 6.87797 GiB, step-2
+  2.72529 s. **83.39% less allocated GPU peak** for
+  **5.32% longer diagnostic warm training step**.
+  Both step losses EXACTLY matched baseline:
+  2.0007710456848145 and 1.9952092170715332.
+- Re94/Ma0.3 129^3, baseline failed during first forward
+  after finishing block 2 at 68.64 GiB live allocated;
+  failed-run peak 89.32964 GiB allocated, no AdamW step.
+  Checkpointed COMPLETED **2/2 real full-graph AdamW
+  steps** at 53.16558 GiB peak PyTorch allocated,
+  58.296875 GiB reserved. Warm second step:
+  forward 1.20439 s, backward 20.06284 s,
+  optimizer 0.00169 s, total 21.26953 s.
+  Backward/recomputation dominated (~94% of step).
+- At checkpointed 129^3, post-block live allocated
+  was 7.60 GiB after block 1 and 16.82 GiB after
+  block 10; full-step GPU peak is higher (53.17 GiB).
+  Training-memory feasibility now established on a
+  single 95 GiB CUDA HBM Grace allocation for both
+  selected resolutions. No long training yet.
+- Immediate next objective: a controlled experiment B
+  across the six Re54/Re94 cases (600 snapshots),
+  with case reference scales, train-only statistical
+  normalization, trajectory-aware splits, shared
+  checkpointed M37 weights and per-resolution metrics.
+  Re and resolution are confounded in available cases.
+  Do not treat the per-snapshot diagnostic z-score or
+  two-step losses as scientific training metrics.
+- Extended measurements, trace and caveats:
+  docs/M43_B1B_ACTIVATION_CHECKPOINTING.md.

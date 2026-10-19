@@ -198,5 +198,125 @@ exact-halo patch training with verified backward
 equivalence. Do not assume M41.6 inference-only
 CPU streaming can backpropagate.
 
-**Status: code and launch tests prepared. Grace B1b
-performance and memory numbers are NOT yet available.**
+**Status (2026-10-19): Checkpointed 65^3 and 129^3 each completed two full training steps on Grace. Baseline 129^3 reproduced CUDA OOM. Full measured results follow; scientific multi-case training remains not started.**
+
+
+## Measured M43-B1b results — 2026-10-19
+
+Source: user-uploaded summary(20261019-095457).json.
+Status checkpoint_passed. All four subprocesses on
+calypso-grace04.calypso.cerfacs.fr, Slurm job 471143,
+git b1615f7a1a31bbd7c28e1b817f63c663c94f30e3.
+HDF5 snapshots: Re54/Ma0.3 and Re94/Ma0.3,
+both solut_hit_00000051.h5. Hardware: NVIDIA GH200
+with **95 GiB CUDA HBM**, regardless of the "480GB"
+in the device name. M37 h128/l10/h4, 3,051,845
+parameters, FP32 torch_sparse, one physical sample
+per optimizer step, 2 true AdamW updates per mode.
+
+| Measure | 65^3 baseline | 65^3 checkpointed | 129^3 baseline | 129^3 checkpointed |
+|---|---:|---:|---:|---:|
+| Status | ok | ok | CUDA OOM during forward_1 | ok |
+| Completed optimizer steps | 2 | 2 | 0 | 2 |
+| Peak GPU PyTorch allocated (GiB) | 41.41574 | **6.87797** | 89.32964 before OOM | **53.16558** |
+| Peak GPU reserved (GiB) | 43.03125 | 7.41211 | 91.93164 before OOM | 58.29688 |
+| CPU process peak RSS (GiB) | 1.89313 | 1.90845 | 7.82129 | 7.82355 |
+| CPU graph build (s) | 5.11687 | 4.83919 | 39.12378 | 38.70553 |
+| Step 2 forward (s) | 0.15948 | 0.16025 | — | 1.20439 |
+| Step 2 backward (s) | 2.42607 | 2.56301 | — | 20.06284 |
+| Step 2 optimizer (s) | 0.00154 | 0.00148 | — | 0.00169 |
+| Step 2 total (s) | 2.58769 | 2.72529 | — | 21.26953 |
+
+### Key quantitative findings
+
+- At 65^3, non-reentrant checkpointing reduced GPU
+  PyTorch allocated peak by **83.39%** (41.416 -> 6.878 GiB),
+  peak reserved by **82.78%** (43.031 -> 7.412 GiB).
+  Warm second-step time increased only **5.32%**
+  (2.58769 -> 2.72529 s), though per-block instrumentation
+  synchronizes CUDA and timing is diagnostic.
+- On 129^3, baseline live allocated reached **36.48 GiB
+  after block 1** and **68.64 GiB after block 2**, then
+  OOM occurred in block 3 before the first forward
+  completed. Peak after failure was 89.33 GiB allocated;
+  this is NOT a complete baseline training peak.
+- Checkpointed 129^3 **completed all 10 blocks and two
+  complete forward/backward/AdamW updates**, at 53.166 GiB
+  peak allocated and 58.297 GiB peak reserved.
+  Approximately **36.70 GiB** of the 95 GiB device capacity
+  remained above the recorded reserved peak; this is
+  capacity arithmetic, not a guarantee for larger batches.
+- Checkpointed 129^3 after-block live allocated increased
+  from **7.60 GiB after block 1** to **16.82 GiB after
+  block 10** in step 1. Peak observed through forward
+  reached 33.196 GiB, while complete train-step peak
+  reached 53.166 GiB. Backward/recomputation, not only
+  the end-of-forward live state, must be budgeted.
+- At checkpointed 129^3, warm forward 1.20439 s,
+  backward 20.06284 s, total 21.26953 s. The backward
+  stage dominates the full step (~94.3%). There is no
+  valid baseline 129^3 complete-step time, so no direct
+  checkpointing overhead ratio can be reported at 129^3.
+- The diagnostic 65^3 Flow Matching losses were BITWISE
+  IDENTICAL at the two measured steps:
+  2.0007710456848145 and 1.9952092170715332 for both
+  baseline and checkpointed. The paired gate reported
+  baseline_65_loss_check=passed. Actual per-parameter
+  gradient equivalence is covered by the separate
+  small-graph unit test suite and cannot be inferred
+  from two scalar losses alone.
+- No full 600-snapshot training, scientific validation,
+  conditional generation or SGS prediction has been
+  conducted in M43-B1b. Probe-only per-snapshot z-scoring
+  is still unsuitable for the actual experiment.
+
+### Consequences for multiresolution Experiment B
+
+**The training-memory gate has passed.** A single M37
+architecture with activation checkpointing can now
+execute full training steps on BOTH confirmed 65^3
+and 129^3 graph resolutions on one Grace GH200.
+
+The next task should be an ACTUAL controlled mixed-case
+training implementation, not additional GPU-memory
+optimization unless training later reveals a new issue.
+Before starting:
+
+1. Define the six-case dataset manifest (Re54/Re94
+   with Ma 0.05/0.2/0.3, total 600 snapshots) and
+   correct per-case physical reference scales. Do NOT
+   inherit diagnostic per-snapshot z-score statistics.
+2. Create temporal/trajectory-aware train/validation/test
+   partitions with no correlated time leakage; explicitly
+   distinguish physics generalization from mesh
+   generalization because Re and resolution are confounded.
+3. Use train-only, sample-balanced statistical scaling
+   and ensure one consistent state representation across
+   all cases/resolutions. Optionally introduce Re/Ma
+   conditioning as a separately controlled intervention.
+4. Mix microbatches at one graph each; checkpointing on;
+   accumulate gradients by PHYSICAL SAMPLE (already in
+   training infrastructure), track separate metrics per
+   case and mesh resolution, and reuse static graph
+   metadata across snapshots.
+5. Run a short mixed-resolution training/smoke gate before
+   a lengthy experiment. Inspect NaNs, gradient norms,
+   reference-scale consistency, actual step throughput
+   and validation per regime.
+
+At measured step-2 rates, processing 300 snapshots of
+65^3 and 300 of 129^3 would require approximately
+2.00 GPU-hours of optimizer-step computation per
+600-snapshot pass, EXCLUDING I/O, graph assembly,
+statistical fitting, gradient accumulation effects
+and validation. Treat this as an approximate planning
+bound from one HDF5 snapshot in each mesh category,
+not a measured full-epoch throughput. A 70% training
+split with balanced case proportions would contain
+420 snapshots, with ~1.4 hours of such measured step
+time per training epoch before other work.
+
+**Decision: proceed to the Experiment B dataset and
+training-contract design, using activation checkpointing.
+Do not launch the full 600-snapshot run until the
+scientific preprocessing contract and smoke gate pass.**
