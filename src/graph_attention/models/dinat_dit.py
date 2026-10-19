@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import torch
+from torch.utils.checkpoint import checkpoint
 
 from graph_attention.geometry import edge_relative_displacement
 
@@ -97,6 +98,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         sparse_attention_backend: str = "scatter",
         include_self_attention: bool = False,
         include_local_self_attention: bool = False,
+        activation_checkpointing: bool = False,
     ) -> None:
         # Sparse geometric attention does not use dense SDPA, but this argument
         # keeps the same public configuration contract as the other DiT models.
@@ -130,6 +132,12 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         self.sparse_attention_backend = backend
         self.include_self_attention = bool(include_self_attention)
         self.include_local_self_attention = bool(include_local_self_attention)
+        # Opt-in non-reentrant rematerialization of each DiT block.
+        # Disabled by default to preserve existing M37 behavior.
+        self.activation_checkpointing = bool(activation_checkpointing)
+        # Diagnostic only: called after each *original* forward block, not
+        # during activation recomputation in the backward pass.
+        self._block_memory_observer: Callable[[int], None] | None = None
         self._self_attention_edge_cache: dict[
             str,
             tuple[torch.Tensor, int | None, int, torch.Tensor],
@@ -138,6 +146,14 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             str,
             tuple[torch.Tensor, int | None, _TorchSparseTopology],
         ] = {}
+
+    def set_block_memory_observer(
+        self, observer: Callable[[int], None] | None,
+    ) -> None:
+        """Register an opt-in post-block diagnostics hook, never saved in weights."""
+        if observer is not None and not callable(observer):
+            raise TypeError("block memory observer must be callable or None")
+        self._block_memory_observer = observer
 
     def _attention_edges_with_optional_self(
         self,
@@ -333,13 +349,49 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             if layer_sparse_adj is not None:
                 attention_kwargs["sparse_adj"] = layer_sparse_adj
 
-            hidden = block(
-                hidden,
-                condition_embedding,
-                edge_index=layer_edge_index,
-                batch_index=batch_index,
-                attention_kwargs=attention_kwargs,
-            )
+            if self.activation_checkpointing and self.training and torch.is_grad_enabled():
+                # Bind the individual block and its fixed graph explicitly.
+                # A closure over the loop variables would otherwise select
+                # the last layer during backward recomputation.
+                # Pass the differentiable geometric displacement as a tensor
+                # argument so coordinate gradients are also well-defined.
+                def rematerialized_block(
+                    state: torch.Tensor,
+                    condition: torch.Tensor,
+                    displacement: torch.Tensor,
+                    *,
+                    fixed_block=block,
+                    fixed_edges=layer_edge_index,
+                    fixed_batch_index=batch_index,
+                    fixed_sparse_adj=layer_sparse_adj,
+                ) -> torch.Tensor:
+                    kwargs: dict[str, object] = {"edge_displacement": displacement}
+                    if fixed_sparse_adj is not None:
+                        kwargs["sparse_adj"] = fixed_sparse_adj
+                    return fixed_block(
+                        state, condition, edge_index=fixed_edges,
+                        batch_index=fixed_batch_index,
+                        attention_kwargs=kwargs,
+                    )
+
+                hidden = checkpoint(
+                    rematerialized_block,
+                    hidden,
+                    condition_embedding,
+                    layer_displacement,
+                    use_reentrant=False,
+                    preserve_rng_state=True,
+                )
+            else:
+                hidden = block(
+                    hidden,
+                    condition_embedding,
+                    edge_index=layer_edge_index,
+                    batch_index=batch_index,
+                    attention_kwargs=attention_kwargs,
+                )
+            if self._block_memory_observer is not None:
+                self._block_memory_observer(layer_index)
 
         return self.final_layer(
             hidden,

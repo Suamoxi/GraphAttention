@@ -17,3 +17,5 @@ qkv_bias: true
 out_proj_bias: false
 sparse_attention_backend: scatter  # scatter | torch_sparse | dgl
 include_self_attention: false
+# M43-B1b: optional per-block non-reentrant checkpointing (training only).
+activation_checkpointing: false

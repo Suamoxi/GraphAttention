@@ -126,6 +126,8 @@ def one_case_probe(
     *, case: str, snapshot: Path, mesh: Path, expected_side: int,
     seed: int, num_steps: int, output: Path,
     hidden_dim: int = 128, num_layers: int = 10, num_heads: int = 4,
+    activation_checkpointing: bool = False,
+    profile_blocks: bool = False,
 ) -> dict:
     if num_steps < 1 or expected_side < 3:
         raise ValueError("num_steps must be >=1 and expected_side >=3")
@@ -139,6 +141,7 @@ def one_case_probe(
         "model_config": {
             "hidden_dim": hidden_dim, "num_layers": num_layers,
             "num_heads": num_heads, "mlp_ratio": 4,
+            "activation_checkpointing": bool(activation_checkpointing),
             "sparse_attention_backend": "torch_sparse",
             "include_self_attention": False,
         },
@@ -147,6 +150,9 @@ def one_case_probe(
         "revision": git_head(),
         "pytorch_version": torch.__version__,
         "wall_seconds": {}, "per_step": [],
+        "activation_checkpointing": bool(activation_checkpointing),
+        "profile_blocks": bool(profile_blocks),
+        "forward_block_memory": [],
         "note": (
             "Diagnostic full M37 training steps, one snapshot, probe-only "
             "per-snapshot field z-score and spatial box normalization. "
@@ -223,6 +229,7 @@ def one_case_probe(
         cfg = model_config(
             hidden_dim=hidden_dim, num_layers=num_layers, num_heads=num_heads,
         )
+        cfg.activation_checkpointing = bool(activation_checkpointing)
         generator = torch.Generator(device=device).manual_seed(seed + 1000)
         probe = task.make_training_problem(batch, generator=generator)
         model, init = instantiate_controlled_model(cfg, probe, seed=seed)
@@ -235,8 +242,33 @@ def one_case_probe(
         del probe
         write_report(output, report)
 
+        if profile_blocks:
+            # Observer is invoked after each original transformer block
+            # (not during checkpoint recomputation). Syncs perturb timing:
+            # both baseline and checkpointed modes use the same observer.
+            current_step = [0]
+
+            def observe_block(layer_index: int) -> None:
+                torch.cuda.synchronize(device)
+                observation = {
+                    "step": current_step[0],
+                    "block": layer_index + 1,
+                    "live_allocated_gib": gib(torch.cuda.memory_allocated(device)),
+                    "peak_allocated_gib": gib(torch.cuda.max_memory_allocated(device)),
+                    "live_reserved_gib": gib(torch.cuda.memory_reserved(device)),
+                    "peak_reserved_gib": gib(torch.cuda.max_memory_reserved(device)),
+                }
+                report["forward_block_memory"].append(observation)
+                print("[M43-B1b] block memory " + json.dumps(observation), flush=True)
+                # Keep partial trace if the subsequent layer triggers CUDA OOM.
+                write_report(output, report)
+
+            model.set_block_memory_observer(observe_block)
+
         torch.cuda.reset_peak_memory_stats(device)
         for iteration in range(num_steps):
+            if profile_blocks:
+                current_step[0] = iteration + 1
             print(f"[M43-B1] Training step {iteration+1}/{num_steps}", flush=True)
             step_start = time.perf_counter()
             optimizer.zero_grad(set_to_none=True)
@@ -314,11 +346,21 @@ def main() -> None:
     p.add_argument("--hidden-dim", type=int, default=128)
     p.add_argument("--layers", type=int, default=10)
     p.add_argument("--heads", type=int, default=4)
+    p.add_argument(
+        "--activation-checkpointing", action="store_true",
+        help="Non-reentrant activation rematerialization for each M37 DiT block",
+    )
+    p.add_argument(
+        "--profile-blocks", action="store_true",
+        help="Synchronize and record GPU allocated/reserved memory after each forward block",
+    )
     a = p.parse_args()
     result = one_case_probe(
         case=a.case, snapshot=a.snapshot, mesh=a.mesh,
         expected_side=a.side, num_steps=a.steps, seed=a.seed,
         hidden_dim=a.hidden_dim, num_layers=a.layers, num_heads=a.heads,
+        activation_checkpointing=a.activation_checkpointing,
+        profile_blocks=a.profile_blocks,
         output=a.output,
     )
     if result["status"] != "ok":

@@ -1327,3 +1327,70 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   preprocessing contracts are established.
 - Extended outcome and limitations:
   docs/M43_B1_MULTIRES_TRAINING_MEMORY_GATE.md.
+
+
+### M43-B1b optional M37 activation checkpointing comparison (source ready)
+
+- Trigger: actual M43-B1 2026-10-19 single Grace measurement:
+  Re54/Ma0.3 65^3 two train steps passed at 41.416 GiB
+  peak PyTorch GPU allocated, 2.58 s warmed step; Re94/Ma0.3
+  129^3 first forward failed CUDA OOM, 89.330 GiB observed
+  peak before requesting another 4.10 GiB. GPU CUDA HBM
+  visible capacity 95.00 GiB; CPU graph construction passed
+  at both resolutions. See docs/M43_B1_MULTIRES_TRAINING_MEMORY_GATE.md.
+- Implementation: src/graph_attention/models/dinat_dit.py
+  now has opt-in activation_checkpointing boolean, DEFAULT
+  false. Each existing DiT block uses non-reentrant
+  torch.utils.checkpoint.checkpoint with preserve_rng_state,
+  passed hidden, time-condition embedding and geometric
+  displacement tensors. Its Python callable freezes the
+  correct layer, topology and batch assignment for backward
+  recomputation. Does not checkpoint in eval/no-grad.
+  No extra trainable parameters or change in M37 mathematics.
+  Existing pretrained M37 state_dict stays compatible.
+- Config and model factory expose optional
+  model.activation_checkpointing=true for DiNAT-DiT
+  only; other model families remain unchanged.
+- Optional after-block memory observer runs once per
+  original forward block; reports synchronized live
+  and global peak PyTorch GPU allocated/reserved memory
+  to an incremental JSON record, including partial
+  forward traces if later blocks hit CUDA OOM.
+- tests/unit/test_m43_b1b_checkpointing.py validates
+  baseline versus checkpointed outputs, complete parameter
+  and input/coordinate/time gradients, two matching AdamW
+  optimizer updates, dropout RNG preservation, observer
+  not rerun on backward recomputation, and eval/no-grad
+  bypass. Cases span scatter and torch_sparse attention
+  and none/local/both self-edge settings.
+- scripts/m43_b1_training_step.py updated to accept
+  --activation-checkpointing and --profile-blocks
+  without altering default M43-B1 execution.
+- scripts/m43_b1b_checkpoint_gate.py runs four fresh
+  GPU subprocesses on ONE Grace allocation in order:
+  65 baseline, 65 checkpointed, 129 baseline,
+  129 checkpointed. All use the same real mid-series
+  HDF5 snapshots, seed, h128/l10/h4 M37 setup,
+  FP32, batch size one and two complete AdamW
+  updates attempted per mode/resolution. The 129
+  baseline CUDA OOM is an accepted reference outcome
+  but does not prevent attempting 129 checkpointed.
+  Small-graph parity is the primary numerical check;
+  65 losses receive additional atol=rtol=2e-4 check.
+- Grace launch via
+  scripts/slurm/m43_b1b_activation_checkpointing.slurm:
+  Grace one GPU, four CPUs, four hours, NO explicit
+  --mem, clean checkout, PyCompile, focused pytest,
+  then four process comparisons. Results under
+  GraphAttention_runs/m43_b1b_activation_checkpoint_gate/
+  with summary.json and per-case/per-mode report.json
+  and process.log; safe resumability and exclusive lock.
+- Main goal: establish actual complete forward/backward
+  memory and timing for checkpointed 129^3; do NOT
+  launch 600-snapshot mixed-resolution training yet.
+  No code changes to M42/dnstoles, physics equations,
+  filtering/conditioning or SGS closure.
+- Documentation docs/M43_B1B_ACTIVATION_CHECKPOINTING.md.
+  **Status: implementation and new regression tests
+  prepared, not yet executed on Grace. No 129^3
+  checkpointed fit or speed claims until job results.**
