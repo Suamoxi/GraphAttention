@@ -1225,3 +1225,57 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   CPU CSR assembly or stabilize mmap file residency.
   No physics quality evaluation or M42 work performed.
   See docs/M41_6_METADATA_OPTIMIZATION.md.
+
+
+### M43-B1 real full-graph mixed-resolution training memory gate (implementation)
+
+- Context: stop M41 computational inference scalability optimization
+  after M41.6. Begin Experiment B: train ONE unchanged M37 model across
+  different 3D mesh resolutions before conditional super-resolution.
+  No modification to separate M42 dataset preparation repository.
+- User-performed archive inventory: 16 HIT_DNS_COMP simulations,
+  1,647 snapshots; 65^3 300 snapshots at Re54,
+  129^3 300 at Re94, 193^3 242 at Re070,
+  257^3 784 at Re080/Re090/Re150, 513^3 21 at Re160.
+- Immediate feasibility gate: real AVBP snapshots
+  Re54/Ma0.3 (65^3) versus Re94/Ma0.3 (129^3),
+  actual hexahedral local/exact-two-hop graph,
+  Flow Matching time scale 1000, M37 h128/l10/h4,
+  torch_sparse, same no-extra-self-loop policy.
+  Each child performs two real single-GPU full-graph
+  forward + backward + AdamW updates, separate process
+  on one Grace allocation, batch size one.
+- scripts/m43_b1_training_step.py: read real HDF5,
+  build exact M37 graph, record topology build and transfer
+  separately, execute real autograd updates and report
+  CUDA allocated/reserved peak, CPU process RSS,
+  per-step forward/backward/optimizer times, loss finiteness,
+  host, Slurm ID, model size and graph edges.
+- scripts/m43_b1_memory_gate.py: read-only HDF5
+  metadata gate checking cells/node/5 field dimensions,
+  pick middle sorted snapshot in a unique SOLUT directory;
+  run independent fresh-process probes with incremental
+  output, resumable signatures and exclusive lock.
+  Saves caught CUDA OOM and other failures without
+  starting a long training job. Overall nonzero exit
+  unless BOTH resolutions finish.
+- Probe uses one-snapshot diagnostic z-score and
+  box-length coordinate normalization solely to prevent
+  unrepresentative raw dimensional field amplitudes.
+  These are NOT valid M6 train-only scaling values,
+  and the memory test's losses must not be interpreted
+  as scientific training. Actual mixed-run setup needs
+  case-level physical references, grouped temporal splits
+  and sample-balanced standardization.
+- Slurm launcher scripts/slurm/m43_b1_mixed_resolution_memory_probe.slurm
+  requests Grace one GPU, 4 CPUs, 4 hours, NO --mem;
+  runs Python compile, focused small-HDF5 and model
+  gradient regression tests, then both real probes.
+- tests/unit/test_m43_b1_training_memory.py verifies
+  small hexahedral dataset inspection, fail-closed
+  snapshot ambiguity, safe preflight output, and
+  CPU Flow Matching loss/backprop/AdamW via original M37
+  small-model path.
+- Details: docs/M43_B1_MULTIRES_TRAINING_MEMORY_GATE.md.
+- **Status: implementation prepared on GitHub; no new
+  Grace train-memory results or 65^3/129^3 fit claims yet.**
