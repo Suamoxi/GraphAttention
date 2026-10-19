@@ -257,8 +257,8 @@ per optimizer step, 2 true AdamW updates per mode.
   stage dominates the full step (~94.3%). There is no
   valid baseline 129^3 complete-step time, so no direct
   checkpointing overhead ratio can be reported at 129^3.
-- The diagnostic 65^3 Flow Matching losses were BITWISE
-  IDENTICAL at the two measured steps:
+- The diagnostic 65^3 Flow Matching loss values were
+  IDENTICAL AS RECORDED IN THE JSON at the two measured steps:
   2.0007710456848145 and 1.9952092170715332 for both
   baseline and checkpointed. The paired gate reported
   baseline_65_loss_check=passed. Actual per-parameter
