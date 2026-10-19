@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=m43_b_multires_train
-#SBATCH --time=16:00:00
+#SBATCH --time=12:00:00
 #SBATCH --partition=grace
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
