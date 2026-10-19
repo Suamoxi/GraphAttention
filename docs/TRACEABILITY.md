@@ -1435,3 +1435,89 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   two-step losses as scientific training metrics.
 - Extended measurements, trace and caveats:
   docs/M43_B1B_ACTIVATION_CHECKPOINTING.md.
+
+
+### M43 Experiment B six-case mixed-resolution M37 training implementation
+
+- Preceding real-GH200 gate M43-B1b checkpointed
+  full-graph 129^3 training completed 2/2 true AdamW
+  steps at 53.166 GiB allocated peak on a 95 GiB
+  device (job 471143); 65^3 checkpointed peak
+  6.878 GiB. Memory feasibility is established,
+  but no scientific long six-case training yet.
+- src/graph_attention/data/multicase_avbp.py:
+  explicit HIT_DNS_COMP six physical cases, 3 at
+  65^3 (Re54) and 3 at 129^3 (Re94), 100 snapshots
+  each; individual MESH/mesh.mesh.h5 and exactly
+  one SOLUT or RUN/SOLUT directory; inspect HDF5
+  schema without eager data load; sample IDs combine
+  case path and snapshot file stem. Exposes per-case
+  indices, case ID, resolution and provenance files.
+- Physical references: NO guessed rho_ref/U_ref/L_ref.
+  Scientific smoke/train modes demand six explicitly
+  audited M3.3 case YAMLs with exact case identity,
+  coherent reference scheme, explicit required
+  scales, units and provenance. Preflight mode does
+  not require YAML values and reveals case_info.json
+  and RUN/run.params paths. Do not reuse unrelated
+  HIT_LES_FORCED reference numeric constants.
+- src/graph_attention/data/multicase_split.py:
+  case-stratified chronological filename split,
+  with index-space embargo on both sides of both
+  split boundaries and no cross-split sample IDs.
+  With 100 snapshots per case, train/val/test
+  fractions 0.70/0.15/0.15 and embargo=2 yield
+  68 train + 11 validation + 13 test + 8 excluded
+  snapshots per case, totals 408/66/78/48.
+  A time-index gap is NOT evidence of physical
+  decorrelation without turnover-time audit.
+- scripts/train_m43_b_multires.py:
+  safe inspect, six-case one-step smoke and explicit
+  full scientific train modes. Uses existing M3.3
+  per-case physical nondimensionalization, M6
+  train-only equal-sample statistical scaling,
+  task-owned straight-path Flow Matching,
+  M37 10-layer 128-wide 4-head geometric
+  DiNAT-DiT with torch_sparse FP32, and new opt-in
+  activation checkpointing enabled. No architecture
+  change or conditional SR loss.
+- Six-way deterministic sample-order interleave
+  across cases alternates 65^3/129^3. Microbatch
+  size one physical graph, gradients accumulated
+  from one of each six cases and divided by six
+  before each AdamW step; large host microbatches
+  are processed sequentially (not buffered together).
+  Separate validation MSE by physical case and by
+  mesh resolution; deterministic sample-ID keyed
+  validation noise, and test only at best-val model.
+- Artifacts: signed source snapshot/mesh manifest
+  and reference file hashes, split.json, inspected
+  case provenance inventory, frozen reference YAML
+  copies and standardizers.pt, best.pt/last.pt,
+  history.csv/json and summary.json. Epoch-end
+  atomic model checkpoints and manifest-verified
+  resume without train/validation leakage.
+- tests/unit/test_m43_b_multires.py builds six
+  synthetic HDF5 physical cases at two toy
+  resolutions, tests metadata-only loading,
+  fail-closed reference enforcement, disjoint
+  time-buffered split, stable interleaving,
+  train-only scaler and a shared train optimizer
+  step plus six-case validation on CPU.
+- Grace scripts: scripts/slurm/m43_b_multires_inspect_smoke.slurm
+  is safe inspect by default, supports explicit
+  M43_B_MODE=smoke only after physical refs;
+  scripts/slurm/m43_b_multires_train.slurm requires
+  M43_B_CONFIRM_LONG_TRAIN=YES and all audited
+  case refs before any 16-hour job. One Grace
+  GH200 GPU, four CPUs, no explicit --mem cap.
+- Re54 vs Re94 *confounds Reynolds and resolution*.
+  AVBP SOLUTBOUND periodic graph mapping remains
+  outside existing M37 attention topology.
+  No claim of scale-only generalization, SGS
+  accuracy, conditional SR or trained model until
+  real smoke/long-run results are returned.
+- Documentation docs/M43_B_MIXED_RESOLUTION_TRAINING.md.
+  **Status: source, synthetic tests and launchers
+  prepared; real archive metadata/reference audit
+  and Grace smoke results still pending.**
