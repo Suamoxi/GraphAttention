@@ -232,6 +232,18 @@ def _append(collector: dict[str, list[float]], category: str, loss: float) -> No
     collector.setdefault(category, []).append(loss)
 
 
+def _synchronize(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def _summarize_times(collector: Mapping[str, list[float]]) -> dict[str, Any]:
+    return {
+        key: {"mean_seconds": sum(values) / len(values), "physical_samples": len(values)}
+        for key, values in collector.items() if values
+    }
+
+
 def _summarize_losses(collector: Mapping[str, list[float]]) -> dict[str, Any]:
     result = {}
     for name, values in collector.items():
@@ -305,9 +317,14 @@ def train_epoch(
     losses: list[float] = []
     by_case: dict[str, list[float]] = {}
     by_resolution: dict[str, list[float]] = {}
+    forward_by_resolution: dict[str, list[float]] = {}
+    backward_by_resolution: dict[str, list[float]] = {}
+    step_wall_seconds: list[float] = []
     step_count = 0
     started = time.perf_counter()
     for start in range(0, len(order), accumulation):
+        _synchronize(device)
+        step_started = time.perf_counter()
         step_indices = order[start:start+accumulation]
         optimizer.zero_grad(set_to_none=True)
         try:
@@ -319,7 +336,11 @@ def train_epoch(
                 problem = task.make_training_problem(
                     prepared, generator=generator,
                 )
+                _synchronize(device)
+                forward_started = time.perf_counter()
                 aggregate = task.training_loss(_forward(model, problem), problem)
+                _synchronize(device)
+                forward_seconds = time.perf_counter() - forward_started
                 if aggregate.sample_count != 1:
                     raise RuntimeError("microbatch must contain one physical sample")
                 scalar = float(aggregate.mean.detach().cpu())
@@ -328,23 +349,29 @@ def train_epoch(
                 # Exact M6 equal-physical-sample objective:
                 # sum per-sample gradients then divide by number of samples
                 # actually used in the optimizer step (including short last).
+                _synchronize(device)
+                backward_started = time.perf_counter()
                 aggregate.loss_sum.backward()
+                _synchronize(device)
+                backward_seconds = time.perf_counter() - backward_started
                 losses.append(scalar)
                 sample_id = dataset.sample_ids[index]
+                resolution = str(dataset.resolution_by_sample_id[sample_id])
                 _append(by_case, dataset.case_by_sample_id[sample_id], scalar)
-                _append(
-                    by_resolution,
-                    str(dataset.resolution_by_sample_id[sample_id]), scalar,
-                )
+                _append(by_resolution, resolution, scalar)
+                _append(forward_by_resolution, resolution, forward_seconds)
+                _append(backward_by_resolution, resolution, backward_seconds)
                 del aggregate, problem, prepared
 
             for parameter in model.parameters():
                 if parameter.grad is not None:
                     parameter.grad.mul_(1.0 / len(step_indices))
             optimizer.step()
+            _synchronize(device)
         except Exception:
             optimizer.zero_grad(set_to_none=True)
             raise
+        step_wall_seconds.append(time.perf_counter() - step_started)
         step_count += 1
         elapsed = time.perf_counter() - started
         print(
@@ -365,7 +392,29 @@ def train_epoch(
         "wall_seconds": time.perf_counter() - started,
         "by_case": _summarize_losses(by_case),
         "by_resolution": _summarize_losses(by_resolution),
+        "forward_by_resolution": _summarize_times(forward_by_resolution),
+        "backward_by_resolution": _summarize_times(backward_by_resolution),
+        "mean_optimizer_step_seconds": sum(step_wall_seconds) / step_count,
+        "physical_samples_per_second": len(losses) / (time.perf_counter() - started),
     }
+
+
+def load_training_checkpoint(
+    path: Path, *,
+    signature_sha256: str,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    generator: torch.Generator,
+) -> dict[str, Any]:
+    """Restore all mutable optimizer-step state, rejecting a mismatched run."""
+
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    if checkpoint.get("signature_sha256") != signature_sha256:
+        raise RuntimeError("checkpoint signature differs from manifest")
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    generator.set_state(checkpoint["training_generator_state"])
+    return checkpoint
 
 
 def _manifest_signature(
@@ -567,14 +616,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     start_epoch = 0
     history: list[dict[str, Any]] = []
     if args.resume:
-        checkpoint = torch.load(
-            destination / "last.pt", map_location="cpu", weights_only=True,
+        checkpoint = load_training_checkpoint(
+            destination / "last.pt", signature_sha256=signature["sha256"],
+            model=model, optimizer=optimizer, generator=generator,
         )
-        if checkpoint.get("signature_sha256") != signature["sha256"]:
-            raise RuntimeError("checkpoint signature differs from manifest")
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        generator.set_state(checkpoint["training_generator_state"])
         start_epoch = int(checkpoint["epoch"]) + 1
         best_loss = float(checkpoint["best_validation_velocity_mse"])
         history = list(checkpoint["history"])
@@ -654,6 +699,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             f"per_resolution={validation['by_resolution']} "
             f"elapsed_s={row['epoch_wall_seconds']:.1f}", flush=True,
         )
+    checkpoint_recovery_verified = False
+    if args.mode == "smoke":
+        # Exercise the same model/optimizer/generator recovery path used on resume.
+        weights_before = {
+            name: value.detach().cpu().clone() for name, value in model.state_dict().items()
+        }
+        generator_before = generator.get_state().clone()
+        load_training_checkpoint(
+            destination / "last.pt", signature_sha256=signature["sha256"],
+            model=model, optimizer=optimizer, generator=generator,
+        )
+        if any(
+            not torch.equal(value.detach().cpu(), weights_before[name])
+            for name, value in model.state_dict().items()
+        ) or not torch.equal(generator.get_state(), generator_before):
+            raise RuntimeError("smoke checkpoint restore changed model or RNG state")
+        checkpoint_recovery_verified = True
     # Evaluate test ONLY at best validation selection, never to select model.
     best = torch.load(
         destination / "best.pt", map_location="cpu", weights_only=True,
@@ -676,7 +738,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "test_samples": len(test_indices),
         "excluded_samples": len(split_plan.excluded_ids),
         "checkpointed_m37": True,
+        "checkpoint_recovery_verified": checkpoint_recovery_verified,
         "optimizer_accumulation": args.accumulation,
+        "training_performance_final_epoch": {
+            "forward_by_resolution": history[-1]["train"]["forward_by_resolution"],
+            "backward_by_resolution": history[-1]["train"]["backward_by_resolution"],
+            "mean_optimizer_step_seconds": history[-1]["train"][
+                "mean_optimizer_step_seconds"
+            ],
+            "physical_samples_per_second": history[-1]["train"][
+                "physical_samples_per_second"
+            ],
+        },
         "physical_nondimensionalization": True,
         "scaler": "train_only_sample_balanced_M6",
         "best_epoch": int(best["epoch"]),

@@ -1521,3 +1521,13 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
   **Status: source, synthetic tests and launchers
   prepared; real archive metadata/reference audit
   and Grace smoke results still pending.**
+
+
+### M43-B follow-up audit — numeric time order, checkpoint round-trip and timings (2026-10-19)
+
+- Preserved the pre-existing Experiment B implementation, M37 attention math, and M6 statistics.
+- The six-case dataset now orders solution files by numerical timestep suffix and rejects missing/duplicate counters and inconsistent prefixes; accepts HDF5 [N,1] fields/coordinates consistent with the original AVBP reader.
+- Temporally blocked splits verify strictly increasing numeric snapshot counters rather than only lexicographical ordering. Physical times, source-realization overlap, and turnover-time decorrelation still require the archive metadata audit; no scientific independence claim is made.
+- The one-update Grace smoke path now exercises the common checkpoint restoration routine, including model, AdamW state and Flow Matching generator. A synthetic optimizer/RNG round-trip and signature mismatch test was added.
+- Training history and summary now report synchronized forward/backward time by resolution, wall time per optimizer step and physical samples/s in addition to the existing MSE and CUDA peak metrics. CUDA timing synchronization has diagnostic overhead.
+- No GPU smoke run or actual scientific training is claimed by this source-only change.

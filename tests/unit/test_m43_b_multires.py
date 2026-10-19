@@ -1,6 +1,7 @@
 """M43 Experiment B six-case scientific contracts, with synthetic HDF5 only."""
 from __future__ import annotations
 
+import copy
 from itertools import product
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from graph_attention.training import fit_train_standardizers
 from graph_attention.training.data_pipeline import GraphTaskCollator
 from scripts.train_m43_b_multires import (
     _indices_by_case, _references_signature, _smoke_split,
-    evaluate, inspect_inventory, train_epoch,
+    evaluate, inspect_inventory, load_training_checkpoint, train_epoch,
 )
 
 
@@ -126,6 +127,45 @@ def test_six_cases_resolutions_and_snapshot_manifest_without_reading_fields(tmp_
     assert dataset[0].reference_scales["rho_ref"].value == 1.2
 
 
+def test_numeric_snapshot_order_and_supported_column_shaped_hdf5(tmp_path):
+    root, refdir, cases = _fixture_archive(tmp_path)
+    folder = root / cases[0].case_id
+    for counter in range(25):
+        (folder / "SOLUT" / f"solut_hit_{counter:08d}.h5").rename(
+            folder / "SOLUT" / f"solut_hit_{counter}.h5"
+        )
+    mesh_path = folder / "MESH" / "mesh.mesh.h5"
+    with h5py.File(mesh_path, "a") as mesh:
+        values = mesh["Coordinates/x"][:]
+        del mesh["Coordinates/x"]
+        mesh["Coordinates"].create_dataset("x", data=values[:, None])
+    with h5py.File(folder / "SOLUT" / "solut_hit_0.h5", "a") as snapshot:
+        values = snapshot["GaseousPhase/rho"][:]
+        del snapshot["GaseousPhase/rho"]
+        snapshot["GaseousPhase"].create_dataset("rho", data=values[:, None])
+    dataset = AVBPMultiCaseHITDataset(
+        root=root, cases=cases, reference_dir=refdir,
+        expected_snapshots_per_case=25,
+    )
+    assert [
+        dataset.sample_ids[i].split("_")[-1]
+        for i in dataset.indices_by_case[cases[0].case_id]
+    ] == [str(i) for i in range(25)]
+    assert dataset[0].fields["rho"].shape == (cases[0].side**3,)
+    plan = _full_split(dataset)
+    assert len(plan.manifest.train_ids) == 16*6
+
+
+def test_temporal_split_rejects_unordered_or_unnumbered_samples():
+    ids = [f"case:snapshot_{i}" for i in range(25)]
+    ids[3], ids[4] = ids[4], ids[3]
+    with pytest.raises(ValueError, match="strictly increasing"):
+        temporal_case_split({"case": ids}, temporal_embargo=1)
+    ids[3] = "case:snapshot_without_counter"
+    with pytest.raises(ValueError, match="numeric timestep suffixes"):
+        temporal_case_split({"case": ids}, temporal_embargo=1)
+
+
 def test_missing_case_references_fail_closed_but_inspect_still_works(tmp_path):
     root, refdir, cases = _fixture_archive(tmp_path)
     (refdir / reference_filename(cases[1].case_id)).unlink()
@@ -220,6 +260,10 @@ def test_smoke_forward_backward_shared_weights_and_per_case_validation(tmp_path)
     )
     assert trainstats["samples"] == 6
     assert trainstats["optimizer_steps"] == 1
+    assert trainstats["mean_optimizer_step_seconds"] > 0
+    assert trainstats["physical_samples_per_second"] > 0
+    assert set(trainstats["forward_by_resolution"]) == {"3", "4"}
+    assert set(trainstats["backward_by_resolution"]) == {"3", "4"}
     assert len(trainstats["by_case"]) == 6
     assert len(trainstats["by_resolution"]) == 2
     validation = evaluate(
@@ -233,3 +277,39 @@ def test_smoke_forward_backward_shared_weights_and_per_case_validation(tmp_path)
     assert set(validation["by_resolution"]) == {"3","4"}
     assert all(value["physical_samples"] == 1
                for value in validation["by_case"].values())
+
+
+
+def test_training_checkpoint_roundtrip_and_signature_gate(tmp_path):
+    model = torch.nn.Linear(2, 2)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    generator = torch.Generator(device="cpu").manual_seed(55)
+    optimizer.zero_grad()
+    model(torch.ones((2, 2))).square().sum().backward()
+    optimizer.step()
+    saved = {
+        "signature_sha256": "correct",
+        "model_state_dict": copy.deepcopy(model.state_dict()),
+        "optimizer_state_dict": copy.deepcopy(optimizer.state_dict()),
+        "training_generator_state": generator.get_state().clone(),
+    }
+    path = tmp_path / "last.pt"
+    torch.save(saved, path)
+    with torch.no_grad():
+        model.weight.add_(5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    generator.manual_seed(999)
+    restored = load_training_checkpoint(
+        path, signature_sha256="correct", model=model,
+        optimizer=optimizer, generator=generator,
+    )
+    assert restored["signature_sha256"] == "correct"
+    assert all(torch.equal(model.state_dict()[name], value)
+               for name, value in saved["model_state_dict"].items())
+    assert optimizer.state_dict()["state"]
+    assert torch.equal(generator.get_state(), saved["training_generator_state"])
+    with pytest.raises(RuntimeError, match="checkpoint signature differs"):
+        load_training_checkpoint(
+            path, signature_sha256="incorrect", model=model,
+            optimizer=optimizer, generator=generator,
+        )

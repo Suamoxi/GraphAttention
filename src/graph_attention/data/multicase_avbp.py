@@ -53,8 +53,8 @@ def _find_snapshots(directory: Path) -> tuple[Path, ...]:
     valid = []
     for candidate in locations:
         if candidate.is_dir():
-            paths = tuple(sorted(p.resolve(strict=True) for p in candidate.glob("*.h5")
-                                 if p.is_file()))
+            paths = tuple(p.resolve(strict=True) for p in candidate.glob("*.h5")
+                          if p.is_file())
             if paths:
                 valid.append(paths)
     if len(valid) != 1:
@@ -62,14 +62,38 @@ def _find_snapshots(directory: Path) -> tuple[Path, ...]:
             f"expected exactly one nonempty HDF5 SOLUT directory in {directory}; "
             f"found {len(valid)} (refuse ambiguous/empty discovery)"
         )
-    return valid[0]
+    return _order_snapshots_by_counter(valid[0], directory)
+
+
+def _order_snapshots_by_counter(
+    paths: tuple[Path, ...], directory: Path,
+) -> tuple[Path, ...]:
+    """Order timesteps numerically; never assume lexical order is temporal order."""
+
+    numbered: list[tuple[int, Path]] = []
+    prefix: str | None = None
+    for path in paths:
+        match = re.fullmatch(r"(.+?)(\d+)", path.stem)
+        if match is None:
+            raise ValueError(
+                f"{directory}: snapshot {path.name!r} has no numeric timestep suffix"
+            )
+        if prefix is None:
+            prefix = match.group(1)
+        elif match.group(1) != prefix:
+            raise ValueError(f"{directory}: inconsistent snapshot filename prefixes")
+        numbered.append((int(match.group(2)), path))
+    if len({number for number, _ in numbered}) != len(numbered):
+        raise ValueError(f"{directory}: duplicate numeric snapshot timestep counters")
+    return tuple(path for _, path in sorted(numbered))
 
 
 def _inspect_mesh(mesh_path: Path, expected_side: int) -> dict[str, int]:
     # This opens HDF5 metadata only, NOT the coordinate arrays or connectivity.
     with h5py.File(mesh_path, "r") as data:
         dims = {axis: data[f"Coordinates/{axis}"].shape for axis in "xyz"}
-        if any(dim != (expected_side**3,) for dim in dims.values()):
+        nodes = expected_side**3
+        if any(dim not in {(nodes,), (nodes, 1)} for dim in dims.values()):
             raise ValueError(
                 f"{mesh_path}: expected {expected_side**3} nodes/coordinate; got {dims}"
             )
@@ -87,7 +111,7 @@ def _inspect_snapshot(path: Path, nodes: int) -> None:
     with h5py.File(path, "r") as snapshot:
         for name in _STATE:
             tensor = snapshot[f"GaseousPhase/{name}"]
-            if tensor.shape != (nodes,):
+            if tensor.shape not in {(nodes,), (nodes, 1)}:
                 raise ValueError(
                     f"{path}: field {name} expected {(nodes,)}, "
                     f"got {tensor.shape}"

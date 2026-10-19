@@ -35,8 +35,10 @@ Archive root: /archivenfs/phlusim/HIT_DNS_COMP
 
 Each case has a fixed MESH/mesh.mesh.h5 and
 one unambiguous SOLUT or RUN/SOLUT directory.
-Snapshots are sorted by padded numeric filename;
-they are not assumed to be independent. Mesh and
+Snapshots are ordered by their numerical timestep suffix
+(also safe for non-padded filenames), and ambiguous prefixes
+or duplicate counters fail closed. Filename order does not
+prove physical temporal independence. Mesh and
 three representative snapshot HDF5 schemas are
 checked without loading complete arrays. Per-case
 mesh indices and all snapshot filenames remain
@@ -197,8 +199,11 @@ trajectory split may be justified by the actual cadence.
   reference file hashes, splits, seed, code git
   revision, numerical preprocessing and model recipe.
   Resume rejects mismatched data, references and code.
-- Peak CUDA allocated/reserved and per-resolution
-  validation metrics saved to summary.json.
+- Peak CUDA allocated/reserved, separate synchronized
+  forward/backward timings by resolution, optimizer-step
+  wall time (including input loading), processed samples/s,
+  and per-resolution validation metrics saved to summary.json.
+  Timing synchronization is diagnostic and contributes overhead.
 - Existing M37 attention math, loss and generation
   algorithm remain unchanged.
 
@@ -221,7 +226,11 @@ This is a software/numerical/throughput gate, not
 a scientific training run: its scaler is deliberately
 not the full training-split scaler.
 Inspect smoke_JOBID/summary.json, per-case metrics,
-GPU peak, and saved model checkpoints.
+GPU peak, and saved model checkpoints. The smoke command also reloads
+the last checkpoint through the scientific resume path,
+checking restored model and training RNG state against the
+pre-reload state; an independent synthetic test checks AdamW
+optimizer restoration and signature mismatches.
 
 ### Phase 2 — Actual training (explicit opt-in only)
 

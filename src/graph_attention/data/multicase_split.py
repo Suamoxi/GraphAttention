@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 import random
+import re
 from typing import Mapping, Sequence
 
 from .splits import SplitManifest
@@ -60,9 +61,13 @@ def temporal_case_split(
         ids = tuple(raw_ids)
         if not case or not ids or len(set(ids)) != len(ids):
             raise ValueError(f"invalid or duplicate sample IDs in {case}")
-        if tuple(sorted(ids)) != ids:
+        matches = [re.search(r"(\d+)$", sample_id) for sample_id in ids]
+        if any(match is None for match in matches):
+            raise ValueError(f"{case}: snapshot IDs must have numeric timestep suffixes")
+        counters = [int(match.group(1)) for match in matches if match is not None]
+        if any(a >= b for a, b in zip(counters, counters[1:])):
             raise ValueError(
-                f"{case}: snapshot paths must be in chronological filename order"
+                f"{case}: snapshot timestep counters must be strictly increasing"
             )
         n = len(ids)
         train_stop = int(n * train_ratio)
