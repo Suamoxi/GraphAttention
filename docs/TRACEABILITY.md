@@ -1279,3 +1279,51 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
 - Details: docs/M43_B1_MULTIRES_TRAINING_MEMORY_GATE.md.
 - **Status: implementation prepared on GitHub; no new
   Grace train-memory results or 65^3/129^3 fit claims yet.**
+
+
+### M43-B1 actual single-GH200 full-graph training gate — 2026-10-19
+
+- User-uploaded summary(20261019-091244).json from
+  calypso-grace03, job 471112, git 6558dc3a1ac686e2957ef5625fa67889f0376589.
+  Status not_all_passed; M37 h128/l10/h4 torch_sparse,
+  3,051,845 parameters, FP32, five conservative fields.
+- Re54/Ma0.3, 65^3 (274,625 nodes, 1,622,400
+  one-hop / 4,791,930 exact-two-hop directed edges):
+  completed **2/2 real full-graph Flow Matching AdamW
+  steps**, wall time step1 3.083 s and step2 2.580 s.
+  Second step forward 0.149 s, backward 2.429 s,
+  optimizer 0.0015 s; GPU PyTorch peak allocated
+  **41.41574 GiB**, reserved **43.03125 GiB**,
+  CPU process peak RSS **1.88965 GiB**, graph
+  construction 4.8633 s. Two diagnostic FM losses
+  2.00077 and 1.99521 are NOT physically comparable
+  or train/validation results (single-snapshot z-score).
+- Re94/Ma0.3, 129^3 (2,146,689 nodes, 12,780,288
+  one-hop / 38,042,874 exact-two-hop directed edges):
+  HDF5 loading **passed** (2.53 s); complete CPU graph
+  construction **passed** (39.13 s, RSS peak 7.795 GiB);
+  model initialization and H2D **passed**.
+  First FP32 model forward **CUDA OOM**, 0/2 steps,
+  while requesting another 4.10 GiB. GPU device total
+  95 GiB HBM, measured max PyTorch allocated **89.32964
+  GiB** and reserved **91.93164 GiB** before failure.
+  These are failed-run peaks, NOT successful-step memory
+  estimates. No block-level bottleneck attribution yet.
+- B1 outcome: one unchanged M37 model can train on
+  full 65^3 with batch=1; full 129^3 does not fit
+  on one Grace GH200 under current eager autograd path.
+  Gradient accumulation and M41.6 no-grad streaming
+  do not solve a batch-one training forward OOM.
+  torch_sparse backend currently requires float32,
+  so BF16 is not a drop-in alternative.
+- Next proposed narrow gate, *not yet implemented*:
+  non-invasive per-block forward memory instrumentation
+  plus optional non-reentrant DiT activation checkpointing;
+  small-mesh output AND gradient parity; repeat
+  65/129^3 actual optimizer steps. If that does not fit,
+  consider exact receptive-field halo cropped training.
+  No long mixed-resolution run should be launched until
+  training-memory viability and case-level scientific
+  preprocessing contracts are established.
+- Extended outcome and limitations:
+  docs/M43_B1_MULTIRES_TRAINING_MEMORY_GATE.md.

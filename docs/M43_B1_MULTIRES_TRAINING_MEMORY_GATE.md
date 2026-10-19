@@ -128,4 +128,135 @@ checkpointing before attempting differentiable out-of-core
 partitioning. Periodic boundary equivalence remains a
 known limitation of the current M37 cell-edge graph.
 
-**Status: implemented but GH200 results pending.**
+**Status update (2026-10-19): GH200 full-graph feasibility gate executed. The 65³ probe passed, but 129³ hit CUDA OOM during its first forward. Complete measurements follow.**
+
+
+## M43-B1 Grace measurements — 2026-10-19
+
+Source: user-uploaded summary(20261019-091244).json.
+Summary status: not_all_passed.
+Both cases executed on calypso-grace03.calypso.cerfacs.fr,
+Slurm job 471112, same source revision
+6558dc3a1ac686e2957ef5625fa67889f0376589.
+GPU: NVIDIA GH200 480GB (CUDA device HBM capacity = 95.0 GiB).
+Model: M37 alternating local/exact-two-hop DiNAT-DiT, h128,
+10 layers, 4 heads, 3,051,845 trainable parameters,
+torch_sparse backend, 5 conservative channels, FP32,
+batch size 1, two scheduled AdamW steps.
+
+| Metric | Re54/Ma0.3: 65³ | Re94/Ma0.3: 129³ |
+|---|---:|---:|
+| Nodes | 274,625 | 2,146,689 |
+| Hexahedral cells | 262,144 | 2,097,152 |
+| Directed one-hop edges | 1,622,400 | 12,780,288 |
+| Directed exact-two-hop edges | 4,791,930 | 38,042,874 |
+| Snapshot HDF5 load (s) | 0.37973 | 2.52681 |
+| CPU topology and collator construction (s) | 4.86329 | 39.12749 |
+| GPU transfer and probe-only scale (s) | 0.21459 | 0.14035 |
+| Model initialization (s) | 1.32988 | 0.82343 |
+| Process peak CPU RSS (GiB) | 1.88965 | 7.79498 |
+| PyTorch GPU allocation after transfer (GiB) | 0.10667 | 0.83826 |
+| Peak PyTorch allocated (GiB) | 41.41574 | 89.32964 before OOM |
+| Peak PyTorch reserved (GiB) | 43.03125 | 91.93164 before OOM |
+| Completed AdamW steps | **2 / 2** | **0 / 2** |
+| Status | **ok** | **cuda_oom in forward_1** |
+
+### Completed 65³ optimizer iterations
+
+| Metric | Step 1 | Step 2 |
+|---|---:|---:|
+| Forward (s) | 0.51918 | 0.14857 |
+| Backward (s) | 2.51208 | 2.42901 |
+| AdamW step (s) | 0.05046 | 0.00145 |
+| Whole training step (s) | 3.08286 | 2.57963 |
+| Peak PyTorch GPU allocated (GiB) | 41.39614 | 41.41574 |
+| Diagnostic Flow Matching loss | 2.00077 | 1.99521 |
+
+The second step is the warmed observation; its backward
+takes ~94% of the 2.58 s step wall time. The first step
+includes lazy sparse-kernel and optimizer initialization.
+Diagnostic losses use a SINGLE-snapshot z-score and are not
+valid for physical comparisons or generalization claims.
+
+### 129³ OOM
+
+The 129³ probe successfully read the real snapshot,
+constructed the complete 12.78M one-hop and 38.04M
+exact-two-hop edges, transferred tensors to the GPU,
+and instantiated M37.
+
+The FIRST forward pass did not finish. CUDA raised OOM while
+attempting a further 4.10 GiB allocation. Error text:
+95.00 GiB total, 4.68 GiB free, ~90.31 GiB process memory
+in use (including non-PyTorch), and ~88.31 GiB currently
+allocated by PyTorch with ~1.32 GiB reserved but not
+allocated at the attempted allocation.
+
+Thus the reported 89.33 GiB GPU peak is a FAILED-run
+measurement, not the actual memory requirement for
+completing forward+backward. The unknown complete-step
+requirement may be substantially larger.
+The source does not provide block-level GPU memory
+snapshots, kernel workspace details, per-stage forward
+peaks, or an isolated activation/allocator breakdown.
+Do not claim a specific kernel is the culprit.
+
+Only a 95 GiB CUDA HBM allocation is visible to PyTorch,
+irrespective of the GPU device name including "480GB"
+(which does not imply 480 GB of CUDA-allocated HBM).
+
+### Interpretation for Experiment B
+
+- Mixed-resolution conventional FULL-GRAPH training with
+  this fixed M37 FP32 configuration is **NOT feasible at
+  129³ on one 95 GiB GH200 under the tested execution**.
+- 65³ works at batch size 1, with ~41.42 GiB PyTorch
+  peak allocated; no long multi-case training was run.
+- Gradient accumulation cannot help when the smallest
+  microbatch of one physical volume already fails.
+- The current experimental torch_sparse backend requires
+  FP32 query/key/value. Blind AMP/bfloat16 substitution is
+  not an established numerical-preserving workaround.
+- M41.6 CPU-streamed halo-partitioned executor is
+  @torch.no_grad() and cannot perform the required
+  training backward.
+- Memory growth, not HDF5 read or graph-building time,
+  is the hard block for 129³. The 39.13 s topology
+  preparation also warrants future caching once the
+  training OOM is resolved.
+- These two cases differ in Reynolds number and may
+  differ in domain size. They are not a controlled
+  identical-flow resolution comparison.
+
+### Recommended next gate (not implemented in this measurement)
+
+1. Instrument peak/live GPU allocation around input
+   embedding and each of the ten M37 blocks during
+   forward; sample backward via hooks or memory snapshots.
+   Preserve M37 equations and tensor dtypes.
+2. Add opt-in, non-reentrant activation checkpointing
+   for DiT blocks; assert matching uncheckpointed
+   forward values AND gradients on small 3D graphs,
+   including geometric attention and trainable adaLN.
+   Then rerun 65³/129³ in fresh processes with two
+   actual optimizer steps, measured stage memory.
+   Checkpointing only reduces retained activations:
+   it cannot fix a per-layer workspace that alone
+   exceeds available GPU memory.
+3. If 129³ still cannot complete, consider exact
+   10-layer full-receptive-field halo patch training
+   with an owned-node loss, and make the cost of
+   overlapping halos explicit. For ten alternating
+   one-hop/exact-two-hop layers, the upper bound of
+   15 one-hop graph traversals is relevant to a
+   single patch's dependency closure.
+4. If full-volume training is a hard requirement,
+   only then evaluate differentiable, layerwise
+   out-of-core halo partitioning and distributed
+   training. This is substantially more involved
+   than M41.6 inference.
+
+**Current recommendation: do not submit a 600-snapshot
+multi-resolution training job. First determine whether
+activation checkpointing can make an entire 129³
+training step fit.**
