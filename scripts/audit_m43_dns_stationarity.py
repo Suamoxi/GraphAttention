@@ -159,6 +159,22 @@ def preflight(root: Path, output: Path, selected: list[str]) -> list[dict]:
             }
             root_attrs = sorted(str(k) for k in h.attrs)
             fluid_attrs = sorted(str(k) for k in h["GaseousPhase"].attrs)
+        provenance = {}
+        for relative in ("case_info.json", "RUN/run.params"):
+            source = directory / relative
+            if source.is_file():
+                text_content = source.read_text(errors="replace")
+                provenance[relative] = {
+                    "path": str(source),
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "time_related_lines_for_review": [
+                        line.strip()[:300] for line in text_content.splitlines()
+                        if any(token in line.lower()
+                               for token in ("time", "timestep", "forcing", "viscos", "gamma"))
+                    ][:30],
+                }
+            else:
+                provenance[relative] = {"status": "missing", "path": str(source)}
         descriptors = [_snapshot_descriptor(p) for p in files]
         times = [s["time"]["value"] for s in descriptors]
         physical_time_known = all(t is not None for t in times)
@@ -173,6 +189,7 @@ def preflight(root: Path, output: Path, selected: list[str]) -> list[dict]:
             "snapshot_root_attribute_names": root_attrs,
             "snapshot_fluid_attribute_names": fluid_attrs,
             "fields": fields,
+            "physical_provenance_text_files": provenance,
             "physical_time_metadata_monotonic": monotonic,
             "time_units_authoritative": False,
             "snapshots": descriptors,
