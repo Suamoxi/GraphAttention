@@ -79,10 +79,14 @@ git fetch origin feature/m43-dns-stationarity-audit
 git worktree add ../GraphAttention_dns_audit feature/m43-dns-stationarity-audit
 ~~~
 
-Grace launcher currently uses REPO=/scratch/coop/theret/GraphAttention.
-Point it at the audit worktree, or use a separate checkout at that path
-when training is not running. Do not change the checkout used by
-a resumable M43-B job.
+Use the M43_AUDIT_REPO environment variable to point the Slurm launcher
+to the audit worktree; do not change the checkout used by a resumable
+M43-B training job. Run the following commands from that worktree:
+
+~~~bash
+cd /scratch/coop/theret/GraphAttention_dns_audit
+export M43_AUDIT_REPO="$PWD"
+~~~
 
 Default: metadata-only preflight, no physical 3-D arrays loaded:
 
