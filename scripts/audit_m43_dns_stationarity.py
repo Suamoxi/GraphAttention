@@ -220,8 +220,11 @@ def _read_field_grid(path: Path, grid) -> tuple[np.ndarray, dict[str, float]]:
     with h5py.File(path, "r") as h:
         for name in CONSERVATIVE_FIELDS:
             field = np.asarray(h[f"GaseousPhase/{name}"]).reshape(-1)
-            full = np.empty(grid.source_shape, dtype=np.float64)
-            full[grid.linear_indices] = field
+            # grid.linear_indices are *flat* Cartesian indices.
+            # Indexing a 3-D ndarray with these values indexes axis 0 only.
+            flat = np.empty(int(np.prod(grid.source_shape)), dtype=np.float64)
+            flat[grid.linear_indices] = field
+            full = flat.reshape(grid.source_shape)
             deviations = [
                 np.max(np.abs(np.take(full, 0, axis=axis) -
                               np.take(full, -1, axis=axis)))
