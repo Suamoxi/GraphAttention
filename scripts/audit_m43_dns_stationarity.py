@@ -314,10 +314,21 @@ def _sample_snapshot(
         )
         summary["spectral_parseval_relative_error"] = orth["parseval_relative_error"]
         summary["spectral_k_cutoff"] = orth["cutoff_rad_per_length"]
+        kinetic_k = entry["metrics"]["turbulent_k"]
+        summary["spectral_unresolved_energy_fraction"] = (
+            summary["spectral_unresolved_velocity_k"] / kinetic_k
+            if kinetic_k > 1.e-20 else None
+        )
+        # Not additive: residual velocity is referenced to Favre coarse velocity.
+        summary["favre_residual_to_total_k_ratio_nonadditive"] = (
+            summary["unresolved_velocity_k"] / kinetic_k
+            if kinetic_k > 1.e-20 else None
+        )
         rk, rE = radial_velocity_spectrum(residual_u, grid.spacing)
         spec_arrays[f"k_residual_f{factor}"] = rk
         spec_arrays[f"E_residual_f{factor}"] = rE
         lag = spatial_residual_statistics(residual_u, grid.spacing, max_lag)
+        lag["r_over_delta"] = lag["r"] / (factor * float(np.mean(grid.spacing)))
         fp = case_output / "lag" / f"snapshot_{snapshot_index:03d}_f{factor}.npz"
         _save_npz(fp, lag)
         coarse_shape = feats["log_strain"].shape
@@ -391,6 +402,13 @@ def _plot_case(
         cutoff = records[0]["filters"][str(factor)]["spectral_k_cutoff"]
         ax.axvline(cutoff, linestyle="--", linewidth=1.5, alpha=0.65,
                    label=f"filter f={factor} cutoff")
+    nyquist = 2.0 * records[0]["filters"][str(2)]["spectral_k_cutoff"] \
+        if 2 in factors else min(
+            records[0]["filters"][str(f)]["spectral_k_cutoff"] * f
+            for f in factors
+        )
+    ax.axvline(nyquist, color="black", linestyle=":", linewidth=2,
+               label="axis Nyquist")
     ax.set_xlabel("Physical wavenumber k [rad / length]", fontsize=13)
     ax.set_ylabel("Velocity kinetic-energy spectrum E(k)", fontsize=13)
     ax.tick_params(labelsize=11)
