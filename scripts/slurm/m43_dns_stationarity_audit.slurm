@@ -37,6 +37,8 @@ if [ "$SAMPLES" -lt 0 ]; then
     exit 2
 fi
 cd "$REPO"
+# Override any editable package install still pointing at the main training checkout.
+export PYTHONPATH="$REPO/src:$REPO:${PYTHONPATH:-}"
 if [ -n "$(git status --porcelain)" ]; then
     echo "Refusing dirty repository checkout" >&2
     exit 2
