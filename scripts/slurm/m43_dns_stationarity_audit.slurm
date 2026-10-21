@@ -12,7 +12,7 @@
 # Default is metadata-only; full six-case processing needs explicit opt-in.
 set -euo pipefail
 
-REPO=/scratch/coop/theret/GraphAttention
+REPO=${M43_AUDIT_REPO:-/scratch/coop/theret/GraphAttention}
 IMAGE=/softs/local_arm/singularity/images/pyg25.03.sif
 PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
 
