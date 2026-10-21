@@ -181,8 +181,23 @@ def matched_regime_comparison(
         "transient": group_results[0],
         "stationary": group_results[1],
         "matched_difference_stationary_minus_transient": {},
+        "matched_wasserstein_1_quantile_approx": {},
         "confidence_intervals_95_snapshot_bootstrap": {},
     }
+    # Descriptive 1-Wasserstein approximation from a fixed quantile grid.
+    # It is NOT a significance test; paired bin weights are held fixed.
+    quantile_grid = np.linspace(0.01, 0.99, 99)
+    for target in targets:
+        value = 0.0
+        for bid in np.flatnonzero(supported):
+            x = t[target][masks[0] & (ids[0] == bid)].astype(float)
+            y = s[target][masks[1] & (ids[1] == bid)].astype(float)
+            value += float(weights[bid] * np.mean(np.abs(
+                np.quantile(x, quantile_grid) -
+                np.quantile(y, quantile_grid)
+            )))
+        result["matched_wasserstein_1_quantile_approx"][target] = value
+
     rng = np.random.default_rng(seed)
     for k, target in enumerate(targets):
         j = len(features) + k
