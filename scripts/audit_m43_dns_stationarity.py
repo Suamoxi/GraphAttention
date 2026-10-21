@@ -275,6 +275,18 @@ def _sample_snapshot(
         "metrics": _base_metrics(q, grid.spacing),
         "filters": {},
     }
+    with h5py.File(path, "r") as h5:
+        for optional_name in ("temperature", "T"):
+            key = "GaseousPhase/" + optional_name
+            if key in h5 and h5[key].size == np.prod(grid.source_shape):
+                measured = np.asarray(h5[key]).reshape(-1)
+                if np.isfinite(measured).all():
+                    entry["metrics"]["mean_temperature"] = float(np.mean(
+                        scatter_to_grid_3d(measured, grid)
+                    ))
+                    entry["metrics"]["unavailable"].pop("temperature", None)
+                    entry["metrics"]["temperature_source"] = key
+                break
     spec_arrays = {"k": k, "E": ek}
     for factor in factors:
         feats, summary, residual_u = coarse_descriptors(q, factor, grid.spacing)
@@ -285,6 +297,9 @@ def _sample_snapshot(
         )
         summary["spectral_parseval_relative_error"] = orth["parseval_relative_error"]
         summary["spectral_k_cutoff"] = orth["cutoff_rad_per_length"]
+        rk, rE = radial_velocity_spectrum(residual_u, grid.spacing)
+        spec_arrays[f"k_residual_f{factor}"] = rk
+        spec_arrays[f"E_residual_f{factor}"] = rE
         lag = spatial_residual_statistics(residual_u, grid.spacing, max_lag)
         fp = case_output / "lag" / f"snapshot_{snapshot_index:03d}_f{factor}.npz"
         _save_npz(fp, lag)
@@ -355,6 +370,10 @@ def _plot_case(
                      f"snapshot_{records[index_value]['snapshot_index']:03d}.npz") as values:
             ax.loglog(values["k"], values["E"], lw=2,
                       label=f"snapshot {records[index_value]['snapshot_index']}")
+    for factor in factors:
+        cutoff = records[0]["filters"][str(factor)]["spectral_k_cutoff"]
+        ax.axvline(cutoff, linestyle="--", linewidth=1.5, alpha=0.65,
+                   label=f"filter f={factor} cutoff")
     ax.set_xlabel("Physical wavenumber k [rad / length]", fontsize=13)
     ax.set_ylabel("Velocity kinetic-energy spectrum E(k)", fontsize=13)
     ax.tick_params(labelsize=11)
@@ -362,6 +381,22 @@ def _plot_case(
     ax.grid(alpha=0.2)
     fig.savefig(figures / "early_middle_late_spectra.pdf")
     plt.close(fig)
+
+    for factor in factors:
+        fig, ax = plt.subplots(figsize=(9, 5), constrained_layout=True)
+        for index_value in chosen:
+            with np.load(case_output / "spectra" /
+                         f"snapshot_{records[index_value]['snapshot_index']:03d}.npz") as values:
+                ax.loglog(values[f"k_residual_f{factor}"],
+                          values[f"E_residual_f{factor}"], linewidth=2,
+                          label=f"snapshot {records[index_value]['snapshot_index']}")
+        ax.set_xlabel("Physical wavenumber k [rad / length]", fontsize=13)
+        ax.set_ylabel("Residual velocity spectrum E_delta(k)", fontsize=13)
+        ax.tick_params(labelsize=11)
+        ax.legend()
+        ax.grid(alpha=0.2)
+        fig.savefig(figures / f"residual_spectra_factor_{factor}.pdf")
+        plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(9, 5), constrained_layout=True)
     for factor in factors:
@@ -399,9 +434,24 @@ def _postprocess_case(
     signals = np.array([[r["metrics"][key] for key in candidate_keys]
                         for r in records], dtype=float)
     candidate = stationarity_candidates(signals, window=min(12, max(4,len(records)//4)))
+    metric_corr = {}
+    for metric in ("turbulent_k", "enstrophy", "u_rms_one_component"):
+        values = np.array([r["metrics"][metric] for r in records], dtype=float)
+        centered = values - values.mean()
+        denom = float(centered @ centered)
+        metric_corr[metric] = [
+            float(centered[:-lag] @ centered[lag:] / denom)
+            if denom > 0 else None
+            for lag in range(1, min(11, len(centered)//2))
+        ]
     report = {
         "case_id": case, "snapshots_completed": len(records),
         "candidate": candidate.__dict__,
+        "index_lag_autocorrelation": metric_corr,
+        "autocorrelation_warning": (
+            "snapshot-index autocorrelation only; physical time and statistical "
+            "independence must be verified before interpreting bootstrap intervals"
+        ),
         "important": "stationarity onset is NOT auto-selected; review spectra and time histories",
         "comparison": {},
     }
@@ -418,6 +468,33 @@ def _postprocess_case(
         stationary = [x for x in all_indices if x >= start]
         if len(transient) < 2 or len(stationary) < 2:
             raise ValueError("at least two snapshots in each reviewed regime required")
+        transient_records = [r for r in records if r["snapshot_index"] in transient]
+        stationary_records = [r for r in records if r["snapshot_index"] in stationary]
+        report["unconditional"] = {}
+        for name, get_value in {
+            "turbulent_k": lambda r: r["metrics"]["turbulent_k"],
+            "u_rms": lambda r: r["metrics"]["u_rms_one_component"],
+            "enstrophy": lambda r: r["metrics"]["enstrophy"],
+            **{
+                f"unresolved_velocity_k_factor_{f}":
+                (lambda r, fac=f: r["filters"][str(fac)]["unresolved_velocity_k"])
+                for f in factors
+            },
+            **{
+                f"spectral_unresolved_k_factor_{f}":
+                (lambda r, fac=f: r["filters"][str(fac)]["spectral_unresolved_velocity_k"])
+                for f in factors
+            },
+        }.items():
+            left = np.array([get_value(r) for r in transient_records])
+            right = np.array([get_value(r) for r in stationary_records])
+            report["unconditional"][name] = {
+                "transient_mean": float(np.mean(left)),
+                "stationary_mean": float(np.mean(right)),
+                "difference_stationary_minus_transient": float(np.mean(right) - np.mean(left)),
+                "transient_snapshot_std": float(np.std(left, ddof=1)),
+                "stationary_snapshot_std": float(np.std(right, ddof=1)),
+            }
         for factor in factors:
             t = _read_cell_samples(base, factor, transient)
             s = _read_cell_samples(base, factor, stationary)
@@ -437,6 +514,13 @@ def _postprocess_case(
         report["comparison_status"] = "computed_with_reviewed_index_cutoffs"
         report["reviewed_cutoff"] = bounds
     _write_json(base / "summary.json", report)
+    _write_json(base / "candidate_cutoff_for_review.json", {
+        "case_id": case,
+        "candidate_interval_not_a_final_cutoff": candidate.__dict__,
+        "transient_end_index": None,
+        "stationary_start_index": None,
+        "warning": "fill these indices only after manually reviewing stationarity plots",
+    })
     narrative = [
         f"# {case}: DNS-only stationarity and residual audit",
         "",
@@ -457,6 +541,20 @@ def _postprocess_case(
         f"Comparison status: {report.get('comparison_status','unknown')}.",
         "",
     ]
+    if report.get("unconditional"):
+        narrative += ["## Unconditional transient/stationary differences", ""]
+        for name, results in report["unconditional"].items():
+            narrative.append(
+                f"- {name}: transient {results['transient_mean']:.6g}; "
+                f"stationary {results['stationary_mean']:.6g}; "
+                f"difference {results['difference_stationary_minus_transient']:.6g}"
+            )
+    if report.get("comparison"):
+        narrative += ["", "## Coarse-feature-matched comparisons", ""]
+        for factor, overview in report["comparison"].items():
+            narrative.append(f"- factor {factor}: {overview['status']}; "
+                             f"shared bins {overview.get('common_bins')}; "
+                             "see matched_factor_N.json for effects and confidence intervals")
     (base / "scientific_report.md").write_text("\n".join(narrative))
     return report
 
