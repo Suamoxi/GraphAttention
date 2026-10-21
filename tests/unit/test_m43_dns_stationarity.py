@@ -161,3 +161,71 @@ def test_insufficient_independent_snapshots_returns_inconclusive() -> None:
     b["snapshot_index"][:] = 0
     result = matched_regime_comparison(a, b, min_snapshots_per_bin=2)
     assert result["status"] == "inconclusive_no_common_support"
+
+
+def test_synthetic_hdf5_preflight_and_resume(tmp_path) -> None:
+    """Read-only 9^3 stored / 8^3 unique periodic AVBP-like integration gate."""
+    import json
+    from types import SimpleNamespace
+
+    import h5py
+
+    from scripts.audit_m43_dns_stationarity import (
+        _run_case,
+        preflight,
+    )
+
+    case = "Re94/Ma0.2"
+    directory = tmp_path / "data" / "Re94" / "Ma0.2"
+    mesh_dir = directory / "MESH"
+    solut_dir = directory / "SOLUT"
+    mesh_dir.mkdir(parents=True)
+    solut_dir.mkdir()
+    unique_side = 8
+    n = unique_side + 1
+    x, y, z = np.meshgrid(*[np.linspace(0., 1., n)] * 3, indexing="ij")
+    mesh = mesh_dir / "mesh.mesh.h5"
+    with h5py.File(mesh, "w") as h:
+        group = h.create_group("Coordinates")
+        for name, value in zip("xyz", (x, y, z)):
+            group.create_dataset(name, data=value.reshape(-1))
+        h.create_dataset("Connectivity/hex->node",
+                         data=np.zeros((unique_side**3, 8), dtype=np.int32))
+    for index in (1, 2):
+        rho = 1. + 0.01 * np.sin(2 * np.pi * x)
+        ux = 0.2 * np.sin(2 * np.pi * (x + (index - 1) * 0.05))
+        uy = 0.1 * np.cos(2 * np.pi * y)
+        uz = 0.05 * np.sin(2 * np.pi * z)
+        with h5py.File(solut_dir / f"solut_hit_{index:08d}.h5", "w") as h:
+            h.attrs["physical_time"] = float(index) * 0.01
+            group = h.create_group("GaseousPhase")
+            for name, value in {
+                "rho": rho, "rhou": rho * ux,
+                "rhov": rho * uy, "rhow": rho * uz,
+                "rhoE": 3.0 + np.zeros_like(rho),
+            }.items():
+                group.create_dataset(name, data=value.reshape(-1))
+    output = tmp_path / "results"
+    summary = preflight(tmp_path / "data", output, [case])
+    assert summary[0]["snapshot_count"] == 2
+    assert summary[0]["physical_time_metadata_monotonic"]
+    assert not summary[0]["time_units_authoritative"]
+    options = SimpleNamespace(
+        root=tmp_path / "data",
+        output_dir=output,
+        max_snapshots=2,
+        factors=(2,),
+        max_lag=2,
+        sample_cells=12,
+        seed=8,
+        bootstrap=0,
+    )
+    _run_case(options, case, {})
+    _run_case(options, case, {})  # second pass reuses finished snapshot records
+    case_dir = output / "cases" / "Re94_Ma0.2"
+    report = json.loads((case_dir / "summary.json").read_text())
+    assert report["snapshots_completed"] == 2
+    assert report["comparison_status"] == "awaiting_reviewed_cutoff"
+    assert len(list((case_dir / "snapshots").glob("*.json"))) == 2
+    assert (case_dir / "figures" / "time_history.pdf").is_file()
+    assert (case_dir / "candidate_cutoff_for_review.json").is_file()
