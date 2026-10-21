@@ -18,7 +18,7 @@ def _cube(field: np.ndarray) -> np.ndarray:
     values = np.asarray(field, dtype=np.float64)
     if values.ndim != 4 or values.shape[-1] < 1:
         raise ValueError("expected [nx,ny,nz,channels]")
-    if min(values.shape[:3]) < 4 or not np.isfinite(values).all():
+    if min(values.shape[:3]) < 1 or not np.isfinite(values).all():
         raise ValueError("invalid spatial dimensions or nonfinite fields")
     return values
 
