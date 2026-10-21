@@ -11,7 +11,6 @@ import csv
 import hashlib
 import json
 import os
-import re
 import subprocess
 from pathlib import Path
 from typing import Any
