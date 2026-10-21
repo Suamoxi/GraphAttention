@@ -69,12 +69,15 @@ def test_uniform_fine_flow_has_zero_residual_increments() -> None:
     q[..., 1:4] = [1.0, -0.1, 0.02]
     q[..., 4] = 3.2
     features, summary, residual = coarse_descriptors(q, 4, (0.1,) * 3)
-    assert all(val == 0 for val in (
-        summary["unresolved_velocity_k"],
-        summary["within_s2"],
-        summary["cross_s2"],
-    ))
-    assert np.all(residual == 0)
+    # Floating-point block averages and rho division introduce roundoff:
+    # the physically uniform flow must produce negligible, not bitwise-zero,
+    # velocity residuals and squared increments.
+    np.testing.assert_allclose(
+        [summary["unresolved_velocity_k"],
+         summary["within_s2"], summary["cross_s2"]],
+        0.0, atol=1.e-25, rtol=0.0,
+    )
+    np.testing.assert_allclose(residual, 0.0, atol=1.e-14, rtol=0.0)
     assert features["log_strain"].shape == (4, 4, 4)
 
 
