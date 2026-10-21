@@ -122,10 +122,10 @@ def matched_regime_comparison(
             for i, mask in zip(ids, valid_range)]
     unique_snapshot_count = []
     supported = (hist[0] >= min_rows_per_bin) & (hist[1] >= min_rows_per_bin)
-    for table, which in zip((t, s), ids):
+    for table, which, range_mask in zip((t, s), ids, valid_range):
         seen = np.zeros(n_bins, dtype=np.int64)
         for b in np.flatnonzero(supported):
-            seen[b] = len(np.unique(table["snapshot_index"][which == b]))
+            seen[b] = len(np.unique(table["snapshot_index"][range_mask & (which == b)]))
         unique_snapshot_count.append(seen)
         supported &= seen >= min_snapshots_per_bin
     if not supported.any():
