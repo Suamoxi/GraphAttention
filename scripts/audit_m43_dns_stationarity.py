@@ -11,6 +11,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -133,6 +134,88 @@ def _candidate_times(path: Path) -> dict[str, Any]:
             "value": float(times[0]), "sources": found}
 
 
+def _run_params_save_schedule(directory: Path, files: tuple[Path, ...]) -> dict[str, Any]:
+    """Read *declared* AVBP save cadence; do not infer HDF5 times.
+
+    The derived axis is conditional on the declared save schedule being the
+    schedule that actually produced these files, with no unrecorded restart.
+    In particular t_i = i*dt assumes the first numbered output was written at
+    t=dt from a simulation whose time origin was zero.
+    """
+    params = directory / "RUN" / "run.params"
+    if not params.is_file():
+        return {"status": "unavailable_no_run_params", "path": str(params)}
+    raw = params.read_bytes()
+    assignments: dict[str, str] = {}
+    for raw_line in raw.decode("utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(("!", "#")) or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        assignments[key.strip().lower()] = value.split("!", 1)[0].strip()
+    required = ("simulation_end_time", "save_solution.time",
+                "random_forcing.char_time")
+    try:
+        end, interval, forcing_time = (
+            float(assignments[key].replace("D", "e").replace("d", "e"))
+            for key in required
+        )
+    except (KeyError, ValueError):
+        return {"status": "unavailable_missing_or_bad_params", "path": str(params)}
+    if not (np.isfinite([end, interval, forcing_time]).all()
+            and min(end, interval, forcing_time) > 0):
+        return {"status": "unavailable_nonpositive_time", "path": str(params)}
+    suffixes = [re.fullmatch(r"(.+?)(\d+)", path.stem) for path in files]
+    consistent_names = (
+        all(match is not None for match in suffixes)
+        and len({match.group(1) for match in suffixes}) == 1
+        and [int(match.group(2)) for match in suffixes]
+        == list(range(1, len(files) + 1))
+    )
+    schedule_consistent = (
+        consistent_names
+        and np.isclose(end, len(files) * interval, rtol=1e-9, atol=0.0)
+    )
+    return {
+        "status": ("configuration_consistent_origin_unverified" if schedule_consistent
+                   else "configuration_inconsistent_do_not_infer"),
+        "path": str(params),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "simulation_end_time_solver_units": end,
+        "save_interval_solver_units": interval,
+        "forcing_characteristic_time_solver_units": forcing_time,
+        "end_time_over_save_interval": end / interval,
+        "save_interval_over_forcing_characteristic_time": interval / forcing_time,
+        "output_count": len(files),
+        "filename_sequence_starts_at_one_and_is_contiguous": bool(consistent_names),
+        "hdf5_time_verified": False,
+        "time_origin_verified": False,
+        "units_verified": False,
+        "assumptions": ("Scheduled saves were produced by this run.params file, "
+                        "with no interrupted output sequence, time reset, or "
+                        "unrecorded restart. t_i=i*save_interval is only a candidate."),
+    }
+
+
+def _schedule_snapshot_time(schedule: dict[str, Any], index: int) -> dict[str, Any]:
+    status = schedule["status"]
+    if status != "configuration_consistent_origin_unverified":
+        return {"status": status, "elapsed_from_first_output": None,
+                "nominal_time_from_zero": None, "elapsed_in_forcing_times": None}
+    step = schedule["save_interval_solver_units"]
+    forcing_time = schedule["forcing_characteristic_time_solver_units"]
+    return {
+        "status": status,
+        "elapsed_from_first_output": float(index * step),
+        "nominal_time_from_zero": float((index + 1) * step),
+        "elapsed_in_forcing_times": float(index * step / forcing_time),
+        "nominal_time_in_forcing_times": float((index + 1) * step / forcing_time),
+        "time_source": "RUN/run.params and consecutively numbered filenames",
+        "time_origin_verified": False,
+        "hdf5_time_verified": False,
+    }
+
+
 def _snapshot_descriptor(path: Path) -> dict[str, Any]:
     st = path.stat()
     return {"name": path.name, "path": str(path),
@@ -175,13 +258,19 @@ def preflight(root: Path, output: Path, selected: list[str]) -> list[dict]:
                 }
             else:
                 provenance[relative] = {"status": "missing", "path": str(source)}
+        save_schedule = _run_params_save_schedule(directory, files)
         descriptors = [_snapshot_descriptor(p) for p in files]
+        for index, descriptor in enumerate(descriptors):
+            descriptor["scheduled_time_candidate"] = _schedule_snapshot_time(
+                save_schedule, index
+            )
         times = [s["time"]["value"] for s in descriptors]
         physical_time_known = all(t is not None for t in times)
         monotonic = bool(physical_time_known and np.all(np.diff(times) > 0))
         record = {
             "case_id": case,
             "snapshot_count": len(files),
+            "run_params_save_schedule": save_schedule,
             "mesh": str(mesh),
             "mesh_coordinates_sizes": sizes,
             "mesh_connectivity": conn,
@@ -280,7 +369,8 @@ def _case_cache_root(output: Path, case: str) -> Path:
 
 def _sample_snapshot(
     path: Path, grid, factors: tuple[int, ...], max_lag: int,
-    cells_per_snapshot: int, seed: int, snapshot_index: int, case_output: Path
+    cells_per_snapshot: int, seed: int, snapshot_index: int, case_output: Path,
+    schedule: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     q, seams = _read_field_grid(path, grid)
     u = velocity_from_conservative(q)
@@ -291,6 +381,9 @@ def _sample_snapshot(
         "source_stat": {"bytes": path.stat().st_size,
                         "mtime_ns": path.stat().st_mtime_ns},
         "hdf5_time": _candidate_times(path),
+        "scheduled_time_candidate": _schedule_snapshot_time(
+            schedule or {"status": "unavailable_no_run_params"}, snapshot_index
+        ),
         "periodic_seam_max_abs": seams,
         "metrics": _base_metrics(q, grid.spacing),
         "filters": {},
@@ -600,7 +693,9 @@ def _postprocess_case(
 def _run_case(args, case: str, cutoffs: dict) -> None:
     base = _case_cache_root(args.output_dir, case)
     base.mkdir(parents=True, exist_ok=True)
-    files = _snapshot_files(args.root, case)
+    all_files = _snapshot_files(args.root, case)
+    schedule = _run_params_save_schedule(_case_dir(args.root, case), all_files)
+    files = all_files
     if args.max_snapshots is not None:
         files = files[:args.max_snapshots]
     mesh = _case_dir(args.root, case) / "MESH" / "mesh.mesh.h5"
@@ -616,6 +711,7 @@ def _run_case(args, case: str, cutoffs: dict) -> None:
         "factors": args.factors, "max_lag": args.max_lag,
         "sample_cells": args.sample_cells, "seed": args.seed,
         "code_revision": _revision(),
+        "run_params_save_schedule": schedule,
     }
     signature["hash"] = _sha_manifest(signature)
     signature_path = base / "source_signature.json"
@@ -636,7 +732,7 @@ def _run_case(args, case: str, cutoffs: dict) -> None:
             continue
         record = _sample_snapshot(
             path, grid, args.factors, args.max_lag,
-            args.sample_cells, args.seed, index, base
+            args.sample_cells, args.seed, index, base, schedule
         )
         _write_json(destination, record)
         print(f"  {index+1}/{len(files)} {path.name}: "
