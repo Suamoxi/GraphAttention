@@ -22,6 +22,8 @@ OUT=${M43_B_TRAIN_OUTPUT:-/scratch/coop/theret/GraphAttention_runs/m43_b_multire
 EPOCHS=${M43_B_EPOCHS:-2}
 RESUME=${M43_B_RESUME:-0}
 CONFIRM=${M43_B_CONFIRM_LONG_TRAIN:-NO}
+ALLOW_LOGGING_ONLY_RESUME=${M43_B_ALLOW_LOGGING_ONLY_RESUME:-NO}
+DISABLE_TENSORBOARD=${M43_B_DISABLE_TENSORBOARD:-NO}
 
 if [ "$CONFIRM" != YES ]; then
     echo "Refusing long scientific training without M43_B_CONFIRM_LONG_TRAIN=YES" >&2
@@ -33,6 +35,16 @@ if [ "$RESUME" != 0 ] && [ "$RESUME" != 1 ]; then
 fi
 if [ "$EPOCHS" -lt 1 ]; then
     echo "M43_B_EPOCHS must be >=1" >&2
+    exit 2
+fi
+for name in "$ALLOW_LOGGING_ONLY_RESUME" "$DISABLE_TENSORBOARD"; do
+    if [ "$name" != NO ] && [ "$name" != YES ]; then
+        echo "M43_B_ALLOW_LOGGING_ONLY_RESUME and M43_B_DISABLE_TENSORBOARD must be YES/NO" >&2
+        exit 2
+    fi
+done
+if [ "$ALLOW_LOGGING_ONLY_RESUME" = YES ] && [ "$RESUME" != 1 ]; then
+    echo "Logging-only revision migration is valid only when M43_B_RESUME=1" >&2
     exit 2
 fi
 cd "$REPO"
@@ -62,17 +74,26 @@ fi
 
 echo "==== M43 Experiment B six-case scientific training ===="
 echo "Host $(hostname), Git $(git rev-parse HEAD), Job $SLURM_JOB_ID"
-echo "Output $OUT, epochs $EPOCHS, resume $RESUME"
+echo "Output $OUT, total epochs $EPOCHS, resume $RESUME"
+echo "TensorBoard enabled=$([ "$DISABLE_TENSORBOARD" = NO ] && echo YES || echo NO)"
+echo "Explicit logging-only migration=$ALLOW_LOGGING_ONLY_RESUME"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 
 echo "==== Targeted correctness gates ===="
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m pytest -q \
     tests/unit/test_m43_b_multires.py \
-    tests/unit/test_m43_b1b_checkpointing.py
+    tests/unit/test_m43_b1b_checkpointing.py \
+    tests/unit/test_m43_b_tensorboard.py
 
 RESUME_ARGS=()
 if [ "$RESUME" = 1 ]; then RESUME_ARGS=(--resume); fi
+if [ "$ALLOW_LOGGING_ONLY_RESUME" = YES ]; then
+    RESUME_ARGS+=(--allow-logging-only-resume)
+fi
+if [ "$DISABLE_TENSORBOARD" = YES ]; then
+    RESUME_ARGS+=(--disable-tensorboard)
+fi
 echo "==== Train shared M37 with checkpointed 65/129^3 microbatches ===="
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -u -m scripts.train_m43_b_multires \
@@ -87,3 +108,6 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "${RESUME_ARGS[@]}"
 
 echo "Saved last.pt best.pt history.csv summary.json in $OUT"
+if [ "$DISABLE_TENSORBOARD" = NO ]; then
+    echo "TensorBoard event files in $OUT/tensorboard"
+fi
