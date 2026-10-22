@@ -10,6 +10,10 @@ dropout: 0.0
 conditioning_channels: 0
 condition_embed_dim: 128
 use_coord_mlp: true
+# Controlled 2-D/3-D ablation: true reproduces all historic checkpoints.
+# false bypasses the full-graph absolute-coordinate embedding entirely.
+# Relative edge-displacement attention is always kept unchanged.
+use_absolute_position_encoding: true
 coordinate_normalization: centered_bbox
 coordinate_normalization_eps: 1.0e-8
 use_sdpa: true
