@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import math
 from pathlib import Path
 
 import matplotlib
@@ -104,8 +103,6 @@ def compare(root: Path, epochs: int) -> dict:
                for n in names}
     histories = {n: _csv(paths[n]["run"] / "history.csv") for n in names}
     k = np.array([float(row["k"]) for row in spectra["absolute"]])
-    for other in spectra["relative"]:
-        pass
     if not np.array_equal(
         k, np.array([float(row["k"]) for row in spectra["relative"]])
     ):
@@ -127,7 +124,7 @@ def compare(root: Path, epochs: int) -> dict:
         hist = histories[name]
         ax.plot(
             [int(row["epoch"])+1 for row in hist],
-            [float(row["validation_velocity_mse"]) for row in hist],
+            [float(row["validation_flow_velocity_mse"]) for row in hist],
             linewidth=2.5, label=f"{name}: validation MSE",
         )
     ax.set_xlabel("Completed epoch", fontsize=15)
@@ -192,14 +189,14 @@ def compare(root: Path, epochs: int) -> dict:
             if np.any(positive) else None
         )
         validation = [
-            float(row["validation_velocity_mse"]) for row in histories[name]
+            float(row["validation_flow_velocity_mse"]) for row in histories[name]
         ]
         report["variants"][name] = {
             "run_dir": str(p["run"]),
-            "best_validation_velocity_mse": float(min(validation)),
-            "final_validation_velocity_mse": float(validation[-1]),
+            "best_validation_flow_velocity_mse": float(min(validation)),
+            "final_validation_flow_velocity_mse": float(validation[-1]),
             "test_velocity_mse_at_best": summary.get(
-                "test_velocity_mse_at_best_validation"
+                "test_flow_velocity_mse_at_best_validation"
             ),
             "fit_wall_seconds": float(summary["fit_wall_seconds"]),
             "mean_epoch_compute_seconds": float(
@@ -223,7 +220,7 @@ def compare(root: Path, epochs: int) -> dict:
         for key in (
             "fit_wall_seconds", "mean_epoch_compute_seconds",
             "generation_full_wall_seconds_including_io",
-            "best_validation_velocity_mse",
+            "best_validation_flow_velocity_mse",
             "spectral_log_rms_error_positive_bins",
         )
     }
