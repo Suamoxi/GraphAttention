@@ -250,6 +250,20 @@ def test_smoke_forward_backward_shared_weights_and_per_case_validation(tmp_path)
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
     generator = torch.Generator(device="cpu").manual_seed(1042)
+
+    # Logging must NOT alter training numerics, stochastic sampling or AdamW.
+    baseline_model = copy.deepcopy(model)
+    baseline_optimizer = torch.optim.AdamW(baseline_model.parameters(), lr=1e-4)
+    baseline_generator = torch.Generator(device="cpu").manual_seed(1042)
+
+    class StepMonitor:
+        def __init__(self):
+            self.calls = []
+
+        def log_step(self, **scalars):
+            self.calls.append(scalars)
+
+    monitor = StepMonitor()
     trainstats = train_epoch(
         dataset, _indices_by_case(smoke.train_ids, dataset),
         epoch=0, seed=42, accumulation=6,
@@ -257,7 +271,36 @@ def test_smoke_forward_backward_shared_weights_and_per_case_validation(tmp_path)
         standardizers=scaling.to(device="cpu", dtype=torch.float32),
         collator=collator, device=torch.device("cpu"),
         generator=generator, max_steps=1,
+        tensorboard=monitor, optimizer_step_offset=68,
     )
+    baseline_stats = train_epoch(
+        dataset, _indices_by_case(smoke.train_ids, dataset),
+        epoch=0, seed=42, accumulation=6,
+        model=baseline_model, optimizer=baseline_optimizer, task=task,
+        standardizers=scaling.to(device="cpu", dtype=torch.float32),
+        collator=collator, device=torch.device("cpu"),
+        generator=baseline_generator, max_steps=1,
+    )
+    assert trainstats["mean"] == pytest.approx(
+        baseline_stats["mean"], rel=0.0, abs=0.0,
+    )
+    assert monitor.calls[0]["global_step"] == 69
+    assert monitor.calls[0]["samples_per_step"] == 6
+    assert monitor.calls[0]["step_mean_velocity_mse"] == pytest.approx(
+        trainstats["mean"],
+    )
+    for key, tensor in model.state_dict().items():
+        torch.testing.assert_close(
+            tensor, baseline_model.state_dict()[key], rtol=0, atol=0,
+        )
+    for key, tensor in optimizer.state_dict()["state"].items():
+        reference = baseline_optimizer.state_dict()["state"][key]
+        for field, value in tensor.items():
+            if isinstance(value, torch.Tensor):
+                torch.testing.assert_close(value, reference[field], rtol=0, atol=0)
+            else:
+                assert value == reference[field]
+    assert torch.equal(generator.get_state(), baseline_generator.get_state())
     assert trainstats["samples"] == 6
     assert trainstats["optimizer_steps"] == 1
     assert trainstats["mean_optimizer_step_seconds"] > 0
