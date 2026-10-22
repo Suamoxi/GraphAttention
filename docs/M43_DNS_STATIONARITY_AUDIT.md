@@ -55,7 +55,17 @@ u_rms and enstrophy to the final-window means. It yields only an
 exploratory candidate interval: no time cutoff is chosen automatically.
 The timestamp preflight inspects explicit HDF5 time metadata; snapshot
 filename suffixes are *not* physical time, and unknown time units remain
-unverified. Temperature, turbulent Mach, Taylor Reynolds and viscous
+unverified. When available, RUN/run.params is parsed independently for
+simulation_end_time, save_solution.time and random_forcing.char_time,
+including Fortran D exponent syntax. Only when the simulation end time
+equals N * save interval and files are contiguous 1..N do we provide a
+**candidate scheduled time** t_i=i*save_interval and the more robust elapsed
+time from first saved output (i-1)*save_interval. Its status remains
+configuration_consistent_origin_unverified, NOT HDF5-verified. Figures use
+elapsed time normalized by forcing characteristic time where possible,
+and clearly label this axis as configuration-derived. The forcing
+characteristic time is NOT the large-eddy turnover time, which must be
+estimated independently from the DNS. Temperature, turbulent Mach, Taylor Reynolds and viscous
 dissipation are left unavailable until EOS/viscosity provenance is audited.
 
 For matching: work within each Re/Ma case and filter factor, establish
@@ -145,7 +155,7 @@ launched automatically.
 
 Root: /scratch/coop/theret/GraphAttention_runs/m43_dns_stationarity_audit
 
-- preflight.json: full case/snapshot inventory, HDF5 shapes and timestamp probes
+- preflight.json: full case/snapshot inventory, HDF5 timestamp probes and separately labeled provisional RUN/run.params save-cadence evidence
 - cases/Re94_Ma0.2/source_signature.json: input/file/config/git hash
 - cases/Re94_Ma0.2/snapshots/*.json: per-snapshot diagnostics
 - cases/Re94_Ma0.2/spectra/*.npz: physical velocity energy spectra
