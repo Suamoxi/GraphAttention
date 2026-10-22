@@ -682,75 +682,84 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     by_case = _indices_by_case(split.train_ids, dataset)
     torch.cuda.reset_peak_memory_stats(device)
     num_epochs = 1 if args.mode == "smoke" else args.max_epochs
-    for epoch in range(start_epoch, num_epochs):
-        print(f"[M43-B] start epoch {epoch}, mode={args.mode}, "
-              f"resolution_order={[c.side for c in dataset.cases]}", flush=True)
-        started = time.perf_counter()
-        train_stats = train_epoch(
-            dataset, by_case,
-            epoch=epoch, seed=args.seed, accumulation=args.accumulation,
-            model=model, optimizer=optimizer, task=task,
-            standardizers=device_standardizers,
-            collator=collator, device=device, generator=generator,
-            max_steps=1 if args.mode == "smoke" else None,
-        )
-        validation = evaluate(
-            dataset, validation_indices, model=model, task=task,
-            standardizers=device_standardizers,
-            collator=collator, device=device,
-        )
-        row = {
-            "epoch": epoch,
-            "train": train_stats,
-            "validation": validation,
-            "epoch_wall_seconds": time.perf_counter() - started,
-        }
-        history.append(row)
-        atomic_json(destination / "history.json", {"epochs": history})
-        with (destination / "history.csv").open("w", newline="") as stream:
-            columns = [
-                "epoch", "train_velocity_mse", "validation_velocity_mse",
-                "train_samples", "optimizer_steps", "epoch_wall_seconds",
-                "validation_65_mse", "validation_129_mse",
-            ]
-            writer = csv.DictWriter(stream, fieldnames=columns)
-            writer.writeheader()
-            for recorded in history:
-                groups = recorded["validation"]["by_resolution"]
-                writer.writerow({
-                    "epoch": recorded["epoch"],
-                    "train_velocity_mse": recorded["train"]["mean"],
-                    "validation_velocity_mse": recorded["validation"]["mean"],
-                    "train_samples": recorded["train"]["samples"],
-                    "optimizer_steps": recorded["train"]["optimizer_steps"],
-                    "epoch_wall_seconds": recorded["epoch_wall_seconds"],
-                    "validation_65_mse": groups.get("65", {}).get("mse"),
-                    "validation_129_mse": groups.get("129", {}).get("mse"),
-                })
-        is_best = validation["mean"] < best_loss
-        if is_best:
-            best_loss = validation["mean"]
-        checkpoint = {
-            "epoch": epoch, "model_class": type(model).__name__,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "training_generator_state": generator.get_state(),
-            "initialization": initialization,
-            "signature_sha256": signature["sha256"],
-            "best_validation_velocity_mse": best_loss,
-            "history": history,
-            "train_only_scaler_file": "standardizers.pt",
-            "activation_checkpointing": True,
-        }
-        _atomic_torch_save(checkpoint, destination / "last.pt")
-        if is_best:
-            _atomic_torch_save(checkpoint, destination / "best.pt")
-        print(
-            f"[M43-B] epoch {epoch} train={train_stats['mean']:.6e} "
-            f"validation={validation['mean']:.6e} "
-            f"per_resolution={validation['by_resolution']} "
-            f"elapsed_s={row['epoch_wall_seconds']:.1f}", flush=True,
-        )
+    monitor = (
+        None if args.disable_tensorboard
+        else M43TensorBoardMonitor(destination, resume=args.resume, history=history)
+    )
+    with (monitor if monitor is not None else nullcontext()) as active_monitor:
+        for epoch in range(start_epoch, num_epochs):
+            print(f"[M43-B] start epoch {epoch}, mode={args.mode}, "
+                  f"resolution_order={[c.side for c in dataset.cases]}", flush=True)
+            started = time.perf_counter()
+            train_stats = train_epoch(
+                dataset, by_case,
+                epoch=epoch, seed=args.seed, accumulation=args.accumulation,
+                model=model, optimizer=optimizer, task=task,
+                standardizers=device_standardizers,
+                collator=collator, device=device, generator=generator,
+                max_steps=1 if args.mode == "smoke" else None,
+                tensorboard=active_monitor,
+                optimizer_step_offset=completed_optimizer_steps(history),
+            )
+            validation = evaluate(
+                dataset, validation_indices, model=model, task=task,
+                standardizers=device_standardizers,
+                collator=collator, device=device,
+            )
+            row = {
+                "epoch": epoch,
+                "train": train_stats,
+                "validation": validation,
+                "epoch_wall_seconds": time.perf_counter() - started,
+            }
+            history.append(row)
+            atomic_json(destination / "history.json", {"epochs": history})
+            with (destination / "history.csv").open("w", newline="") as stream:
+                columns = [
+                    "epoch", "train_velocity_mse", "validation_velocity_mse",
+                    "train_samples", "optimizer_steps", "epoch_wall_seconds",
+                    "validation_65_mse", "validation_129_mse",
+                ]
+                writer = csv.DictWriter(stream, fieldnames=columns)
+                writer.writeheader()
+                for recorded in history:
+                    groups = recorded["validation"]["by_resolution"]
+                    writer.writerow({
+                        "epoch": recorded["epoch"],
+                        "train_velocity_mse": recorded["train"]["mean"],
+                        "validation_velocity_mse": recorded["validation"]["mean"],
+                        "train_samples": recorded["train"]["samples"],
+                        "optimizer_steps": recorded["train"]["optimizer_steps"],
+                        "epoch_wall_seconds": recorded["epoch_wall_seconds"],
+                        "validation_65_mse": groups.get("65", {}).get("mse"),
+                        "validation_129_mse": groups.get("129", {}).get("mse"),
+                    })
+            is_best = validation["mean"] < best_loss
+            if is_best:
+                best_loss = validation["mean"]
+            checkpoint = {
+                "epoch": epoch, "model_class": type(model).__name__,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "training_generator_state": generator.get_state(),
+                "initialization": initialization,
+                "signature_sha256": signature["sha256"],
+                "best_validation_velocity_mse": best_loss,
+                "history": history,
+                "train_only_scaler_file": "standardizers.pt",
+                "activation_checkpointing": True,
+            }
+            _atomic_torch_save(checkpoint, destination / "last.pt")
+            if is_best:
+                _atomic_torch_save(checkpoint, destination / "best.pt")
+            print(
+                f"[M43-B] epoch {epoch} train={train_stats['mean']:.6e} "
+                f"validation={validation['mean']:.6e} "
+                f"per_resolution={validation['by_resolution']} "
+                f"elapsed_s={row['epoch_wall_seconds']:.1f}", flush=True,
+            )
+            if active_monitor is not None:
+                active_monitor.log_epoch(row, completed_optimizer_steps(history))
     checkpoint_recovery_verified = False
     if args.mode == "smoke":
         # Exercise the same model/optimizer/generator recovery path used on resume.
