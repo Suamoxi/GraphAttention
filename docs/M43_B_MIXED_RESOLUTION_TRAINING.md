@@ -270,14 +270,63 @@ Outputs:
   history.csv
   history.json
   summary.json
+  tensorboard/events.out.tfevents.* (TensorBoard-enabled runs)
+  logging_only_resume_audit.json (only for explicit ff85188 migration)
 
-To resume more epochs, use the SAME Git revision
-and reference YAMLs. For instance:
+### TensorBoard logging and strict legacy checkpoint resume
+
+M43-B now logs every completed optimizer update and epoch to TensorBoard:
+- Flow Matching velocity MSE per optimizer step and running epoch;
+- overall and per-case/per-resolution training and validation losses;
+- learning rate, read-only gradient L2 norm, GPU allocation/reservation;
+- 65^3/129^3 forward and backward times, optimizer-step time and throughput.
+
+The TensorBoard x-axis is always the absolute optimizer-step count. A
+408-snapshot epoch has 68 updates at accumulation=6. When resuming from an
+older M43-B checkpoint, historical epoch summaries are restored from the
+saved history at steps 68, 136, etc., but historical per-step losses are
+never fabricated. New steps after one completed epoch start at step 69.
+
+Logging does not modify model parameters, optimizer, loss, scaler,
+training generator, the original manifest, or checkpoint payloads.
+
+WARNING: the old run signature includes Git revision
+ff851882091e4c4fd4ccfd5ecb69cb02b8bd0d90. An ordinary resume at
+a new HEAD will therefore fail intentionally. Use the explicit
+M43_B_ALLOW_LOGGING_ONLY_RESUME=YES flag *only* for this vetted patch.
+
+The compatibility gate requires exactly the old ff85188 signature,
+verifies every scientific manifest field except Git revision and its
+SHA256, checks Git ancestry and a narrow changed-path allowlist, and
+continues writing the ORIGINAL checkpoint SHA. A separate
+logging_only_resume_audit.json records the migration. It does not
+permit changed model code, dataset split, references or hyperparameters.
+Run the targeted numerical and logging tests before resuming.
+
+To continue the one-epoch pilot through **six total epochs** (five more):
 
 ~~~bash
-sbatch --export=ALL,M43_B_CONFIRM_LONG_TRAIN=YES,M43_B_RESUME=1,M43_B_EPOCHS=4 \
+cd /scratch/coop/theret/GraphAttention
+git pull --ff-only origin main
+
+sbatch \
+  --export=ALL,M43_B_CONFIRM_LONG_TRAIN=YES,M43_B_RESUME=1,M43_B_ALLOW_LOGGING_ONLY_RESUME=YES,M43_B_EPOCHS=6,M43_B_TRAIN_OUTPUT=/scratch/coop/theret/GraphAttention_runs/m43_b_multires/train_pilot_s42 \
   scripts/slurm/m43_b_multires_train.slurm
 ~~~
+
+M43_B_EPOCHS is the desired TOTAL number of epochs, not the number
+of epochs to add. The provided launcher has a 12h Grace walltime
+and automatically runs targeted tests before starting training.
+
+View live TensorBoard event files (forward port 6006 through SSH
+or VS Code) with:
+
+~~~bash
+tensorboard --logdir /scratch/coop/theret/GraphAttention_runs/m43_b_multires/train_pilot_s42/tensorboard --host 127.0.0.1 --port 6006
+~~~
+
+To explicitly suppress event logging without changing training,
+use M43_B_DISABLE_TENSORBOARD=YES.
 
 On interruption mid-epoch, the last COMPLETE epoch
 checkpoint remains authoritative. The interrupted
