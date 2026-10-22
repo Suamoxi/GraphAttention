@@ -15,6 +15,7 @@ step. It isolates its dominant 129^3 single-snapshot forward/backward phase.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -72,6 +73,16 @@ def _sha256_signature(directory: Path) -> dict[str, Any]:
     from graph_attention.training.m43_logging_resume import _signature_sha256
     if _signature_sha256(signature["content"]) != signature.get("sha256"):
         raise ValueError("scientific run signature SHA256 mismatch")
+    # Do not silently profile a run against edited reference YAML files.
+    for case_id, reference in signature["content"].get("references", {}).items():
+        reference_path = Path(reference["file"])
+        if not reference_path.is_file():
+            raise FileNotFoundError(f"{case_id}: missing original reference YAML")
+        current = hashlib.sha256(reference_path.read_bytes()).hexdigest()
+        if current != reference["sha256"]:
+            raise RuntimeError(
+                f"{case_id}: scientific reference YAML changed since checkpoint"
+            )
     return signature
 
 
@@ -275,6 +286,23 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
         dataset, case_id=args.case_id,
         snapshot_number=args.snapshot_number,
     )
+    spec = dataset.sample_specs[index]
+    entries = [
+        item for item in state["samples"]
+        if item["id"] == spec.sample_id
+    ]
+    if len(entries) != 1:
+        raise RuntimeError("source snapshot is not in original M43-B signature")
+    source = entries[0]
+    if source["path"] != str(spec.snapshot_file):
+        raise RuntimeError("snapshot path differs from original signed run")
+    stat = spec.snapshot_file.stat()
+    if stat.st_size != source["snapshot_size"] or stat.st_mtime_ns != source["snapshot_mtime_ns"]:
+        raise RuntimeError("source snapshot size/mtime changed since original run")
+    mesh_stat = spec.mesh_file.stat()
+    if (mesh_stat.st_size != source["mesh_size"]
+            or mesh_stat.st_mtime_ns != source["mesh_mtime_ns"]):
+        raise RuntimeError("mesh size/mtime changed since original training")
     standardizers = _load_standardizers(args.train_run_dir / "standardizers.pt")
     if not standardizers.physical_nondimensionalization:
         raise RuntimeError("the M43-B train-only scaler is not physically normalized")
