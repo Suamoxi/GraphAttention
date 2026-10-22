@@ -105,7 +105,14 @@ def _candidate_times(path: Path) -> dict[str, Any]:
     """Only explicit HDF5 timestamps, never inferred from filename counters."""
     found = []
     with h5py.File(path, "r") as h5:
-        for group_name in ("/", "GaseousPhase", "Metadata"):
+        # Field-level HDF5 attributes are worth checking too: the source
+        # preflight inspects group attributes, but actual solvers may attach
+        # physical-time tags directly to solution datasets.
+        metadata_objects = (
+            "/", "GaseousPhase", "Metadata",
+            *(f"GaseousPhase/{name}" for name in CONSERVATIVE_FIELDS),
+        )
+        for group_name in metadata_objects:
             if group_name != "/" and group_name not in h5:
                 continue
             group = h5 if group_name == "/" else h5[group_name]
@@ -118,11 +125,16 @@ def _candidate_times(path: Path) -> dict[str, Any]:
                     v = float(value.reshape(-1)[0])
                     if np.isfinite(v):
                         found.append({"path": group_name + "/@" + str(key), "value": v})
-        for key in ("time", "Time", "physical_time", "PhysicalTime"):
-            if key in h5 and isinstance(h5[key], h5py.Dataset):
-                arr = h5[key]
-                if arr.size == 1 and np.issubdtype(arr.dtype, np.number):
-                    found.append({"path": "/" + key, "value": float(arr[()])})
+        for prefix in ("", "GaseousPhase/", "Metadata/"):
+            for key in ("time", "Time", "physical_time", "PhysicalTime"):
+                full_name = prefix + key
+                if full_name in h5 and isinstance(h5[full_name], h5py.Dataset):
+                    arr = h5[full_name]
+                    if arr.size == 1 and np.issubdtype(arr.dtype, np.number):
+                        found.append({
+                            "path": "/" + full_name,
+                            "value": float(arr[()]),
+                        })
     times = [v["value"] for v in found]
     if not times:
         return {"status": "missing", "value": None, "sources": []}
