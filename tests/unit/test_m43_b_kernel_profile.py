@@ -116,6 +116,9 @@ def _synthetic_input(tmp_path):
     run_dir.mkdir()
     root_dir.mkdir()
     ref_dir.mkdir()
+    ref_file = ref_dir / "case.yaml"
+    ref_file.write_text("reference_scheme: synthetic\n")
+    ref_sha = hashlib.sha256(ref_file.read_bytes()).hexdigest()
     from scripts.train_m43_b_multires import M37_RECIPE
     content = {
         "mode": "train",
@@ -125,7 +128,7 @@ def _synthetic_input(tmp_path):
         "seed": 42,
         "accumulation": 6,
         "checkpointing": True,
-        "references": {"case": {"file": str(ref_dir / "case.yaml")}},
+        "references": {"case": {"file": str(ref_file), "sha256": ref_sha}},
         "physical_nondimensionalization": True,
         "time_embedding_scale": 1000.,
     }
