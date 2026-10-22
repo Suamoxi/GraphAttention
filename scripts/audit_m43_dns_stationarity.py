@@ -470,7 +470,21 @@ def _plot_case(
 ) -> None:
     figures = case_output / "figures"
     figures.mkdir(exist_ok=True)
-    index = np.array([row["snapshot_index"] for row in records])
+    timeline = [row.get("scheduled_time_candidate", {}) for row in records]
+    if all(
+        row.get("status") == "configuration_consistent_origin_unverified"
+        for row in timeline
+    ):
+        index = np.asarray(
+            [row["elapsed_in_forcing_times"] for row in timeline], dtype=float
+        )
+        axis_label = (
+            "Elapsed from first output / forcing char. time "
+            "(configuration-derived, unverified)"
+        )
+    else:
+        index = np.array([row["snapshot_index"] for row in records])
+        axis_label = "Snapshot index (physical time unverified)"
     fig, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
     for ax, (title, key) in zip(axes.ravel(), (
         ("Turbulent kinetic energy", "turbulent_k"),
@@ -479,7 +493,7 @@ def _plot_case(
         ("Enstrophy", "enstrophy"),
     )):
         ax.plot(index, [row["metrics"][key] for row in records], lw=2)
-        ax.set_xlabel("Snapshot index (physical time unverified)")
+        ax.set_xlabel(axis_label)
         ax.set_ylabel(title)
         ax.tick_params(labelsize=11)
         ax.grid(alpha=0.25)
@@ -533,7 +547,7 @@ def _plot_case(
     for factor in factors:
         ax.plot(index, [r["filters"][str(factor)]["unresolved_velocity_k"]
                         for r in records], lw=2, label=f"discrete coarse factor {factor}")
-    ax.set_xlabel("Snapshot index (physical time unverified)", fontsize=13)
+    ax.set_xlabel(axis_label, fontsize=13)
     ax.set_ylabel("Favre-relative unresolved velocity energy", fontsize=13)
     ax.tick_params(labelsize=11)
     ax.legend()
@@ -552,8 +566,18 @@ def _postprocess_case(
     if not records:
         raise RuntimeError("no finished snapshots to summarize for " + case)
     _write_csv(base / "time_history.csv", [
-        {"snapshot_index": r["snapshot_index"], "time_metadata_value":
-         r["hdf5_time"]["value"], **{k: v for k, v in r["metrics"].items()
+        {"snapshot_index": r["snapshot_index"],
+         "time_metadata_value": r["hdf5_time"]["value"],
+         "schedule_elapsed_from_first_output": r.get(
+             "scheduled_time_candidate", {}
+         ).get("elapsed_from_first_output"),
+         "schedule_nominal_time_from_zero": r.get(
+             "scheduled_time_candidate", {}
+         ).get("nominal_time_from_zero"),
+         "schedule_elapsed_in_forcing_times": r.get(
+             "scheduled_time_candidate", {}
+         ).get("elapsed_in_forcing_times"),
+         **{k: v for k, v in r["metrics"].items()
                                      if not isinstance(v, dict)},
          **{f"f{f}_{key}": value
             for f in factors for key, value in r["filters"][str(f)].items()
@@ -575,8 +599,14 @@ def _postprocess_case(
             if denom > 0 else None
             for lag in range(1, min(11, len(centered)//2))
         ]
+    manifest = json.loads((base / "source_signature.json").read_text())
     report = {
         "case_id": case, "snapshots_completed": len(records),
+        "run_params_save_schedule": manifest.get("run_params_save_schedule", {}),
+        "time_axis_interpretation": (
+            "nominal save-cadence elapsed time, not HDF5 verified time; "
+            "forcing char. time is not the large-eddy turnover time"
+        ),
         "candidate": candidate.__dict__,
         "index_lag_autocorrelation": metric_corr,
         "autocorrelation_warning": (
@@ -661,6 +691,9 @@ def _postprocess_case(
         candidate.explanation,
         "",
         "The heuristic is NOT a definitive transient cutoff.",
+        "RUN/run.params-derived times assume a contiguous output schedule and ",
+        "an unverified time origin; forcing characteristic time is not an",
+        "independently measured large-eddy turnover time.",
         "Temperature, turbulent Mach, Taylor Reynolds and dissipation are unavailable",
         "until authoritative EOS/viscosity information is verified.",
         "Spectral filtering is orthogonal for velocity; block restrictions are",
