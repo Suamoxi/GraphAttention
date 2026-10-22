@@ -13,6 +13,7 @@ are separate subsequent experiments.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import csv
 import hashlib
 import json
@@ -39,6 +40,10 @@ from graph_attention.training.data_pipeline import (
     GraphTaskCollator, task_batch_to_device,
 )
 from graph_attention.training.model_factory import instantiate_controlled_model
+from graph_attention.training.m43_logging_resume import reconcile_resume_signature
+from graph_attention.training.m43_tensorboard import (
+    M43TensorBoardMonitor, completed_optimizer_steps,
+)
 from scripts.train_generative import (
     _atomic_torch_save,
     _load_standardizers,
@@ -311,6 +316,8 @@ def train_epoch(
     device: torch.device,
     generator: torch.Generator,
     max_steps: int | None = None,
+    tensorboard: M43TensorBoardMonitor | None = None,
+    optimizer_step_offset: int = 0,
 ) -> dict[str, Any]:
     order = balanced_case_interleave(selected, seed=seed, epoch=epoch)
     model.train()
@@ -326,6 +333,11 @@ def train_epoch(
         _synchronize(device)
         step_started = time.perf_counter()
         step_indices = order[start:start+accumulation]
+        step_losses: list[float] = []
+        step_case_losses: dict[str, float] = {}
+        step_resolution_losses: dict[str, list[float]] = {}
+        step_forward_by_resolution: dict[str, list[float]] = {}
+        step_backward_by_resolution: dict[str, list[float]] = {}
         optimizer.zero_grad(set_to_none=True)
         try:
             for index in step_indices:
@@ -361,6 +373,12 @@ def train_epoch(
                 _append(by_resolution, resolution, scalar)
                 _append(forward_by_resolution, resolution, forward_seconds)
                 _append(backward_by_resolution, resolution, backward_seconds)
+                if tensorboard is not None:
+                    step_losses.append(scalar)
+                    step_case_losses[dataset.case_by_sample_id[sample_id]] = scalar
+                    _append(step_resolution_losses, resolution, scalar)
+                    _append(step_forward_by_resolution, resolution, forward_seconds)
+                    _append(step_backward_by_resolution, resolution, backward_seconds)
                 del aggregate, problem, prepared
 
             for parameter in model.parameters():
@@ -373,6 +391,29 @@ def train_epoch(
             raise
         step_wall_seconds.append(time.perf_counter() - step_started)
         step_count += 1
+        if tensorboard is not None:
+            tensorboard.log_step(
+                epoch=epoch,
+                global_step=optimizer_step_offset + step_count,
+                step_mean_velocity_mse=sum(step_losses) / len(step_losses),
+                running_epoch_velocity_mse=sum(losses) / len(losses),
+                samples_per_step=len(step_indices),
+                elapsed_seconds=step_wall_seconds[-1],
+                per_case_loss=step_case_losses,
+                per_resolution_loss={
+                    key: sum(values) / len(values)
+                    for key, values in step_resolution_losses.items()
+                },
+                forward_per_resolution_seconds={
+                    key: sum(values) for key, values in step_forward_by_resolution.items()
+                },
+                backward_per_resolution_seconds={
+                    key: sum(values) for key, values in step_backward_by_resolution.items()
+                },
+                optimizer=optimizer,
+                model=model,
+                device=device,
+            )
         elapsed = time.perf_counter() - started
         print(
             f"[M43-B] epoch={epoch} optimizer_step={step_count} "
@@ -519,8 +560,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
     if args.resume:
         stored = json.loads((destination / "run_signature.json").read_text())
-        if stored != signature:
-            raise RuntimeError("resume signature changed; refusing mismatched run")
+        signature, logging_resume_audit = reconcile_resume_signature(
+            stored, signature,
+            allow_logging_only_revision=args.allow_logging_only_resume,
+            repo_root=Path(__file__).resolve().parents[1],
+        )
+        if logging_resume_audit is not None:
+            atomic_json(destination / "logging_only_resume_audit.json",
+                        logging_resume_audit)
+            print(
+                "[M43-B] Explicit logging-only resume accepted; "
+                "original checkpoint and run manifest signature retained",
+                flush=True,
+            )
     else:
         destination.mkdir(parents=True, exist_ok=False)
         atomic_json(destination / "run_signature.json", signature)
@@ -798,6 +850,15 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1.0e-4)
     parser.add_argument("--max-epochs", type=int, default=2)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--allow-logging-only-resume", action="store_true",
+        help=("Explicitly permit the reviewed TensorBoard-only code revision "
+              "delta from the ff85188 M43-B pilot, never a scientific change"),
+    )
+    parser.add_argument(
+        "--disable-tensorboard", action="store_true",
+        help="Disable TensorBoard event recording without changing training",
+    )
     parser.add_argument("--smoke-steps", type=int, default=None)
     args = parser.parse_args()
     if args.mode == "smoke" and args.smoke_steps not in (None, 1):
