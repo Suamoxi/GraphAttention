@@ -232,3 +232,58 @@ def test_synthetic_hdf5_preflight_and_resume(tmp_path) -> None:
     assert len(list((case_dir / "snapshots").glob("*.json"))) == 2
     assert (case_dir / "figures" / "time_history.pdf").is_file()
     assert (case_dir / "candidate_cutoff_for_review.json").is_file()
+
+
+
+def test_run_params_infers_only_a_provisional_time_schedule(tmp_path) -> None:
+    from pathlib import Path
+
+    from scripts.audit_m43_dns_stationarity import (
+        _run_params_save_schedule,
+        _schedule_snapshot_time,
+    )
+
+    run = tmp_path / "RUN"
+    run.mkdir()
+    params = run / "run.params"
+    params.write_text(
+        "! a disabled/old setting must not replace the active one\n"
+        "!save_solution.time = 9.0d-3\n"
+        "simulation_end_time = 2.0D-4\n"
+        "save_solution.time = 2.0d-6\n"
+        "random_forcing.char_time = 1.995d-6\n"
+    )
+    files = tuple(Path(f"solut_hit_{i:08d}.h5") for i in range(1, 101))
+    schedule = _run_params_save_schedule(tmp_path, files)
+    assert schedule["status"] == "configuration_consistent_origin_unverified"
+    assert not schedule["time_origin_verified"]
+    assert not schedule["hdf5_time_verified"]
+    assert schedule["end_time_over_save_interval"] == pytest.approx(100)
+    assert _schedule_snapshot_time(schedule, 0)["nominal_time_from_zero"] == pytest.approx(2e-6)
+    assert _schedule_snapshot_time(schedule, 99)["nominal_time_from_zero"] == pytest.approx(2e-4)
+    assert _schedule_snapshot_time(schedule, 99)["elapsed_in_forcing_times"] == pytest.approx(
+        99 * 2e-6 / 1.995e-6
+    )
+    params.write_text(params.read_text().replace("2.0D-4", "2.5D-4"))
+    inconsistent = _run_params_save_schedule(tmp_path, files)
+    assert inconsistent["status"] == "configuration_inconsistent_do_not_infer"
+    assert _schedule_snapshot_time(inconsistent, 0)["nominal_time_from_zero"] is None
+
+
+def test_run_params_cadence_rejects_gapped_or_restarted_file_sequences(tmp_path) -> None:
+    from pathlib import Path
+
+    from scripts.audit_m43_dns_stationarity import _run_params_save_schedule
+
+    run = tmp_path / "RUN"
+    run.mkdir()
+    (run / "run.params").write_text(
+        "simulation_end_time = 2d-4\n"
+        "save_solution.time = 2d-6\n"
+        "random_forcing.char_time = 1.995d-6\n"
+    )
+    files = tuple(Path(f"solut_hit_{i:08d}.h5") for i in range(2, 102))
+    result = _run_params_save_schedule(tmp_path, files)
+    assert result["status"] == "configuration_inconsistent_do_not_infer"
+    assert not result["filename_sequence_starts_at_one_and_is_contiguous"
+    ]
