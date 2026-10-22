@@ -287,3 +287,18 @@ def test_run_params_cadence_rejects_gapped_or_restarted_file_sequences(tmp_path)
     assert result["status"] == "configuration_inconsistent_do_not_infer"
     assert not result["filename_sequence_starts_at_one_and_is_contiguous"
     ]
+
+
+
+def test_nested_field_timestamp_detection(tmp_path) -> None:
+    import h5py
+    from scripts.audit_m43_dns_stationarity import _candidate_times
+
+    file = tmp_path / "state.h5"
+    with h5py.File(file, "w") as h:
+        ds = h.create_dataset("GaseousPhase/rho", data=np.ones((4,)))
+        ds.attrs["physical_time"] = 1.25e-6
+    finding = _candidate_times(file)
+    assert finding["status"] == "metadata_value_units_unverified"
+    assert finding["value"] == pytest.approx(1.25e-6)
+    assert finding["sources"][0]["path"] == "GaseousPhase/rho/@physical_time"
