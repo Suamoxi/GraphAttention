@@ -136,3 +136,26 @@ all steps and all six cases. Only if acceptable should we design an
 explicitly audited migration strategy for the ORIGINAL experiment
 checkpoint, with full per-case validation and an intact scientific
 provenance chain. Do not silently bypass the current resume guard.
+
+## Singularity Git provenance failure (fixed)
+
+A continuation attempt reached the real diagnostic runner but raised
+`CalledProcessError: git rev-parse HEAD (exit 128)` while trying to record
+`benchmark_git_revision` from inside the Singularity container. The container
+may not resolve the detached worktree Git metadata or trust its ownership;
+the captured traceback does not disclose Git's original stderr, so the exact
+Git-side reason was not established. This is an execution/provenance failure,
+**not an optimizer or adaLN numerical failure**.
+
+The fixed Slurm script performs `git rev-parse --verify HEAD` on the host
+**after** checking clean worktree, reviewed ancestry and allowed files, then
+passes `--git-revision <full SHA>` explicitly to the Python diagnostic.
+The runner validates the 40-character SHA and stores it without attempting
+to execute Git inside the container. The scientific input integrity gates
+remain unchanged.
+
+The prior failed job can leave an empty diagnostic folder, because its
+output directory was created before provenance was recorded. Never reuse
+that directory; a new `sbatch` produces a fresh job-ID-specific output.
+The container messages about read-only CUDA compatibility files are separate
+from the Git exit-128 failure.
