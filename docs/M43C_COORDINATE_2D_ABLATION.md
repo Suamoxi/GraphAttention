@@ -71,38 +71,44 @@ git checkout --detach origin/feature/m43c-relative-only-2d-ablation
 ls -lh /scratch/coop/theret/GraphAttention_runs/m43c_coordinate_2d/m43c_{absolute,relative}_s42_e100/best.pt
 ~~~
 
-Run separate, matched evaluation jobs, which generate the exact held-out
-test population from best.pt and immediately benchmark that generation:
+Submit the two evaluation jobs, then submit a **CPU-only comparison Slurm job**
+that starts only if both evaluations succeed:
 
 ~~~bash
 ABS_JOB=$(sbatch --parsable --export=ALL,M43C_REPO="$PWD",M43C_STAGE=evaluate,M43C_VARIANT=absolute \
   scripts/slurm/m43c_coordinate_2d_ablation.slurm)
 REL_JOB=$(sbatch --parsable --export=ALL,M43C_REPO="$PWD",M43C_STAGE=evaluate,M43C_VARIANT=relative \
   scripts/slurm/m43c_coordinate_2d_ablation.slurm)
-echo "Absolute: $ABS_JOB | Relative-only: $REL_JOB"
+COMPARE_JOB=$(sbatch --parsable --dependency=afterok:"$ABS_JOB":"$REL_JOB" \
+  --export=ALL,M43C_REPO="$PWD" \
+  scripts/slurm/m43c_coordinate_2d_compare.slurm)
+echo "Absolute: $ABS_JOB | Relative-only: $REL_JOB | Comparison: $COMPARE_JOB"
 ~~~
 
-You can also choose `M43C_STAGE=generate` or `M43C_STAGE=benchmark` to
-run them separately. The evaluator now **reuses completed generation and
-benchmark outputs**, so a completed generation is not discarded if a
-benchmark must be rerun. It refuses to overwrite any partial or
-scientifically inconsistent artifact; inspect any failure first.
+The combined evaluation stage first generates the test population from
+best.pt with 50-step Heun (100 model evaluations), then benchmarks it.
+Each evaluation also supports separate M43C_STAGE=generate and
+M43C_STAGE=benchmark reruns without overwriting completed outputs.
 
-All generation uses independent deterministic test-population noise keys,
-sampling seed 5678, Flow Matching Heun with 50 steps and exactly 100
-evaluations/model sample. This is *not* paired target reconstruction.
+The comparison job requests **four CPUs, 24 GiB of RAM, and no GPU**.
+It uses the site's default Slurm partition; if no default permits CPU-only
+jobs, pass the site's CPU partition explicitly with
+`sbatch --partition=<valid-cpu-partition>`.
 
-After BOTH evaluations finish successfully, strictly compare scientific
-metrics and computational costs:
+SLURM `afterok` dependencies enforce that both evaluation jobs return
+successfully before the comparison begins. If your two evaluation jobs
+have **already completed**, submit only the comparison job:
 
 ~~~bash
-singularity exec --nv -B /home -B /scratch \
-  /softs/local_arm/singularity/images/pyg25.03.sif \
-  /scratch/coop/theret/avbpML_env/bin/python3 \
-  -m scripts.compare_m43c_coordinate_2d \
-  --root /scratch/coop/theret/GraphAttention_runs/m43c_coordinate_2d \
-  --epochs 100
+sbatch --export=ALL,M43C_REPO="$PWD" \
+  scripts/slurm/m43c_coordinate_2d_compare.slurm
 ~~~
+
+The comparison is read-only toward both trained models and both generated
+test populations. Its results are written to a new comparison directory,
+and it refuses to overwrite an existing result. It compares scientific
+splits, scalers, generated-sample keys, sampler settings, actual reference
+tensor values, and then produces a JSON report and PDF plots.
 
 The comparison refuses runs with different splits, standardizers,
 configurations beyond the position flag, reference populations, or
