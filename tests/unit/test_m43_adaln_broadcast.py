@@ -203,8 +203,11 @@ def test_packed_invalid_indices_rejected_before_single_graph_fast_path():
         model(**truncated)
 
 
-def test_full_optimizer_step_unchanged_for_two_different_meshes():
-    problem = _mesh_pair(torch.device("cpu"), packed=True)
+@pytest.mark.parametrize("packed", [False, True])
+def test_full_optimizer_step_unchanged_for_single_and_heterogeneous_graphs(
+    packed: bool,
+):
+    problem = _mesh_pair(torch.device("cpu"), packed=packed)
     reference = _model(torch.device("cpu"), checkpointing=True)
     optimized = _model(torch.device("cpu"), checkpointing=True)
     optimized.load_state_dict(reference.state_dict())
