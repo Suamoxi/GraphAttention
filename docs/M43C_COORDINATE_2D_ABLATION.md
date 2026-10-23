@@ -90,10 +90,9 @@ best.pt with 50-step Heun (100 model evaluations), then benchmarks it.
 Each evaluation also supports separate M43C_STAGE=generate and
 M43C_STAGE=benchmark reruns without overwriting completed outputs.
 
-The comparison job requests **four CPUs, 24 GiB of RAM, and no GPU**.
-It uses the site's default Slurm partition; if no default permits CPU-only
-jobs, pass the site's CPU partition explicitly with
-`sbatch --partition=<valid-cpu-partition>`.
+The comparison job requests **four CPUs, 24 GiB of RAM, and zero GPUs**
+on the existing ARM64 `grace` partition, matching the repository's
+CPU-only plotting job conventions (`--gres=gpu:0`).
 
 SLURM `afterok` dependencies enforce that both evaluation jobs return
 successfully before the comparison begins. If your two evaluation jobs
