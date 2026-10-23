@@ -1,7 +1,47 @@
 # M43 — Single-graph adaLN broadcast fast path and paired GH200 gate
 
-**Status:** implemented on a separate branch, NOT yet run on Grace GH200.
-The 8-epoch M43-B scientific checkpoint is unchanged and not resumed.
+**Status:** tested on Grace GH200 in job 479099. Substantial measured
+speedup, but full checkpoint equivalence DID NOT pass. Further diagnostics
+have been committed and require a new job. The scientific 8-epoch M43-B
+checkpoint is unchanged and not resumed.
+
+## GH200 result from Slurm job 479099 (measured, 23 October 2026)
+
+Original source revision: `9789f13b9ac09d04b5d10f33ca90fd0c607803db`.
+Actual host: `calypso-grace02` (GH200, 97,871 MiB advertised GPU memory).
+All **16 CPU/CUDA reference tests passed**.
+
+Three interleaved real-checkpoint full-size 129^3 trials per broadcast:
+- Original index backward: ~20.04 s; expand backward: ~4.035 s.
+  **Backward speedup: 4.97x.**
+- Whole physical-microbatch step: **4.12x faster.**
+- Peak allocated HBM: original **53.206 GiB**, expand **47.064 GiB**
+  (saving **6.142 GiB**).
+- CUPTI old broadcast: **11** indexing_backward_kernel<float,4>
+  launches, **16.016 s** total; optimized: **0 launches**.
+
+**Scientific gate FAILED** (`status=numerical_mismatch`), with:
+- Predicted velocity: max absolute difference 1.382e-3, relative L2
+  difference 1.565e-4.
+- Loss: absolute difference 5.215e-8.
+- Worst per-parameter gradient: relative L2 difference **2.933%**.
+- Worst post-AdamW parameter: relative L2 difference **3.8e-6**.
+- Worst AdamW state: relative L2 difference **1.05e-3**.
+
+These are measured data from logs, not an assertion that the alternate
+implementation has been shown scientifically equivalent.
+
+The existing benchmark compared the first A-vs-B run but did NOT quantify
+same-implementation output/gradient variability due to CUDA sparse atomic
+reductions. The updated comparison now captures two independent replays
+per arm and reports: original-vs-original, expand-vs-expand,
+original-vs-expand, largest-gradient parameter names and absolute norms.
+**It does not weaken any numerical acceptance tolerances or resume guard.**
+
+Do not merge, continue scientific training, or change checkpoints merely
+because the speedup is strong. First run the updated repeat diagnostics
+with a NEW Slurm job ID and inspect the resulting
+`same_mode_reproducibility` and `parity` sections.
 
 ## Observed profile
 
