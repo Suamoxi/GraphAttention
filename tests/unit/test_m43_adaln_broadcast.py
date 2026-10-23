@@ -104,7 +104,9 @@ def _model(device: torch.device, *, checkpointing: bool):
         # Turn on the initially zero DiT gates and final readout, so
         # every layer's shared conditioning gradient is actually exercised.
         model.final_layer.projection.weight.normal_(0., .04)
+        model.final_layer.adaLN_modulation[-1].weight.normal_(0., .02)
         for block in model.blocks:
+            block.adaLN_modulation[-1].weight.normal_(0., .02)
             block.adaLN_modulation[-1].bias[2*model.hidden_dim:3*model.hidden_dim] = .1
             block.adaLN_modulation[-1].bias[5*model.hidden_dim:6*model.hidden_dim] = .1
     return model.to(device)
