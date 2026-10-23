@@ -45,7 +45,58 @@ git merge-base --is-ancestor "$BASE" HEAD || {
 }
 CHANGES=$(git diff --name-only "$BASE..HEAD")
 if printf '%s\n' "$CHANGES" | grep -Ev \
-  '^(src/graph_attention/models/dit_common.py|tests/unit/test_m43_adaln_broadcast.py|scripts/benchmark_m43_adaln_broadcast.py|scripts/slurm/m43_adaln_broadcast.slurm|docs/M43_ADALN_FASTPATH.md)$'; then
+  '^(src/graph_attention/models/dit_common.py|tests/unit/test_m43_adaln_broadcast.py|tests/unit/test_m43_adaln_continuation.py|scripts/benchmark_m43_adaln_broadcast.py|scripts/validate_m43_adaln_continuation.py|scripts/slurm/m43_adaln_broadcast.slurm|scripts/slurm/m43_adaln_continuation.slurm|docs/M43_ADALN_FASTPATH.md|docs/M43_ADALN_CONTINUATION.md); then
+  echo "Non-optimization source changes detected; refusing provenance claim" >&2
+  exit 2
+fi
+test -s "$TRAIN_RUN/run_signature.json"
+test -s "$TRAIN_RUN/last.pt"
+test -s "$TRAIN_RUN/standardizers.pt"
+test -d "$ROOT"
+test -d "$REFS"
+
+export PYTHONPATH="$REPO/src:$REPO:${PYTHONPATH:-}"
+echo "===== M43 adaLN broadcast optimization ====="
+echo "Stage=$STAGE, Git=$(git rev-parse HEAD), host=$(hostname)"
+echo "Read-only source checkpoint: $TRAIN_RUN/last.pt"
+echo "Separate output: $OUT"
+echo "No scientific training job launched"
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+
+echo "===== Reference parity: heterogeneous meshes/times and checkpointing ====="
+singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
+  "$PYTHON" -m pytest -q \
+    tests/unit/test_m43_adaln_broadcast.py \
+    tests/unit/test_dinat_dit.py::test_dinat_dit_alternates_local_and_exact_two_hop_topologies
+
+if [ "$STAGE" = tests ]; then
+  echo "Test-only gate completed. GH200 comparison not started."
+  exit 0
+fi
+case "$TRIALS" in
+  1|2|3|4|5|6|7|8) ;;
+  *) echo "M43_FAST_TRIALS must be an integer in [1,8]" >&2; exit 2 ;;
+esac
+
+ARGS=(
+  --root "$ROOT"
+  --reference-dir "$REFS"
+  --train-run-dir "$TRAIN_RUN"
+  --output-dir "$OUT"
+  --trials "$TRIALS"
+  --case-id "Re94/Ma0.2"
+  --snapshot-number 51
+)
+if [ "$PROFILE" = NO ]; then
+  ARGS+=(--no-profile-kernels)
+fi
+echo "===== GH200 paired full 129^3 checkpoint benchmark ====="
+singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
+  "$PYTHON" -u -m scripts.benchmark_m43_adaln_broadcast "${ARGS[@]}"
+test -s "$OUT/benchmark_summary.json"
+echo "Results: $OUT/benchmark_summary.json"
+echo "No checkpoint/split/scaler/history was written."
+; then
   echo "Non-optimization source changes detected; refusing provenance claim" >&2
   exit 2
 fi
