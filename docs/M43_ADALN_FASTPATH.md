@@ -1,9 +1,65 @@
 # M43 — Single-graph adaLN broadcast fast path and paired GH200 gate
 
-**Status:** tested on Grace GH200 in job 479099. Substantial measured
-speedup, but full checkpoint equivalence DID NOT pass. Further diagnostics
-have been committed and require a new job. The scientific 8-epoch M43-B
-checkpoint is unchanged and not resumed.
+**Status:** two GH200 benchmarks completed (jobs 479099 and 479169).
+The fast path improves full-volume microbatch time approximately 4.13x.
+The strict numerical gate still exits nonzero, but same-mode replay controls
+show matching numerical variability. The scientific eight-epoch M43-B
+checkpoint remains unchanged and has not been resumed.
+
+## GH200 result from Slurm job 479169 (23 October 2026)
+
+The new same-mode replay controls have now been run. **All 16 small
+CPU/CUDA tests passed.** Model, optimizer, and sampling inputs were
+restored from the same original eight-epoch checkpoint before trials.
+The checkpoint SHA-256 was identical before and after the benchmark.
+
+| Comparison | Velocity prediction relative L2 | Worst relative gradient L2 |
+| --- | ---: | ---: |
+| Indexed vs expand | 1.564750e-4 | 3.640% |
+| Indexed vs indexed | 1.565538e-4 | 4.333% |
+| Expand vs expand | 1.564398e-4 | 4.020% |
+
+The **cross-implementation error is comparable to the reference
+implementation's own replay variability**. The largest relative gradient
+errors are tiny geometry-MLP biases: for block 8 the gradient norm is
+2.171e-8 and the cross-implementation difference norm is 7.904e-10.
+For all 134 trainable parameter-gradient tensors combined, the
+cross-implementation relative L2 difference computed from the JSON is
+**1.3214e-5**; excluding near-zero geometry gradient tensors, the maximum
+single-tensor gradient relative L2 is **2.3673e-5**. Across all
+post-AdamW weight tensors, combined relative L2 is **7.929e-9**.
+
+Performance is reproduced across 3 interleaved 129^3 trials per mode:
+- Backward: **20.0633 s indexed / 4.0215 s expand = 4.989x** speedup.
+- Forward: **1.1936 s indexed / 1.1210 s expand**.
+- Full isolated physical microbatch: **21.2588 s / 5.1442 s = 4.133x**.
+- Peak allocated GPU memory: **53.206 / 47.064 GiB**, saving **6.143 GiB**.
+  Reserved memory remains **58.389 GiB** for both, due to allocator caching.
+- CUPTI 11 pathological indexed-backward launches consuming 16.016 s
+  become 0 launches, confirming this bottleneck was removed.
+
+**Interpretation:** the specific B=1 gather-to-expand change is
+mathematically identical, has passed single- and multigraph correctness
+tests, and its full-volume deviations are not detectably larger than
+the existing GPU sparse backend's own run-to-run variability. The same
+implementation producing non-bitwise-identical results suggests
+nondeterministic GPU reductions, but the exact responsible kernel
+is not established.
+
+**Acceptance-gate limitation:** the old strict prediction thresholds
+(max absolute 1e-5 and relative L2 1e-5) are even tighter than
+indexed-versus-indexed replay variability (1.5655e-4 relative L2).
+Thus `status=numerical_mismatch` is expected even for self-comparisons.
+Do **not** silently loosen the strict gate or treat one noisy comparison
+as a mathematical proof. A separate documented numerical reproducibility
+criterion is needed for CUDA benchmarks, alongside exact analytical and
+small deterministic tests.
+
+**Next scientific action:** verify that the same conclusion holds on
+a second physical mesh/case and, before resuming original M43-B,
+perform a checkpoint-compatible controlled continuation on an isolated
+copy, including the real six-sample accumulation and validation metrics.
+Do not bypass the existing scientific revision compatibility guard.
 
 ## GH200 result from Slurm job 479099 (measured, 23 October 2026)
 
