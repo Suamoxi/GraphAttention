@@ -90,6 +90,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         conditioning_channels: int = 0,
         condition_embed_dim: int = 128,
         use_coord_mlp: bool = True,
+        use_absolute_position_encoding: bool = True,
         coordinate_normalization: str = "centered_bbox",
         coordinate_normalization_eps: float = 1.0e-8,
         use_sdpa: bool = True,
@@ -126,6 +127,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             conditioning_channels=conditioning_channels,
             condition_embed_dim=condition_embed_dim,
             use_coord_mlp=use_coord_mlp,
+            use_absolute_position_encoding=use_absolute_position_encoding,
             coordinate_normalization=coordinate_normalization,
             coordinate_normalization_eps=coordinate_normalization_eps,
         )
@@ -286,15 +288,17 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             num_nodes=inputs.shape[0],
         )
 
-        model_coords = coords
-        if self.coordinate_normalization == "centered_bbox":
-            model_coords = _normalize_coordinates_by_graph(
-                coords,
-                batch_index=batch_index,
-                eps=self.coordinate_normalization_eps,
-            )
+        hidden = self.input_projection(inputs)
+        if self.use_absolute_position_encoding:
+            model_coords = coords
+            if self.coordinate_normalization == "centered_bbox":
+                model_coords = _normalize_coordinates_by_graph(
+                    coords,
+                    batch_index=batch_index,
+                    eps=self.coordinate_normalization_eps,
+                )
+            hidden = hidden + self.coordinate_projection(model_coords)
 
-        hidden = self.input_projection(inputs) + self.coordinate_projection(model_coords)
         condition_embedding = self._condition_embedding(
             inputs,
             batch_index=batch_index,

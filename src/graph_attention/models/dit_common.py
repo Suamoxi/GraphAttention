@@ -142,6 +142,7 @@ class _BaseDiTGraphTransformer(nn.Module):
         conditioning_channels: int = 0,
         condition_embed_dim: int = 128,
         use_coord_mlp: bool = True,
+        use_absolute_position_encoding: bool = True,
         coordinate_normalization: str = "centered_bbox",
         coordinate_normalization_eps: float = 1.0e-8,
     ) -> None:
@@ -173,6 +174,7 @@ class _BaseDiTGraphTransformer(nn.Module):
         if coordinate_normalization_eps <= 0.0:
             raise ValueError("coordinate_normalization_eps must be positive")
 
+        self.use_absolute_position_encoding = bool(use_absolute_position_encoding)
         self.coordinate_normalization = coordinate_normalization
         self.coordinate_normalization_eps = float(coordinate_normalization_eps)
         self._uses_local_edges = bool(uses_local_edges)
@@ -257,15 +259,17 @@ class _BaseDiTGraphTransformer(nn.Module):
                 device=inputs.device,
             )
 
-        model_coords = coords
-        if self.coordinate_normalization == "centered_bbox":
-            model_coords = _normalize_coordinates_by_graph(
-                coords,
-                batch_index=batch_index,
-                eps=self.coordinate_normalization_eps,
-            )
+        hidden = self.input_projection(inputs)
+        if self.use_absolute_position_encoding:
+            model_coords = coords
+            if self.coordinate_normalization == "centered_bbox":
+                model_coords = _normalize_coordinates_by_graph(
+                    coords,
+                    batch_index=batch_index,
+                    eps=self.coordinate_normalization_eps,
+                )
+            hidden = hidden + self.coordinate_projection(model_coords)
 
-        hidden = self.input_projection(inputs) + self.coordinate_projection(model_coords)
         condition_embedding = self._condition_embedding(
             inputs,
             batch_index=batch_index,

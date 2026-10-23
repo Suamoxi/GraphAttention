@@ -166,7 +166,12 @@ def _instantiate_matched_dit(
         ),
         "shared_parameter_seed": seed,
         "architecture_family": "dit_adaln_zero",
-        "coordinate_conditioning": "absolute_centered_bbox",
+        "coordinate_conditioning": (
+            "relative_geometry_only"
+            if (target == _DINAT_DIT_TARGET
+                and not bool(model_cfg.get("use_absolute_position_encoding", True)))
+            else "absolute_centered_bbox"
+        ),
         "attention_mode": attention_mode,
     }
     if target == _FULL_DIT_TARGET:
@@ -231,6 +236,9 @@ def _instantiate_matched_dit(
     torch.manual_seed(geometry_seed)
     dinat_dit = AlternatingDilatedGeometricDiT(
         **common,
+        use_absolute_position_encoding=bool(
+            model_cfg.get("use_absolute_position_encoding", True)
+        ),
         sparse_attention_backend=sparse_attention_backend,
         include_self_attention=include_self_attention,
         include_local_self_attention=include_local_self_attention,
@@ -268,6 +276,7 @@ def _instantiate_matched_dit(
             "include_local_self_attention": include_local_self_attention,
             "sparse_attention_backend": sparse_attention_backend,
             "activation_checkpointing": dinat_dit.activation_checkpointing,
+            "use_absolute_position_encoding": dinat_dit.use_absolute_position_encoding,
         }
     )
     return dinat_dit, metadata
