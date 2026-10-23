@@ -362,6 +362,10 @@ def benchmark(args: argparse.Namespace) -> dict:
         raise RuntimeError("CUDA_LAUNCH_BLOCKING=1 would perturb GPU timing")
     destination = args.output_dir.resolve()
     destination.mkdir(parents=True, exist_ok=False)
+    original_checkpoint = args.train_run_dir / "last.pt"
+    checkpoint_hash_before = hashlib.sha256(
+        original_checkpoint.read_bytes()
+    ).hexdigest()
     device = torch.device("cuda:0")
     original = json.loads(
         (args.train_run_dir / "run_signature.json").read_text()
@@ -426,6 +430,7 @@ def benchmark(args: argparse.Namespace) -> dict:
     del probe
     provenance.update({
         "checkpoint_epoch_zero_based": int(checkpoint["epoch"]),
+        "checkpoint_sha256_before": checkpoint_hash_before,
         "model_class": type(model).__name__,
         "gpu": torch.cuda.get_device_name(device),
         "torch": torch.__version__, "python": platform.python_version(),
@@ -520,6 +525,15 @@ def benchmark(args: argparse.Namespace) -> dict:
                 model=model,optimizer=optimizer,task=task,
                 problem=problem,device=device,
             )
+    checkpoint_hash_after = hashlib.sha256(
+        original_checkpoint.read_bytes()
+    ).hexdigest()
+    provenance["checkpoint_sha256_after"] = checkpoint_hash_after
+    if checkpoint_hash_after != checkpoint_hash_before:
+        raise RuntimeError(
+            "source checkpoint changed while profiling; "
+            "cannot trust paired measurements"
+        )
     result = {
         "status": "passed" if parity["passed"] else "numerical_mismatch",
         "parity": parity,
