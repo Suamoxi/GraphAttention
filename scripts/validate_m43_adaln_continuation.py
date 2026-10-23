@@ -20,8 +20,8 @@ import json
 import math
 from pathlib import Path
 import platform
+import re
 import socket
-import subprocess
 import time
 from typing import Any, Mapping
 from unittest.mock import patch
@@ -54,6 +54,18 @@ ARM_ORDER = (
     ("expand_b", False),
 )
 CASE_IDS = tuple(case.case_id for case in DEFAULT_M43_CASES)
+
+
+def _validated_host_revision(revision: str) -> str:
+    """Host SLURM job verifies git worktree; container cannot always read .git.
+
+    Read a REQUIRED host-side full commit SHA passed as an explicit CLI
+    argument. Refuse missing, shortened or malformed provenance rather than
+    running Git again in the immutable Singularity image.
+    """
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-fA-F]{40}", revision) is None:
+        raise ValueError("--git-revision must be a 40-character host-verified Git SHA")
+    return revision.lower()
 
 
 def _generator_sha256(generator: torch.Generator) -> str:
@@ -546,10 +558,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "status": "diagnostic_in_progress",
         "provenance": {
             **origin,
-            "benchmark_git_revision": subprocess.run(
-                ["git", "rev-parse", "HEAD"], capture_output=True,
-                check=True, text=True,
-            ).stdout.strip(),
+            "benchmark_git_revision": _validated_host_revision(args.git_revision),
+            "revision_provenance": (
+                "Host SLURM worktree validated clean and on reviewed ancestry "
+                "before Singularity execution; revision passed as CLI argument"
+            ),
             "host": socket.gethostname(),
             "gpu": torch.cuda.get_device_name(device),
             "torch": torch.__version__,
@@ -707,6 +720,10 @@ def parse_args() -> argparse.Namespace:
         "/scratch/coop/theret/GraphAttention_runs/m43_b_multires/train_pilot_s42"
     ))
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--git-revision", required=True, type=_validated_host_revision,
+        help="Full source SHA verified by the host-side SLURM git preflight",
+    )
     parser.add_argument("--steps", default=3, type=int)
     parser.add_argument("--validation-per-case", default=1, type=int)
     # The existing input validator also inspects one original 129^3 sample.
