@@ -52,6 +52,9 @@ git merge-base --is-ancestor "$BASE" HEAD || {
   echo "Source revision does not descend from known M43-B-compatible base" >&2
   exit 2
 }
+# Git is verified on the Slurm HOST. A linked worktree .git pointer can be
+# unreadable or considered unsafe inside the Singularity image; pass SHA in.
+HOST_REVISION=$(git rev-parse --verify HEAD)
 CHANGES=$(git diff --name-only "$BASE..HEAD")
 if printf '%s\n' "$CHANGES" | grep -Ev \
   '^(src/graph_attention/models/dit_common.py|tests/unit/test_m43_adaln_broadcast.py|tests/unit/test_m43_adaln_continuation.py|scripts/benchmark_m43_adaln_broadcast.py|scripts/validate_m43_adaln_continuation.py|scripts/slurm/m43_adaln_broadcast.slurm|scripts/slurm/m43_adaln_continuation.slurm|docs/M43_ADALN_FASTPATH.md|docs/M43_ADALN_CONTINUATION.md)$'; then
@@ -71,7 +74,7 @@ fi
 
 export PYTHONPATH="$REPO/src:$REPO:${PYTHONPATH:-}"
 echo "===== M43 isolated continuation comparison ====="
-echo "Stage=$STAGE Git=$(git rev-parse HEAD) host=$(hostname)"
+echo "Stage=$STAGE Git=$HOST_REVISION host=$(hostname)"
 echo "Source checkpoint READ-ONLY: $TRAIN_RUN/last.pt"
 echo "Diagnostic output ONLY: $OUT"
 echo "Six original physical cases/update; $STEPS steps/arm; four independently restored arms"
@@ -96,6 +99,7 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     --reference-dir "$REFS" \
     --train-run-dir "$TRAIN_RUN" \
     --output-dir "$OUT" \
+    --git-revision "$HOST_REVISION" \
     --steps "$STEPS" \
     --validation-per-case "$VAL_PER_CASE"
 
