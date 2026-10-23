@@ -75,10 +75,25 @@ def compare(root: Path, epochs: int) -> dict:
                 raise FileNotFoundError(f"{name}: missing {f}")
 
     a, b = paths["absolute"], paths["relative"]
-    if (a["run"] / "dataset_split_manifest.json").read_bytes() != (
-        b["run"] / "dataset_split_manifest.json"
-    ).read_bytes():
-        raise RuntimeError("splits differ: not a controlled comparison")
+    # Manifest includes runtime provenance (hardware, Python, checkout
+    # state), which is NOT part of the scientific train/test split. Only
+    # compare immutable source sample/group IDs, split membership and input
+    # paths here; other scientific config and scaler checks follow.
+    manifests = {
+        name: _json(paths[name]["run"] / "dataset_split_manifest.json")
+        for name in names
+    }
+    scientific_manifest_fields = (
+        "group_metadata_key", "sample_ids", "group_ids",
+        "train_ids", "validation_ids", "test_ids",
+        "train_groups", "validation_groups", "test_groups",
+        "sample_files", "shared_mesh_file", "case_definition_file",
+    )
+    for field in scientific_manifest_fields:
+        if manifests["absolute"].get(field) != manifests["relative"].get(field):
+            raise RuntimeError(
+                f"scientific split or dataset field {field!r} differs"
+            )
     if not _scalar_scaler_same(
         a["run"] / "standardizers.pt", b["run"] / "standardizers.pt"
     ):
@@ -157,6 +172,9 @@ def compare(root: Path, epochs: int) -> dict:
         "status": "paired_2d_coordinate_ablation_complete",
         "strict_checks": {
             "exact_test_train_split_match": True,
+            "runtime_hardware_provenance_comparison": (
+                "recorded for each arm; excluded from scientific split equality"
+            ),
             "train_only_standardizers_identical": True,
             "all_scientific_config_except_position_flag_identical": True,
             "reference_energy_spectra_identical": True,
