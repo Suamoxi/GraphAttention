@@ -10,7 +10,7 @@ import torch
 
 from scripts.validate_m43_adaln_continuation import (
     CASE_IDS, _continuation_comparison, _diagnostic_gate,
-    _preflight, _state_comparison, _tensor_comparison,
+    _preflight, _state_comparison, _tensor_comparison, _validated_host_revision,
     _training_windows, _validation_pick,
 )
 
@@ -160,3 +160,12 @@ def test_preflight_rejects_scientific_output_directory(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="diagnostic output"):
         _preflight(args)
+
+
+def test_host_verified_git_provenance_without_container_git():
+    full_sha = "7fd84718b051545baa8a55d38c711a45c5cc7aaf"
+    assert _validated_host_revision(full_sha) == full_sha
+    assert _validated_host_revision(full_sha.upper()) == full_sha
+    for bad in ("", "HEAD", "7fd8471", "0"*39, "z"*40, "../HEAD"):
+        with pytest.raises(ValueError, match="host-verified Git SHA"):
+            _validated_host_revision(bad)
