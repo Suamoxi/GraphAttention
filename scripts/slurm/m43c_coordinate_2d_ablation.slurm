@@ -24,8 +24,8 @@ case "$VARIANT" in
         echo "Set M43C_VARIANT=absolute or relative" >&2; exit 2; fi ;;
   *) echo "Invalid M43C_VARIANT=$VARIANT" >&2; exit 2 ;;
 esac
-case "$STAGE" in tests|train|evaluate) ;; *)
-  echo "Set M43C_STAGE=tests,train,evaluate" >&2; exit 2 ;;
+case "$STAGE" in tests|train|generate|benchmark|evaluate) ;; *)
+  echo "Set M43C_STAGE=tests,train,generate,benchmark,evaluate" >&2; exit 2 ;;
 esac
 if [ "$EPOCHS" -lt 1 ] || [ "$EPOCHS" -gt 1000 ]; then
   echo "M43C_EPOCHS must lie in [1,1000]" >&2; exit 2
@@ -76,28 +76,79 @@ if [ "$STAGE" = train ]; then
   exit 0
 fi
 
+# Evaluation keeps trained models and all scientific inputs immutable.
+# Each stage is separately rerunnable. Existing COMPLETE stages are reused;
+# partial outputs are never deleted or overwritten.
 for f in best.pt summary.json resolved_config.yaml standardizers.pt dataset_split_manifest.json; do
   test -s "$RUN_DIR/$f" || { echo "Missing trained artifact $RUN_DIR/$f" >&2; exit 3; }
 done
-if [ -e "$GEN_DIR" ] || [ -e "$BENCH_DIR" ]; then
-  echo "Refusing overwrite of old evaluation" >&2; exit 2
+case "$POSITION" in
+ true) EXPECTED=true ;;
+ false) EXPECTED=false ;;
+esac
+# The checkpoint is selected from the fully completed scientific run.
+# Protect against accidentally evaluating two copies of the same variant.
+if ! grep -Eq "^[[:space:]]*use_absolute_position_encoding: $EXPECTED([[:space:]]*$|[[:space:]]+#)" \
+  "$RUN_DIR/resolved_config.yaml"; then
+  echo "Wrong/missing absolute position flag in $RUN_DIR/resolved_config.yaml" >&2
+  exit 3
 fi
-start=$(date +%s%N)
-singularity exec --nv -B /home -B /scratch "$IMAGE" \
-  "$PYTHON" -u -m scripts.generate_generative \
-  run_dir="$RUN_DIR" checkpoint=best.pt device=cuda batch_size=128 num_workers=4 \
-  sampling.steps=50 sampling.method=flow_ode sampling.solver=heun \
-  sampling.sampling_eps=0.0 sampling.final_denoise=false sampling.seed=5678 \
-  output_name="$GEN_NAME"
-end=$(date +%s%N)
-test -s "$GEN_DIR/generated_test.pt" || exit 3
-awk "BEGIN {printf \"%.6f\n\", ($end-$start)/1000000000.0}" > "$GEN_DIR/generation_wall_seconds.txt"
+
+if [ "$STAGE" = generate ] || [ "$STAGE" = evaluate ]; then
+  if [ -d "$GEN_DIR" ]; then
+    for f in generated_test.pt summary.json generation_config.yaml resolved_config.yaml generation_wall_seconds.txt; do
+      test -s "$GEN_DIR/$f" || {
+        echo "Incomplete generation $GEN_DIR: missing $f; refusing overwrite" >&2
+        exit 3
+      }
+    done
+    echo "Reusing complete previous generation: $GEN_DIR"
+  else
+    echo "== Generate $VARIANT held-out 2-D samples: Heun-50 seed 5678 =="
+    start=$(date +%s%N)
+    singularity exec --nv -B /home -B /scratch "$IMAGE" \
+      "$PYTHON" -u -m scripts.generate_generative \
+      run_dir="$RUN_DIR" checkpoint=best.pt device=cuda batch_size=128 num_workers=4 \
+      sampling.steps=50 sampling.method=flow_ode sampling.solver=heun \
+      sampling.sampling_eps=0.0 sampling.final_denoise=false sampling.seed=5678 \
+      output_name="$GEN_NAME" overwrite=false
+    end=$(date +%s%N)
+    test -s "$GEN_DIR/generated_test.pt" || exit 3
+    # The generation runner writes into a new directory. Timing is stored
+    # only after it returns successfully and is never fabricated on reruns.
+    awk "BEGIN {printf \"%.6f\\n\", ($end-$start)/1000000000.0}" \
+      > "$GEN_DIR/generation_wall_seconds.txt"
+    echo "Generation finished: $GEN_DIR"
+  fi
+fi
+if [ "$STAGE" = generate ]; then exit 0; fi
+
+for f in generated_test.pt summary.json generation_config.yaml resolved_config.yaml generation_wall_seconds.txt; do
+  test -s "$GEN_DIR/$f" || {
+    echo "Missing generation artifact $GEN_DIR/$f; run stage=generate first" >&2
+    exit 3
+  }
+done
+if [ -d "$BENCH_DIR" ]; then
+  for f in summary.json channel_metrics.csv standardized_wasserstein.csv \
+           spectral_bands.csv physical_metrics.csv energy_spectrum_summary.csv; do
+    test -s "$BENCH_DIR/$f" || {
+      echo "Incomplete benchmark $BENCH_DIR: missing $f; refusing overwrite" >&2
+      exit 3
+    }
+  done
+  echo "Reusing complete previous benchmark: $BENCH_DIR"
+  exit 0
+fi
+
+echo "== Benchmark $VARIANT held-out generated distribution =="
 singularity exec --nv -B /home -B /scratch "$IMAGE" \
   "$PYTHON" -u -m scripts.benchmark_generation \
   run_dir="$GEN_DIR" output_root="$BENCH_ROOT" overwrite=false \
   energy_spectrum.enabled=true energy_spectrum.lower_quantile=0.10 \
   energy_spectrum.upper_quantile=0.90 plots.energy_spectrum=true
-for f in summary.json channel_metrics.csv standardized_wasserstein.csv spectral_bands.csv physical_metrics.csv energy_spectrum_summary.csv; do
+for f in summary.json channel_metrics.csv standardized_wasserstein.csv \
+         spectral_bands.csv physical_metrics.csv energy_spectrum_summary.csv; do
   test -s "$BENCH_DIR/$f" || { echo "Missing $BENCH_DIR/$f" >&2; exit 3; }
 done
-echo "Finished: $BENCH_DIR"
+echo "Evaluation complete for $VARIANT: $BENCH_DIR"
