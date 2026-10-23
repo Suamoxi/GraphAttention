@@ -144,7 +144,7 @@ def test_multi_step_drift_reports_and_thresholds_are_explicit():
     assert comparisons[0]["validation_velocity_mse_abs"] < 2.e-6
     passed = _diagnostic_gate(comparisons, comparisons, comparisons)
     assert passed["passed"]
-    assert "no_resume_authorization" in passed["type"]
+    assert passed["type"] == "diagnostic_provisional_not_scientific_resume_authorization"
     far = [_step_record(.4), _step_record(.4)]
     differences = _continuation_comparison(ref, far, states, states)
     rejected = _diagnostic_gate(differences, comparisons, comparisons)
