@@ -55,6 +55,126 @@ def _paths(root: Path, epochs: int, variant: str) -> dict[str, Path]:
     return {"run": run, "generation": generation, "benchmark": benchmark}
 
 
+def _paired_generation_arrays(paths: dict[str, dict[str, Path]]) -> dict[str, object]:
+    """Verify both variants sampled the same test keys and reference states.
+
+    This is an UNPAIRED generative-distribution comparison; deterministic
+    sampling keys give the two models identical initial noise, but neither
+    generated sample is paired to a particular real test snapshot.
+    """
+    data = {
+        name: torch.load(
+            paths[name]["generation"] / "generated_test.pt",
+            map_location="cpu", weights_only=True,
+        )
+        for name in ("absolute", "relative")
+    }
+    old, new = data["absolute"], data["relative"]
+    for key in (
+        "generated_ids", "reference_ids", "node_counts",
+        "channel_names", "sampling_steps", "sampling_method",
+        "sampling_solver", "sampling_seed", "model_evaluations",
+    ):
+        if old[key] != new[key]:
+            raise RuntimeError(
+                f"generated test population or sampler differs in {key!r}"
+            )
+    if (
+        int(old["sampling_steps"]) != 50
+        or old["sampling_method"] != "flow_ode"
+        or old["sampling_solver"] != "heun"
+        or int(old["sampling_seed"]) != 5678
+        or int(old["model_evaluations"]) != 100
+    ):
+        raise RuntimeError("generated population does not use requested Heun-50 protocol")
+    if old.get("generated_reference_pairing") is not False:
+        raise RuntimeError("generation is unexpectedly flagged as paired DNS targets")
+    for name in ("absolute", "relative"):
+        artifact = data[name]
+        if not torch.isfinite(artifact["generated_nondimensional"]).all():
+            raise RuntimeError(f"{name}: generated field contains NaN/Inf")
+    if not torch.equal(
+        old["target_nondimensional"], new["target_nondimensional"],
+    ):
+        raise RuntimeError("held-out test reference fields differ between variants")
+    counts = tuple(int(n) for n in old["node_counts"])
+    if not counts or len(set(counts)) != 1:
+        raise ValueError("comparison expects a shared fixed-size 2-D mesh")
+    count = len(counts)
+    nodes = counts[0]
+    channels = tuple(old["channel_names"])
+    arrays = {
+        name: data[name]["generated_nondimensional"].reshape(
+            count, nodes, len(channels),
+        ).numpy()
+        for name in ("absolute", "relative")
+    }
+    reference = old["target_nondimensional"].reshape(
+        count, nodes, len(channels),
+    ).numpy()
+    return {
+        "generated": arrays, "reference": reference,
+        "channel_names": channels, "num_samples": count,
+        "nodes_per_sample": nodes,
+    }
+
+
+def _save_comparison_pdfs(
+    output: Path, paired: dict[str, object],
+    wasserstein: dict[str, list[dict[str, str]]],
+) -> None:
+    channels = paired["channel_names"]
+    reference = paired["reference"]
+    generated = paired["generated"]
+    channel_indices = {channel: i for i, channel in enumerate(channels)}
+    output_dir = output / "marginal_pdfs"
+    output_dir.mkdir(exist_ok=False)
+    for channel, index in channel_indices.items():
+        fields = {
+            "Test DNS slices": reference[:, :, index].reshape(-1),
+            "Absolute coordinates": generated["absolute"][:, :, index].reshape(-1),
+            "Relative geometry only": generated["relative"][:, :, index].reshape(-1),
+        }
+        minimum = min(float(np.min(x)) for x in fields.values())
+        maximum = max(float(np.max(x)) for x in fields.values())
+        if not maximum > minimum:
+            maximum = minimum + 1.0
+        bins = np.linspace(minimum, maximum, 161)
+        centers = 0.5*(bins[:-1]+bins[1:])
+        fig, ax = plt.subplots(figsize=(9, 5.5), constrained_layout=True)
+        for label, values in fields.items():
+            pdf, _ = np.histogram(values, bins=bins, density=True)
+            ax.plot(centers, pdf, label=label, linewidth=2.6)
+        ax.set_title(f"Unpaired marginal comparison — {channel}", fontsize=16)
+        ax.set_xlabel(f"Nondimensional {channel}", fontsize=14)
+        ax.set_ylabel("Probability density", fontsize=14)
+        ax.tick_params(labelsize=12)
+        ax.grid(alpha=0.2)
+        ax.legend(fontsize=11)
+        fig.savefig(output_dir / f"{channel}.pdf")
+        plt.close(fig)
+
+    variants = ("absolute", "relative")
+    rows = {name: wasserstein[name] for name in variants}
+    for name in variants:
+        if [row["channel"] for row in rows[name]] != list(channels):
+            raise RuntimeError(f"{name}: standardized Wasserstein channel order differs")
+    idx = np.arange(len(channels))
+    fig, ax = plt.subplots(figsize=(9, 5.2), constrained_layout=True)
+    width = .35
+    for shift, name in ((-.5, "absolute"), (.5, "relative")):
+        vals = [float(row["wasserstein_1_standardized"]) for row in rows[name]]
+        ax.bar(idx+shift*width, vals, width=width,
+               label="Absolute coordinates" if name == "absolute" else "Relative-only")
+    ax.set_xticks(idx, labels=channels)
+    ax.set_ylabel("Wasserstein-1 in train-standardized space", fontsize=13)
+    ax.tick_params(labelsize=12)
+    ax.grid(axis="y", alpha=.25)
+    ax.legend(fontsize=11)
+    fig.savefig(output / "wasserstein_comparison.pdf")
+    plt.close(fig)
+
+
 def compare(root: Path, epochs: int) -> dict:
     names = ("absolute", "relative")
     paths = {name: _paths(root, epochs, name) for name in names}
@@ -68,12 +188,14 @@ def compare(root: Path, epochs: int) -> dict:
             p["run"] / "dataset_split_manifest.json",
             p["generation"] / "summary.json",
             p["generation"] / "generation_wall_seconds.txt",
+            p["generation"] / "generated_test.pt",
             p["benchmark"] / "energy_spectrum_summary.csv",
             p["benchmark"] / "standardized_wasserstein.csv",
         ):
             if not f.is_file():
                 raise FileNotFoundError(f"{name}: missing {f}")
 
+    paired = _paired_generation_arrays(paths)
     a, b = paths["absolute"], paths["relative"]
     # Manifest includes runtime provenance (hardware, Python, checkout
     # state), which is NOT part of the scientific train/test split. Only
@@ -114,6 +236,16 @@ def compare(root: Path, epochs: int) -> dict:
     if model_cfgs["absolute"] != model_cfgs["relative"]:
         raise RuntimeError("other scientific configuration differs: refuse comparison")
 
+    for name in names:
+        gen = _json(paths[name]["generation"] / "summary.json")
+        if (
+            gen.get("source_run_name") != paths[name]["run"].name
+            or gen.get("source_checkpoint") != "best.pt"
+            or gen.get("reference_population") != "test"
+            or gen.get("generated_reference_pairing") is not False
+        ):
+            raise RuntimeError(f"{name}: incorrect generation provenance")
+
     spectra = {n: _csv(paths[n]["benchmark"] / "energy_spectrum_summary.csv")
                for n in names}
     histories = {n: _csv(paths[n]["run"] / "history.csv") for n in names}
@@ -133,6 +265,12 @@ def compare(root: Path, epochs: int) -> dict:
     if out.exists():
         raise FileExistsError(f"comparison output exists: {out}")
     out.mkdir(parents=True, exist_ok=False)
+
+    wasserstein = {
+        name: _csv(paths[name]["benchmark"] / "standardized_wasserstein.csv")
+        for name in names
+    }
+    _save_comparison_pdfs(out, paired, wasserstein)
 
     fig, ax = plt.subplots(figsize=(10, 6), constrained_layout=True)
     for name in names:
@@ -178,8 +316,19 @@ def compare(root: Path, epochs: int) -> dict:
             "train_only_standardizers_identical": True,
             "all_scientific_config_except_position_flag_identical": True,
             "reference_energy_spectra_identical": True,
+            "identical_sampling_keys_and_sampler": True,
+            "identical_nondimensional_test_reference_fields": True,
         },
         "epochs": epochs,
+        "num_samples": paired["num_samples"],
+        "nodes_per_sample": paired["nodes_per_sample"],
+        "channels": list(paired["channel_names"]),
+        "comparison_pdfs": {
+            "energy": "energy_spectrum_comparison.pdf",
+            "marginals": "marginal_pdfs/",
+            "wasserstein": "wasserstein_comparison.pdf",
+            "validation": "validation_mse_comparison.pdf",
+        },
         "variants": {},
         "interpretation": (
             "These are 2-D unconditional Flow Matching runs, not 3-D or "
@@ -226,9 +375,10 @@ def compare(root: Path, epochs: int) -> dict:
             ],
             "generation_model_evaluations": generation["model_evaluations"],
             "spectral_log_rms_error_positive_bins": log_error,
-            "standardized_wasserstein_rows": _csv(
-                p["benchmark"] / "standardized_wasserstein.csv"
-            ),
+            "standardized_wasserstein_rows": wasserstein[name],
+            "mean_standardized_wasserstein": float(np.mean([
+                float(row["wasserstein_1_standardized"]) for row in wasserstein[name]
+            ])),
             "benchmark_dir": str(p["benchmark"]),
         }
     baseline = report["variants"]["absolute"]
@@ -240,6 +390,7 @@ def compare(root: Path, epochs: int) -> dict:
             "generation_full_wall_seconds_including_io",
             "best_validation_flow_velocity_mse",
             "spectral_log_rms_error_positive_bins",
+            "mean_standardized_wasserstein",
         )
     }
     (out / "comparison.json").write_text(json.dumps(report, indent=2) + "\n")
