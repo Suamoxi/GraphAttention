@@ -246,6 +246,8 @@ def _compare_tensor(
     denom = float(torch.linalg.vector_norm(left.double()).item())
     return {
         "max_abs": float(difference.abs().max().item()),
+        "absolute_l2": float(torch.linalg.vector_norm(difference).item()),
+        "reference_l2": denom,
         "relative_l2": float(
             torch.linalg.vector_norm(difference).item() / max(denom, 1.e-14)
         ),
@@ -471,7 +473,11 @@ def benchmark(args: argparse.Namespace) -> dict:
     measurements: dict[str,list[dict[str, Any]]] = {
         label: [] for label in labels
     }
-    parity_inputs: dict[str,dict] = {}
+    # Two independently replayed, same-implementation captures are needed to
+    # quantify the sparse CUDA backend's own numerical reproducibility.
+    # Cross-mode differences alone cannot distinguish a mathematical change
+    # from run-to-run nondeterministic reductions.
+    captures: dict[str,list[dict]] = {label: [] for label in labels}
     for iteration,label in enumerate(order):
         load_original_checkpoint()
         print(f"[M43 fastpath] timed step {iteration+1}/{len(order)} "
@@ -479,20 +485,79 @@ def benchmark(args: argparse.Namespace) -> dict:
         record, capture = _run_step(
             label, model=model,optimizer=optimizer,task=task,
             problem=problem,device=device,
-            collect_parity=(label not in parity_inputs),
+            collect_parity=(len(captures[label]) < 2),
         )
         measurements[label].append(record)
         if capture is not None:
-            parity_inputs[label] = capture
+            captures[label].append(capture)
         print(f"[M43 fastpath] {label}: "
               f"forward={record['timings']['forward_loss_seconds']:.4f}s "
               f"backward={record['timings']['backward_checkpointed_seconds']:.4f}s "
               f"peak={record['memory']['peak_allocated_gib']:.3f} GiB",
               flush=True)
 
+    # The first replay of each mode remains the direct A-vs-B comparison.
     parity = _parity(
-        parity_inputs["indexed_reference"],parity_inputs["expand_fastpath"],
+        captures["indexed_reference"][0],captures["expand_fastpath"][0],
     )
+    reference_repeat = (
+        _parity(captures["indexed_reference"][0],
+                captures["indexed_reference"][1])
+        if len(captures["indexed_reference"]) > 1 else None
+    )
+    fast_repeat = (
+        _parity(captures["expand_fastpath"][0],
+                captures["expand_fastpath"][1])
+        if len(captures["expand_fastpath"]) > 1 else None
+    )
+
+    def top_gradient_differences(result: dict, limit: int = 12) -> list[dict]:
+        return [
+            {"parameter": name, **values}
+            for name, values in sorted(
+                result["gradients"].items(),
+                key=lambda pair: pair[1]["relative_l2"], reverse=True,
+            )[:limit]
+        ]
+
+    controls = {
+        "indexed_reference_repeat": reference_repeat,
+        "expand_fastpath_repeat": fast_repeat,
+    }
+    control_metrics = {
+        name: (None if report is None else report["metrics"])
+        for name, report in controls.items()
+    }
+    # This is diagnostic information, not a relaxed pass threshold. An
+    # optimization is NOT automatically accepted because sparse GPU
+    # computations happen to be non-bitwise-reproducible.
+    reproducibility = {
+        "control_metrics": control_metrics,
+        "cross_mode_top_gradient_differences": top_gradient_differences(parity),
+        "reference_repeat_top_gradient_differences": (
+            top_gradient_differences(reference_repeat)
+            if reference_repeat is not None else []
+        ),
+        "expand_repeat_top_gradient_differences": (
+            top_gradient_differences(fast_repeat)
+            if fast_repeat is not None else []
+        ),
+        "prediction_relative_l2_cross_over_largest_repeat": (
+            parity["prediction"]["relative_l2"] /
+            max(
+                reference_repeat["prediction"]["relative_l2"]
+                if reference_repeat is not None else 0.,
+                fast_repeat["prediction"]["relative_l2"]
+                if fast_repeat is not None else 0.,
+                1e-14,
+            )
+        ),
+        "interpretation": (
+            "Quantifies how much of the original old-vs-new mismatch "
+            "is comparable to SAME-IMPLEMENTATION GPU variation. "
+            "The numerical equivalence gate remains unchanged."
+        ),
+    }
     medians = {}
     for label, records in measurements.items():
         medians[label] = {
@@ -537,6 +602,7 @@ def benchmark(args: argparse.Namespace) -> dict:
     result = {
         "status": "passed" if parity["passed"] else "numerical_mismatch",
         "parity": parity,
+        "same_mode_reproducibility": reproducibility,
         "timing": medians,
         "speedup_indexed_over_expand": speedups,
         "indexing_backward_kernel_profile": kernel_profile,
@@ -560,6 +626,13 @@ def benchmark(args: argparse.Namespace) -> dict:
     )
     print(json.dumps({
         "status":result["status"],"parity_metrics":parity["metrics"],
+        "same_mode_metrics":control_metrics,
+        "prediction_cross_over_replay_ratio": (
+            reproducibility["prediction_relative_l2_cross_over_largest_repeat"]
+        ),
+        "top_cross_mode_gradients": (
+            reproducibility["cross_mode_top_gradient_differences"][:6]
+        ),
         "median_step_speedup":speedups,
         "kernel_profile":kernel_profile,
         "output":str(destination),
