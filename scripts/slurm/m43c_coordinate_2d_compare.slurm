@@ -1,6 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=m43c_pos_compare
 #SBATCH --time=01:00:00
+#SBATCH --partition=grace
+#SBATCH --gres=gpu:0
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=24G
@@ -9,8 +11,8 @@
 
 # CPU-only postprocessing of TWO COMPLETED M43C generative benchmarks.
 # Use sbatch --dependency=afterok:ABS_JOB:REL_JOB for correct sequencing.
-# Intentionally omit a partition and GPU request: Slurm uses the site's
-# default partition; supply --partition=<site-cpu-partition> if required.
+# Match existing CPU-only comparison jobs on the ARM64 Grace partition.
+# No GPU is allocated (--gres=gpu:0), required for the local ARM environment.
 set -euo pipefail
 
 REPO=${M43C_REPO:-/scratch/coop/theret/GraphAttention_m43c_coords}
