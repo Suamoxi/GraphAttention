@@ -203,3 +203,19 @@ additional CUPTI profiling for a lower-overhead timing-only gate.
 CPU/GPU reduction ordering changes can create small floating differences:
 mathematical equivalence does not imply bitwise identical GPU reductions.
 No model speedup or resume compatibility has been asserted yet.
+
+
+## Multi-optimizer-update continuation (next unexecuted gate)
+
+A new **read-only** diagnostic reuses the unchanged original M43-B
+`train_epoch` for three real six-case AdamW updates, repeated twice per
+implementation from the same eight-epoch checkpoint. It observes
+per-case held-out validation after each step, compares full gradients,
+weights and optimizer state against old-code replay variability, and
+writes new diagnostic JSON outputs only.
+
+See [M43_ADALN_CONTINUATION.md](M43_ADALN_CONTINUATION.md) and
+`scripts/slurm/m43_adaln_continuation.slurm`.
+
+**This diagnostic has not yet run; no continuation or checkpoint
+migration has been authorized.**
