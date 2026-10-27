@@ -133,7 +133,10 @@ def test_sr0_flow_path_is_original_m11_and_inputs_have_15_channels() -> None:
     reference = torch.Generator().manual_seed(123)
     t = torch.rand((1,), generator=reference)
     eps = torch.randn((3, 5), generator=reference)
-    z = (pair.fine_target - pair.fine_baseline) / stats.residual_rms
+    scale = stats.residual_rms.to(
+        device=pair.fine_baseline.device, dtype=pair.fine_baseline.dtype
+    )
+    z = (pair.fine_target - pair.fine_baseline) / scale
     torch.testing.assert_close(problem.flow.inputs, (1 - t) * eps + t * z)
     torch.testing.assert_close(problem.flow.targets, z - eps)
     torch.testing.assert_close(problem.flow.conditioning[:, -1], t * 1000)
