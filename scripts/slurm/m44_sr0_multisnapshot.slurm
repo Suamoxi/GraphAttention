@@ -55,6 +55,7 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   "$PYTHON" -m pytest -q \
   tests/unit/test_m44_sr0.py \
   tests/unit/test_m44_sr0_training.py \
+  tests/unit/test_m44_sr0_training_runner.py \
   tests/unit/test_m44_sr0_cartesian.py \
   tests/unit/test_m44_sr0_pilot_pair.py \
   tests/unit/test_flow_matching_task.py
