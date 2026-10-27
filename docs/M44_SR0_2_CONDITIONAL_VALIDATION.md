@@ -102,7 +102,7 @@ Default output: `/scratch/coop/theret/GraphAttention_runs/m44_sr02_diagnostics/j
 Contains `diagnostic_summary.json`, `flow_matching_per_patch.json`, and
 `ensemble_examples.pt`. The original run remains unchanged.
 
-In parallel or afterward, continue the **same** SR-0.1 training run from
+After the diagnostic job completes, continue the **same** SR-0.1 training run from
 5 to 50 total epochs (do not restart from random weights):
 
 ```bash
