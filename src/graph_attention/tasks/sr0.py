@@ -282,8 +282,16 @@ class SR0FlowMatching:
     """Keep M11 noise, loss and Heun numerics; change only spatial conditioning."""
 
     def __init__(
-        self, scales: SR0Scales, *, validation_seed: int = 1234, time_embedding_scale: float = 1.0
+        self,
+        scales: SR0Scales,
+        *,
+        validation_seed: int = 1234,
+        time_embedding_scale: float = 1.0,
+        spatial_condition_mode: str = "interpolated_plus_baseline",
     ) -> None:
+        if spatial_condition_mode not in {"interpolated_only", "interpolated_plus_baseline"}:
+            raise ValueError("unsupported SR-0 spatial_condition_mode")
+        self.spatial_condition_mode = spatial_condition_mode
         self.scales = scales
         self.flow = FlowMatchingTask(
             state_fields=_RESIDUAL_CHANNELS,
@@ -301,6 +309,8 @@ class SR0FlowMatching:
         )
         coarse = (pair.coarse_state - mean) / std
         lifted = pair.transfer.apply(coarse)
+        if self.spatial_condition_mode == "interpolated_only":
+            return lifted
         baseline = (pair.fine_baseline - mean) / std
         return torch.cat((lifted, baseline), dim=1)
 
@@ -338,13 +348,17 @@ class SR0FlowMatching:
             self.flow.make_validation_problem(residual), self.spatial_condition(pair)
         )
 
-    @staticmethod
-    def model_probe(problem: SR0FlowProblem) -> NodeRegressionBatch:
-        """Produce the correct [N_f,15]->[N_f,5] controlled M37 factory probe."""
+    def model_probe(self, problem: SR0FlowProblem) -> NodeRegressionBatch:
+        """Produce a [N_f,10 or 15]->[N_f,5] controlled M37 factory probe."""
+        channels = (
+            _INPUT_CHANNELS[:10]
+            if self.spatial_condition_mode == "interpolated_only"
+            else _INPUT_CHANNELS
+        )
         return replace(
             problem.flow,
             inputs=torch.cat((problem.flow.inputs, problem.spatial_condition), dim=1),
-            input_channels=_INPUT_CHANNELS,
+            input_channels=channels,
         )
 
     def training_loss(

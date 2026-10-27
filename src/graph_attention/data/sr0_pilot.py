@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from graph_attention.data.avbp import AVBP_FIELD_CATALOG
 from graph_attention.data.contracts import Mesh, Sample
-from graph_attention.geometry.sr0_cartesian import build_sr0_cartesian_patch
+from graph_attention.geometry.sr0_cartesian import SR0CartesianPatch, build_sr0_cartesian_patch
 from graph_attention.tasks.flow_matching import FlowMatchingTask
 from graph_attention.tasks.sr0 import CoarseToFineCSR, SR0PairBatch
 from graph_attention.training.data_pipeline import GraphTaskCollator
@@ -25,6 +25,7 @@ def build_sr0_pilot_pair(
     patch_cells: int = 8,
     refinement: int = 2,
     origin: tuple[int, int, int] = (0, 0, 0),
+    prepared_geometry: SR0CartesianPatch | None = None,
 ) -> SR0PairBatch:
     """Build one 3D fine patch paired with its point-sampled coarse lattice.
 
@@ -39,14 +40,28 @@ def build_sr0_pilot_pair(
         raise ValueError("SR-0 pilot requires the five conservative DNS fields")
     if dns.case_id is None:
         raise ValueError("SR-0 pilot requires a named case with audited M3.3 references")
-    geometry = build_sr0_cartesian_patch(
-        dns.mesh.coords,
-        dns.mesh.cell_connectivity,
-        side=fine_side,
-        patch_cells=patch_cells,
-        refinement=refinement,
-        origin=origin,
-    )
+    if prepared_geometry is None:
+        geometry = build_sr0_cartesian_patch(
+            dns.mesh.coords,
+            dns.mesh.cell_connectivity,
+            side=fine_side,
+            patch_cells=patch_cells,
+            refinement=refinement,
+            origin=origin,
+        )
+    else:
+        geometry = prepared_geometry
+        if (
+            geometry.origin != origin
+            or geometry.fine_side != patch_cells + 1
+            or geometry.coarse_side != patch_cells // refinement + 1
+            or geometry.refinement != refinement
+            or dns.mesh.coords.shape[0] != fine_side**3
+            or geometry.fine_node_ids.max().item() >= dns.mesh.coords.shape[0]
+        ):
+            raise ValueError("prepared SR-0 patch geometry does not match the requested mesh")
+        if not torch.equal(geometry.fine_coords, dns.mesh.coords[geometry.fine_node_ids]):
+            raise ValueError("prepared SR-0 patch geometry does not match source coordinates")
     mesh = Mesh(
         coords=geometry.fine_coords,
         edge_index=torch.empty((2, 0), dtype=torch.long),

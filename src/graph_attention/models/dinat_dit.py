@@ -92,6 +92,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         use_coord_mlp: bool = True,
         coordinate_normalization: str = "centered_bbox",
         coordinate_normalization_eps: float = 1.0e-8,
+        use_absolute_coordinate_embedding: bool = True,
         use_sdpa: bool = True,
         qkv_bias: bool = True,
         out_proj_bias: bool = False,
@@ -135,6 +136,9 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         # Opt-in non-reentrant rematerialization of each DiT block.
         # Disabled by default to preserve existing M37 behavior.
         self.activation_checkpointing = bool(activation_checkpointing)
+        # Ablation: bypass absolute coordinate addition but retain physical
+        # relative edge displacements. The M37 default remains unchanged.
+        self.use_absolute_coordinate_embedding = bool(use_absolute_coordinate_embedding)
         # Diagnostic only: called after each *original* forward block, not
         # during activation recomputation in the backward pass.
         self._block_memory_observer: Callable[[int], None] | None = None
@@ -294,7 +298,9 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
                 eps=self.coordinate_normalization_eps,
             )
 
-        hidden = self.input_projection(inputs) + self.coordinate_projection(model_coords)
+        hidden = self.input_projection(inputs)
+        if self.use_absolute_coordinate_embedding:
+            hidden = hidden + self.coordinate_projection(model_coords)
         condition_embedding = self._condition_embedding(
             inputs,
             batch_index=batch_index,
