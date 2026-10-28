@@ -460,6 +460,15 @@ def _verify_manifest_inputs(manifest: dict[str, Any], dataset: AVBPMultiCaseHITD
     mesh_record = manifest["mesh_file"]
     if _file_record(Path(mesh_record["path"])) != mesh_record:
         raise ValueError("source native mesh file changed since training")
+    if "train_patch_pool_origins" in manifest:
+        frozen = manifest.get("frozen_training_scales")
+        if not isinstance(frozen, dict):
+            raise ValueError("SR-0.4 diagnostics require pinned original train-only scaling")
+        source = Path(frozen["source_run_dir"])
+        if _sha256(source / "manifest.json") != frozen["source_manifest_sha256"]:
+            raise ValueError("SR-0.4 scaling source manifest changed")
+        if _sha256(source / "scales.pt") != frozen["source_scales_sha256"]:
+            raise ValueError("SR-0.4 scaling source statistics changed")
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -497,7 +506,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         side=manifest["side"], patch_cells=manifest["patch_cells"],
         refinement=manifest["refinement"],
     )
-    pairs = _build_pairs(dataset, manifest, mini_args)
+    # Compare the fixed original training origins rather than all 16
+    # spatially augmented training origins. This preserves identical
+    # source sample IDs and conditions with the SR-0.3 baseline.
+    diverse_training = "train_patch_pool_origins" in manifest
+    pairs = _build_pairs(
+        dataset, manifest, mini_args, training_comparison_only=diverse_training
+    )
     if tuple(pair.fine.source.sample_ids[0] for pair in pairs["train"]) != tuple(stats["train_sample_ids"]):
         raise ValueError("saved training scaling IDs are not the current paired training data")
     scales = SR0Scales(
@@ -581,6 +596,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "flow_mse_support": (
             "unobserved_fine_nodes" if task.point_sample_constraint else "all_fine_nodes"
         ),
+        "train_evaluation_patch_scope": (
+            "original_fixed_train_origins_only" if diverse_training else "all_training_patches"
+        ),
         "snapshot_splits": {k: len(manifest["snapshot_indices"][k]) for k in ("train", "validation", "test")},
         "flow_matching_counterfactual": evaluated,
         "repeated_flow_matching": repeated_paths,
@@ -596,6 +614,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "Point-sample projection replaces observed nodes only; not a conservative LES filter.",
             "Per-patch FM loss uses equal-node weights and per-field MSE.",
             "The reported test split remains held out from checkpoint selection.",
+            "SR-0.4 diagnostics use original fixed train origins for a paired baseline comparison.",
         ],
     }
     output.mkdir(parents=True, exist_ok=False)
