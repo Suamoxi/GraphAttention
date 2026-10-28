@@ -121,9 +121,10 @@ def _evaluate_split(
             pair = original.to(device=device, dtype=torch.float32)
             problem = task.make_validation_problem(pair)
             target = problem.flow.targets
+            free = task.point_sample_free_mask(pair)
             matched = _forward_condition(model, problem, problem.spatial_condition)
-            matched_mse = per_field_mse(matched, target)
-            zero_mse = per_field_mse(torch.zeros_like(target), target)
+            matched_mse = per_field_mse(matched, target, node_mask=free)
+            zero_mse = per_field_mse(torch.zeros_like(target), target, node_mask=free)
             wrong_mse = None
             donor_i = donors[i]
             if donor_i is not None:
@@ -139,7 +140,7 @@ def _evaluate_split(
                 if alt_condition.shape != problem.spatial_condition.shape:
                     raise ValueError("counterfactual spatial condition shape mismatch")
                 wrong = _forward_condition(model, problem, alt_condition)
-                wrong_mse = per_field_mse(wrong, target).detach().cpu().tolist()
+                wrong_mse = per_field_mse(wrong, target, node_mask=free).detach().cpu().tolist()
             rows.append({
                 "sample_id": original.fine.source.sample_ids[0],
                 "source_snapshot": _source_snapshot(original.fine.source.sample_ids[0]),
@@ -202,19 +203,24 @@ def _evaluate_repeated_paths(
                 validation_seed=seed,
                 time_embedding_scale=task.flow.time_embedding_scale,
                 spatial_condition_mode=task.spatial_condition_mode,
+                point_sample_constraint=task.point_sample_constraint,
             )
             for index, pair in enumerate(staged):
                 problem = path_task.make_validation_problem(pair)
+                free = path_task.point_sample_free_mask(pair)
                 reference = problem.flow.targets
                 correct = per_field_mse(
-                    _forward_condition(model, problem, conditions[index]), reference
+                    _forward_condition(model, problem, conditions[index]), reference,
+                    node_mask=free,
                 ).detach().cpu()
-                zero = reference.square().mean(dim=0).detach().cpu()
+                zero = per_field_mse(
+                    torch.zeros_like(reference), reference, node_mask=free
+                ).detach().cpu()
                 donor_index = donors[index]
                 wrong = (
                     per_field_mse(
                         _forward_condition(model, problem, conditions[donor_index]),
-                        reference,
+                        reference, node_mask=free,
                     ).detach().cpu()
                     if donor_index is not None else None
                 )
@@ -419,6 +425,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         scales, validation_seed=int(manifest["seed"]) + 2000,
         time_embedding_scale=float(manifest["time_embedding_scale"]),
         spatial_condition_mode=str(manifest["spatial_condition_mode"]),
+        point_sample_constraint=bool(manifest.get("point_sample_constraint", False)),
     )
     prototype = task.make_validation_problem(pairs["validation"][0].to(device=device, dtype=torch.float32))
     model_config = checkpoint["model_config"]
@@ -487,6 +494,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "source_manifest_sha256": _sha256(manifest_path),
         "model_configuration": model_config,
         "coarse_observation": "point_sampled_DNS_not_filtered_LES",
+        "point_sample_constraint": task.point_sample_constraint,
+        "flow_mse_support": (
+            "unobserved_fine_nodes" if task.point_sample_constraint else "all_fine_nodes"
+        ),
         "snapshot_splits": {k: len(manifest["snapshot_indices"][k]) for k in ("train", "validation", "test")},
         "flow_matching_counterfactual": evaluated,
         "repeated_flow_matching": repeated_paths,

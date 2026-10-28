@@ -113,7 +113,7 @@ def _manifest(dataset: AVBPMultiCaseHITDataset, args: argparse.Namespace) -> dic
         ]
     reference = dataset.case_definitions[args.case].source_path
     mesh = Path(dataset.sample_specs[0].mesh_file)
-    return {
+    manifest = {
         "protocol": "M44_SR0.1_POINT_SAMPLED_DNS_NOT_LES",
         "case": args.case,
         "root": str(Path(args.root).resolve()),
@@ -145,6 +145,11 @@ def _manifest(dataset: AVBPMultiCaseHITDataset, args: argparse.Namespace) -> dic
         "split_unit": "entire source DNS snapshot; all spatial patches share the split",
         "coarse_observation": "point-sampled DNS nodes; no physical filtering",
     }
+    # Keep the historical unconstrained manifest byte-for-byte compatible
+    # with the 5/50-epoch checkpoint. A constrained run has a distinct identity.
+    if bool(getattr(args, "point_sample_constraint", False)):
+        manifest["point_sample_constraint"] = True
+    return manifest
 
 
 def _build_pairs(
@@ -347,6 +352,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         validation_seed=args.seed + 2000,
         time_embedding_scale=args.time_embedding_scale,
         spatial_condition_mode=args.condition_mode,
+        point_sample_constraint=bool(getattr(args, "point_sample_constraint", False)),
     )
     print(f"[M44 SR-0.1] {len(pairs['train'])} train, "
           f"{len(pairs['validation'])} validation, {len(pairs['test'])} test patches", flush=True)
@@ -472,6 +478,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "model_parameters": sum(p.numel() for p in model.parameters()),
         "model_configuration": effective_cfg,
         "spatial_condition_mode": args.condition_mode,
+        "point_sample_constraint": task.point_sample_constraint,
+        "flow_mse_support": (
+            "unobserved_fine_nodes" if task.point_sample_constraint else "all_fine_nodes"
+        ),
         "best_epoch": best_epoch,
         "best_validation_flow_velocity_mse": best_val,
         "test_flow_velocity_mse_at_best_validation": test_loss,
@@ -517,6 +527,8 @@ def main() -> None:
     parser.add_argument("--condition-mode", choices=("interpolated_only", "interpolated_plus_baseline"),
                         default="interpolated_only")
     parser.add_argument("--absolute-coordinate-embedding", action="store_true")
+    parser.add_argument("--point-sample-constraint", action="store_true",
+                        help="train/sample in the point-selection nullspace (SR-0.3 ablation)")
     parser.add_argument("--sparse-attention-backend", choices=("scatter", "torch_sparse", "dgl"),
                         default="scatter")
     parser.add_argument("--checkpointing", action="store_true")

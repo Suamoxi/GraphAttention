@@ -68,11 +68,27 @@ def project_point_sample(
     return corrected
 
 
-def per_field_mse(prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-    """MSE per field for one unweighted SR-0 fine patch."""
+def per_field_mse(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    node_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Unweighted per-field MSE, optionally on unobserved fine nodes only."""
     if prediction.ndim != 2 or prediction.shape != target.shape or prediction.shape[1] != 5:
         raise ValueError("prediction and target must have matching shape [N_f, 5]")
-    return (prediction - target).square().mean(dim=0)
+    squared = (prediction - target).square()
+    if node_mask is None:
+        return squared.mean(dim=0)
+    if (
+        node_mask.dtype != torch.bool or node_mask.ndim != 1
+        or node_mask.shape[0] != squared.shape[0]
+        or node_mask.device != squared.device
+    ):
+        raise ValueError("node_mask must be a Boolean tensor [N_f] on the prediction device")
+    if not bool(node_mask.any()):
+        raise ValueError("per-field MSE needs at least one unobserved node")
+    return squared[node_mask].mean(dim=0)
 
 
 def ensemble_point_proxy_metrics(
