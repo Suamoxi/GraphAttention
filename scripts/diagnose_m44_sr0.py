@@ -604,6 +604,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "train_evaluation_patch_scope": (
             "original_fixed_train_origins_only" if diverse_training else "all_training_patches"
         ),
+        "train_patch_diversity": manifest.get("train_patch_schedule"),
+        "frozen_scale_provenance": manifest.get("frozen_training_scales"),
         "snapshot_splits": {k: len(manifest["snapshot_indices"][k]) for k in ("train", "validation", "test")},
         "flow_matching_counterfactual": evaluated,
         "repeated_flow_matching": repeated_paths,
