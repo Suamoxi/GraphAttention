@@ -106,6 +106,47 @@ These metrics are descriptive. One-scale increments are **not**
 a turbulent kinetic-energy spectrum, and no conditional PDF or SGS
 validity is established.
 
+## Paired SR-0.3 versus SR-0.4 report
+
+Use the **new** SR-0.4 paired comparator because both architectures have
+`point_sample_constraint=true`. Do not use the older SR-0.1 versus
+SR-0.3 comparator: it expects one unconstrained checkpoint.
+
+The comparator requires a fresh SR-0.3 checkpoint diagnostic produced
+by this revision of `scripts.diagnose_m44_sr0`, because the previously
+saved SR-0.3 report lacks `residual_spatial_moments`.
+Submit its read-only evaluation on grace:
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+sbatch --export=ALL,M44_SR02_SOURCE=/scratch/coop/theret/GraphAttention_runs/m44_sr01/job_484619,M44_SR02_PATH_REPEATS=16,M44_SR02_DRAWS=16,M44_SR02_MAX_PATCHES=4 \
+  scripts/slurm/m44_sr02_diagnostics.slurm
+```
+
+Once the SR-0.4 checkpoint diagnostic above has completed, submit
+the paired comparison, supplying the **SR-0.4 training run**:
+
+```bash
+sbatch --export=ALL,M44_SR04_DIVERSE_RUN=/scratch/coop/theret/GraphAttention_runs/m44_sr04/job_<SR04_TRAIN_JOB_ID> \
+  scripts/slurm/m44_sr04_compare.slurm
+```
+
+For each training source, the comparison launcher discovers the associated
+`m44_sr02_diagnostics/job_*/diagnostic_summary.json` using an exact
+`source_run_dir` match. It refuses ambiguity; use
+`M44_SR04_BASE_REPORT` and/or `M44_SR04_DIVERSE_REPORT`
+to select the intended reports explicitly when multiple are found.
+The launcher tests and executes all Python inside Singularity under grace
+and writes:
+
+`/scratch/coop/theret/GraphAttention_runs/m44_sr04_paired_comparison/job_<SLURM_JOB_ID>/comparison_summary.{json,md}`
+
+The new comparator checks frozen-scale provenance against the original
+SR-0.3 manifest, matched sample IDs, evaluation support, noise/time
+path count, DNS target moments, generation draws, and fine-graph increment
+separations. It fails closed if any physical reference or comparison
+support does not match.
+
 ## Acceptance and interpretation
 
 Compare SR-0.3 and SR-0.4 on identical validation snapshots, free-node
