@@ -1,0 +1,120 @@
+# M44 SR-0.4 — Fixed-update-budget spatial training-patch diversity
+
+## Objective and baseline
+
+SR-0.3 already guarantees point-sampling consistency and reduces the
+common 604-free-node Flow Matching velocity MSE by about 4–5% relative
+to SR-0.1. However, on four later DNS test snapshots the generated
+residual RMS is consistently too small, especially for rhou (about
+0.545 times the DNS target). SR-0.4 tests whether more **spatial**
+training examples improve validation generalization, without changing
+the DiNAT-DiT architecture, native FM path, update budget, scales,
+held-out snapshot files or validation/test patch origins.
+
+The paired observation is still **point-sampled DNS, NOT LES filtering**.
+The dnstoles repository is untouched.
+
+## Controlled ablation
+
+- Keep the 24 selected source snapshots and same chronological split:
+  15 train, 3 validation, 4 test, 2 embargo.
+- Keep the existing 9³ fine-node / 5³ coarse-node patch, 4-layer,
+  64-wide, 4-head, 10-channel DiNAT-DiT, 50-step Heun generation.
+- Train pool: 16 deterministic interior nonoverlapping-cell patch
+  origins for **each training source snapshot**. The first two
+  fixed SR-0.3 origins are included, and remain the only validation
+  and test origins.
+- Per epoch, choose just **two origins per train snapshot** from a
+  snapshot-seeded shuffled cyclic permutation. The same snapshot sees
+  all 16 pool origins once in 8 epochs; the cycle repeats thereafter.
+  Epoch index, snapshot index and experiment seed fully determine
+  selection without consuming the optimizer's FM RNG stream.
+- Optimizer updates: 15 train snapshots × 2 patches = 30 per epoch,
+  50 epochs = 1500, exactly the original SR-0.3 budget.
+  Distinct available train patches: 15 × 16 = 240, versus 30 originally.
+  CPU data qualification and resident-pair memory increase even though
+  optimizer updates remain fixed.
+- Freeze the exact original train-only coarse mean/std and residual RMS
+  from constrained SR-0.3 job `484619`, rather than refitting them to
+  the new 240-patch pool. The training source manifest, reference data,
+  geometry, snapshot identity, model spec, seed and optimizer protocol
+  must match. Hashes of the original manifest and scales are pinned
+  in the new manifest.
+- Intrinsic `point_sample_constraint=True` remains active throughout.
+  The saved manifest records the complete pool, epoch-sampling policy
+  and scaling provenance. Exact restart reconstructs epoch selections.
+
+## Run inside grace Slurm + Singularity (no login-node Python)
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+git switch main
+git pull --rebase
+sbatch scripts/slurm/m44_sr04_patch_diversity.slurm
+```
+
+Default output:
+`/scratch/coop/theret/GraphAttention_runs/m44_sr04/job_<JOB_ID>/`.
+
+The Slurm launcher uses the established
+`/softs/local_arm/singularity/images/pyg25.03.sif` image and
+`/scratch/coop/theret/avbpML_env/bin/python3`, executing **both**
+pytest and training inside Singularity on the `grace` partition.
+It checks a clean Git tree, frozen source availability, and output
+non-overwrite. The preflight tests include an end-to-end synthetic
+HDF5 train/resume/diagnose experiment.
+
+Optional environment variables:
+`M44_SR04_FROZEN_SCALES_RUN`, `M44_SR04_POOL_SIZE`,
+`M44_SR04_EPOCHS`, `M44_SR04_OUTPUT`, and `M44_SR04_RESUME`.
+For resume, set `M44_SR04_RESUME=1` and point
+`M44_SR04_OUTPUT` to the existing SR-0.4 job directory.
+
+The 50-epoch run must create a new directory; **do not resume**
+the SR-0.3 optimizer, because the new data schedule is a different
+training experiment. The checkpoint continues using best-validation
+model selection, not test-set model selection.
+
+## Read-only comparison diagnostics
+
+After a successful SR-0.4 run, evaluate its best checkpoint:
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+sbatch --export=ALL,M44_SR02_SOURCE=/scratch/coop/theret/GraphAttention_runs/m44_sr04/job_<JOB_ID>,M44_SR02_PATH_REPEATS=16,M44_SR02_DRAWS=16,M44_SR02_MAX_PATCHES=4 \
+  scripts/slurm/m44_sr02_diagnostics.slurm
+```
+
+The diagnostic runner recognizes an SR-0.4 manifest and evaluates
+the **original two fixed train patch origins only**, not the full
+pool, for a fair paired comparison against job 484619.
+Validation and test pairs are unchanged and must reproduce the saved
+best-epoch validation loss exactly.
+
+In addition to the standard diagnostic report, each generated ensemble
+now reports:
+
+- RMS of the stochastic ensemble-mean residual;
+- ensemble-mean residual bias relative to one DNS realization;
+- RMS of the pointwise ensemble standard deviation;
+- reference spatial residual mean and standard deviation;
+- generated versus reference RMS residual increments along unique
+  minimum-distance edges on the fine Cartesian graph, at one
+  nondimensional separation `separation_over_L_ref`.
+
+These metrics are descriptive. One-scale increments are **not**
+a turbulent kinetic-energy spectrum, and no conditional PDF or SGS
+validity is established.
+
+## Acceptance and interpretation
+
+Compare SR-0.3 and SR-0.4 on identical validation snapshots, free-node
+FM paths, point-sampling consistency, per-field generation RMS and
+spatial increments. Prefer validation metrics for decisions; inspect
+test only for final reporting. Repeating over multiple training
+seeds will ultimately be necessary to separate patch-diversity effects
+from optimization randomness.
+
+Adding 240 spatial patches does not create 240 independent
+turbulent realizations: the training data still come from 15
+temporally correlated DNS snapshots.
