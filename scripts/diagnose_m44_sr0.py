@@ -163,6 +163,132 @@ def _evaluate_split(
     }, rows)
 
 
+
+def _evaluate_repeated_paths(
+    model: torch.nn.Module,
+    task: SR0FlowMatching,
+    pairs: list[Any],
+    device: torch.device,
+    *,
+    repeats: int,
+) -> dict[str, Any]:
+    """Repeat paired FM counterfactuals over deterministic, independent paths.
+
+    Within each repeated path, true and wrong coarse fields see identical
+    noisy residual, time, fine graph, and velocity target. Each snapshot
+    contributes equally to the final summary; variations across FM paths
+    are distinct from variations across source snapshots.
+    """
+    if repeats < 2:
+        raise ValueError("repeated-path evaluation needs at least two paths")
+    donors = _wrong_condition_donors(pairs)
+    staged = [pair.to(device=device, dtype=torch.float32) for pair in pairs]
+    model.eval()
+    per_snapshot: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    all_rows: list[dict[str, Any]] = []
+    with torch.inference_mode():
+        conditions = [task.spatial_condition(pair) for pair in staged]
+        for i, donor in donors.items():
+            if donor is not None and not torch.equal(
+                staged[i].fine.coords, staged[donor].fine.coords
+            ):
+                raise ValueError("repeated counterfactual requires identical fine geometry")
+        for path_index in range(repeats):
+            # Path zero must reproduce the original fixed-path diagnostic.
+            # Subsequent paths change only the deterministic noise/time seed.
+            seed = task.flow.validation_seed + path_index * 1000003
+            path_task = SR0FlowMatching(
+                task.scales,
+                validation_seed=seed,
+                time_embedding_scale=task.flow.time_embedding_scale,
+                spatial_condition_mode=task.spatial_condition_mode,
+            )
+            for index, pair in enumerate(staged):
+                problem = path_task.make_validation_problem(pair)
+                reference = problem.flow.targets
+                correct = per_field_mse(
+                    _forward_condition(model, problem, conditions[index]), reference
+                ).detach().cpu()
+                zero = reference.square().mean(dim=0).detach().cpu()
+                donor_index = donors[index]
+                wrong = (
+                    per_field_mse(
+                        _forward_condition(model, problem, conditions[donor_index]),
+                        reference,
+                    ).detach().cpu()
+                    if donor_index is not None else None
+                )
+                row = {
+                    "path_index": path_index,
+                    "sample_id": pairs[index].fine.source.sample_ids[0],
+                    "matched": correct,
+                    "zero": zero,
+                    "wrong": wrong,
+                }
+                all_rows.append(row)
+                per_snapshot[_source_snapshot(row["sample_id"])].append(row)
+
+    def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        matched = torch.stack([row["matched"] for row in rows]).double()
+        zero = torch.stack([row["zero"] for row in rows]).double()
+        result: dict[str, Any] = {
+            "matched_flow_mse": float(matched.mean()),
+            "zero_velocity_flow_mse": float(zero.mean()),
+            "improvement_over_zero_mse": float((zero - matched).mean()),
+            "matched_by_field": _dict_fields(matched.mean(dim=0)),
+        }
+        paired = [row for row in rows if row["wrong"] is not None]
+        if paired:
+            wrong = torch.stack([row["wrong"] for row in paired]).double()
+            paired_matched = torch.stack([row["matched"] for row in paired]).double()
+            gap = wrong - paired_matched
+            result.update({
+                "counterfactual_paths": len(paired),
+                "wrong_coarse_flow_mse": float(wrong.mean()),
+                "wrong_minus_matched_mse": float(gap.mean()),
+                "wrong_minus_matched_by_field": _dict_fields(gap.mean(dim=0)),
+            })
+        else:
+            result.update({
+                "counterfactual_paths": 0,
+                "wrong_coarse_flow_mse": None,
+                "wrong_minus_matched_mse": None,
+                "wrong_minus_matched_by_field": None,
+            })
+        return result
+
+    summary = _aggregate(all_rows)
+    by_snapshot = {name: _aggregate(rows) for name, rows in per_snapshot.items()}
+    gaps = [
+        value["wrong_minus_matched_mse"]
+        for value in by_snapshot.values()
+        if value["wrong_minus_matched_mse"] is not None
+    ]
+    repeat_zero = [row for row in all_rows if row["path_index"] == 0]
+    summary.update({
+        "paths_per_patch": repeats,
+        "num_patches": len(pairs),
+        "num_snapshots": len(by_snapshot),
+        "repeat_zero_matched_flow_mse": float(
+            torch.stack([row["matched"] for row in repeat_zero]).double().mean()
+        ),
+        "snapshot_positive_gap_count": sum(value > 0 for value in gaps),
+        "snapshot_with_counterfactual_count": len(gaps),
+        "snapshot_gap_mean": sum(gaps) / len(gaps) if gaps else None,
+        "snapshot_gap_std": (
+            float(torch.tensor(gaps, dtype=torch.float64).std(unbiased=True))
+            if len(gaps) > 1 else None
+        ),
+        "per_snapshot": by_snapshot,
+        "warning": (
+            "Repeated FM time/noise probes reduce path randomness but do not "
+            "increase the number of independent DNS snapshots. Snapshot gaps "
+            "are descriptive, not inferential confidence intervals."
+        ),
+    })
+    return summary
+
+
 def _ensemble_split(
     model: torch.nn.Module,
     task: SR0FlowMatching,
@@ -250,6 +376,9 @@ def _verify_manifest_inputs(manifest: dict[str, Any], dataset: AVBPMultiCaseHITD
 def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.draws < 2 or args.sample_steps < 1 or args.max_generation_patches < 1:
         raise ValueError("draws >=2, sample_steps >=1, max_generation_patches >=1 required")
+    path_repeats = int(getattr(args, "path_repeats", 1))
+    if path_repeats < 1:
+        raise ValueError("path_repeats must be >=1")
     run_dir = Path(args.run_dir).expanduser().resolve(strict=True)
     output = Path(args.output).expanduser().resolve()
     if output.exists():
@@ -319,6 +448,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             f"saved best validation loss does not reproduce: "
             f"stored={stored_val:.8f}, rerun={actual_val:.8f}"
         )
+    repeated_paths: dict[str, Any] = {}
+    if path_repeats > 1:
+        for split in ("train", "validation", "test"):
+            repeated = _evaluate_repeated_paths(
+                model, task, pairs[split], device, repeats=path_repeats,
+            )
+            if abs(
+                repeated["repeat_zero_matched_flow_mse"] - evaluated[split]["matched_flow_mse"]
+            ) > 1e-5:
+                raise RuntimeError(f"repeated path-0 parity failed for {split}")
+            repeated_paths[split] = repeated
+            print(
+                f"[SR-0.2] {split} repeated x{path_repeats}: "
+                f"matched={repeated['matched_flow_mse']:.5f} "
+                f"gap={repeated['wrong_minus_matched_mse']}",
+                flush=True,
+            )
     ensemble = {}
     examples = {}
     for split in ("validation", "test"):
@@ -343,6 +489,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "coarse_observation": "point_sampled_DNS_not_filtered_LES",
         "snapshot_splits": {k: len(manifest["snapshot_indices"][k]) for k in ("train", "validation", "test")},
         "flow_matching_counterfactual": evaluated,
+        "repeated_flow_matching": repeated_paths,
         "generation_ensemble": ensemble,
         "draws_per_generation_patch": args.draws,
         "generation_heun_steps": args.sample_steps,
@@ -373,6 +520,8 @@ def main() -> None:
     parser.add_argument("--draws", type=int, default=4)
     parser.add_argument("--sample-steps", type=int, default=50)
     parser.add_argument("--max-generation-patches", type=int, default=2)
+    parser.add_argument("--path-repeats", type=int, default=1,
+                        help="independent, deterministic FM paths per patch; 1 disables repetition")
     args = parser.parse_args()
     report = run(args)
     print(json.dumps({
