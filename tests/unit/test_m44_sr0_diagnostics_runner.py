@@ -60,7 +60,7 @@ def test_synthetic_archive_checkpoint_diagnosis_does_not_modify_training_run(tmp
     diag_output = tmp_path / "diagnostics"
     summary = diagnose(Namespace(
         run_dir=source, output=diag_output, device="cpu", draws=2,
-        sample_steps=2, max_generation_patches=1,
+        sample_steps=2, max_generation_patches=1, path_repeats=3,
     ))
     assert summary["status"] == "sr0_checkpoint_diagnostics_complete"
     assert summary["best_epoch"] == 0
@@ -68,6 +68,17 @@ def test_synthetic_archive_checkpoint_diagnosis_does_not_modify_training_run(tmp
     assert summary["flow_matching_counterfactual"]["validation"]["counterfactual_patches"] == 0
     assert summary["flow_matching_counterfactual"]["test"]["wrong_coarse_flow_mse"] is None
     assert math.isfinite(summary["flow_matching_counterfactual"]["test"]["matched_flow_mse"])
+    repeated = summary["repeated_flow_matching"]
+    assert repeated["train"]["paths_per_patch"] == 3
+    assert repeated["train"]["counterfactual_paths"] == 12
+    assert math.isfinite(repeated["train"]["wrong_minus_matched_mse"])
+    assert repeated["train"]["num_snapshots"] == 4
+    assert repeated["validation"]["counterfactual_paths"] == 0
+    assert repeated["test"]["wrong_minus_matched_mse"] is None
+    for split in ("train", "validation", "test"):
+        assert repeated[split]["repeat_zero_matched_flow_mse"] == pytest.approx(
+            summary["flow_matching_counterfactual"][split]["matched_flow_mse"], abs=1e-5
+        )
     assert (diag_output / "diagnostic_summary.json").is_file()
     assert (diag_output / "flow_matching_per_patch.json").is_file()
     assert (diag_output / "ensemble_examples.pt").is_file()

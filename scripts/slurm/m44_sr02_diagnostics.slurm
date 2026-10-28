@@ -19,6 +19,7 @@ OUT=${M44_SR02_OUTPUT:-/scratch/coop/theret/GraphAttention_runs/m44_sr02_diagnos
 DRAWS=${M44_SR02_DRAWS:-4}
 SAMPLE_STEPS=${M44_SR02_SAMPLE_STEPS:-50}
 MAX_PATCHES=${M44_SR02_MAX_PATCHES:-2}
+PATH_REPEATS=${M44_SR02_PATH_REPEATS:-16}
 
 if [ -z "$SOURCE" ]; then
   echo 'Required: M44_SR02_SOURCE=/absolute/path/to/existing/m44_sr01/run' >&2
@@ -53,7 +54,8 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   "$PYTHON" -u -m scripts.diagnose_m44_sr0 \
   --run-dir "$SOURCE" --output "$OUT" --device cuda \
   --draws "$DRAWS" --sample-steps "$SAMPLE_STEPS" \
-  --max-generation-patches "$MAX_PATCHES"
+  --max-generation-patches "$MAX_PATCHES" \
+  --path-repeats "$PATH_REPEATS"
 
 echo "SR-0.2 report: $OUT/diagnostic_summary.json"
 echo "SR-0.2 patch metrics: $OUT/flow_matching_per_patch.json"
