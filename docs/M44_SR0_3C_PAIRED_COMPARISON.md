@@ -27,20 +27,52 @@ revision `71a9653` or later. The older uploaded unconstrained report
 from revision `8fa90e7` lacks common-support metrics and is intentionally
 rejected.
 
-Example invocation:
+## Execute through grace Slurm + Singularity
+
+**No Python is executed on the login node.** The standalone comparison
+script and its `pytest` gate must both run through the configured
+Singularity image inside a job on the `grace` partition.
+
+The new launcher defaults to:
+
+- Unconstrained diagnostic: `m44_sr02_diagnostics/job_484628/diagnostic_summary.json`.
+- Constrained *training* run: `m44_sr01/job_484619`.
+- Constrained diagnostic: automatically discovered by requiring an exact
+  `source_run_dir` match to the training run. If zero or multiple reports
+  match, the launcher fails and asks for an explicit report.
+- Output: `m44_sr03c_paired_comparison/job_<SLURM_JOB_ID>/`, never overwritten.
+
+Submit directly from the login node (only Git and Slurm commands):
 
 ```bash
 cd /scratch/coop/theret/GraphAttention
 git switch main
 git pull --rebase
-
-OLD=/scratch/coop/theret/GraphAttention_runs/m44_sr02_diagnostics/job_484628/diagnostic_summary.json
-NEW=$(grep -l 'job_484619' /scratch/coop/theret/GraphAttention_runs/m44_sr02_diagnostics/job_*/diagnostic_summary.json | head -n 1)
-test -s "$OLD" && test -s "$NEW"
-python -m scripts.compare_m44_sr03_diagnostics \
-  --unconstrained "$OLD" --constrained "$NEW" \
-  --output-dir /scratch/coop/theret/GraphAttention_runs/m44_sr03_paired_comparison
+sbatch scripts/slurm/m44_sr03c_compare.slurm
 ```
+
+If more than one diagnostic report refers to constrained job `484619`,
+supply the exact chosen report:
+
+```bash
+sbatch --export=ALL,M44_SR03C_NEW_REPORT=/scratch/coop/theret/GraphAttention_runs/m44_sr02_diagnostics/job_<DIAGNOSTIC_JOB_ID>/diagnostic_summary.json \
+  scripts/slurm/m44_sr03c_compare.slurm
+```
+
+Optional Slurm environment overrides:
+`M44_SR03C_OLD_REPORT`, `M44_SR03C_NEW_REPORT`,
+`M44_SR03C_CONSTRAINED_RUN`, and `M44_SR03C_OUTPUT`.
+If comparing a different constrained training run, set
+`M44_SR03C_CONSTRAINED_RUN` to its absolute source path alongside any
+explicit report override.
+
+The launcher checks clean Git status, source existence and identity,
+prohibits reusing an existing output directory, logs input SHA-256 hashes,
+runs `tests/unit/test_m44_sr03_common_support_comparison.py` in
+Singularity, then runs the comparator in Singularity.
+The resulting `comparison_summary.json` and `comparison_summary.md`
+are written in the new job-specific directory. No checkpoint is modified.
+
 
 The comparator checks source snapshot IDs and split counts, model
 configuration, equal deterministic FM path counts, identical 604-node
@@ -70,8 +102,8 @@ new directory without touching either training run or checkpoint.
 - Treat validation and train as exploratory diagnostics; do not tune
   architecture against the chronological test split.
 
-## Gate
+## Correctness gate
 
-```bash
-python -m pytest -q tests/unit/test_m44_sr03_common_support_comparison.py
-```
+The Slurm launcher executes the five comparator unit tests **inside the
+same Singularity environment**, before invoking the JSON comparison. Do
+not run these tests directly on a login node.
