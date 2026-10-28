@@ -17,8 +17,7 @@ import torch
 from scripts.train_m44_sr0 import run
 
 
-def _archive(tmp_path: Path) -> tuple[Path, Path]:
-    side = 7
+def _archive(tmp_path: Path, *, side: int = 7) -> tuple[Path, Path]:
     root = tmp_path / "archive"
     case = root / "Re54" / "Ma0.3"
     mesh_path = case / "MESH" / "mesh.mesh.h5"
