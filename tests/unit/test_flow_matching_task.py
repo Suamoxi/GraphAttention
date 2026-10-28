@@ -1,5 +1,6 @@
 from dataclasses import replace
 
+import pytest
 import torch
 
 from graph_attention.data import SyntheticMeshDataset
@@ -142,3 +143,33 @@ def test_flow_matching_sampling_applies_time_embedding_scale() -> None:
     )
 
     torch.testing.assert_close(generated, source + 500.0)
+
+
+
+def test_flow_matching_optional_subspace_mask_preserves_legacy_free_trajectory() -> None:
+    task, _, batch = _batch()
+    mask = torch.ones((batch.inputs.shape[0], 1), dtype=torch.bool)
+    mask[0] = False
+    legacy = task.sample_standardized(
+        _TimeVelocity(), batch, steps=4, solver="heun", sampling_seed=44,
+    )
+    constrained = task.sample_standardized(
+        _TimeVelocity(), batch, steps=4, solver="heun", sampling_seed=44,
+        state_mask=mask,
+    )
+    assert torch.equal(constrained[0], torch.zeros_like(constrained[0]))
+    torch.testing.assert_close(constrained[1:], legacy[1:])
+    constrained_again = task.sample_standardized(
+        _TimeVelocity(), batch, steps=4, solver="heun", sampling_seed=44,
+        state_mask=mask,
+    )
+    assert torch.equal(constrained, constrained_again)
+    with pytest.raises(ValueError, match="shape"):
+        task.sample_standardized(
+            _TimeVelocity(), batch, steps=2, state_mask=torch.ones(3, 3, dtype=torch.bool),
+        )
+    with pytest.raises(TypeError, match="Boolean"):
+        task.sample_standardized(
+            _TimeVelocity(), batch, steps=2,
+            state_mask=torch.ones((batch.inputs.shape[0], 1)),
+        )

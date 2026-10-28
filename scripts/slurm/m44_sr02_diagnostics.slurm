@@ -46,6 +46,7 @@ echo '=== SR-0.2 point-sample and diagnostic correctness gates ==='
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   "$PYTHON" -m pytest -q \
   tests/unit/test_m44_sr0_evaluation.py \
+  tests/unit/test_m44_sr03_point_constraint.py \
   tests/unit/test_m44_sr0_diagnostics_runner.py \
   tests/unit/test_m44_sr0_training_runner.py
 
