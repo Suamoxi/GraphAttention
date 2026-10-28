@@ -24,6 +24,7 @@ from graph_attention.tasks.sr0 import SR0FlowMatching, SR0Scales
 from graph_attention.tasks.sr0_evaluation import (
     STATE_FIELDS,
     ensemble_point_proxy_metrics,
+    ensemble_residual_moments_and_increments,
     per_field_mse,
     point_sample_anchors,
     project_point_sample,
@@ -421,6 +422,10 @@ def _ensemble_split(
             diag = ensemble_point_proxy_metrics(
                 samples, pair.fine_baseline, pair.fine_target,
                 pair.coarse_state, pair.transfer,
+            )
+            diag["residual_spatial_moments"] = ensemble_residual_moments_and_increments(
+                samples, pair.fine_baseline, pair.fine_target,
+                pair.fine.coords, pair.fine.edge_index,
             )
             results.append({"sample_id": pair.fine.source.sample_ids[0], **diag})
             if example is None:
