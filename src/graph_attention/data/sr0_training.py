@@ -114,3 +114,42 @@ def choose_patch_origins(
     rng = random.Random(seed)
     rng.shuffle(candidates)
     return tuple(sorted(candidates[:patches_per_snapshot]))
+
+
+def choose_epoch_patch_indices(
+    *,
+    pool_size: int,
+    patches_per_epoch: int,
+    seed: int,
+    snapshot_index: int,
+    epoch: int,
+) -> tuple[int, ...]:
+    """Fixed-budget, deterministic, snapshot-specific cyclic pool schedule.
+
+    Every source snapshot sees each pool origin exactly once per complete
+    cycle, and only `patches_per_epoch` origins per epoch. No global RNG is
+    consumed, so interrupted/resumed runs reconstruct the identical epoch
+    selection. Indexing is into the sorted train patch-origin pool.
+
+    This is a spatial augmentation, not a temporal split or LES restriction.
+    """
+    for name, value in (
+        ("pool_size", pool_size),
+        ("patches_per_epoch", patches_per_epoch),
+        ("seed", seed),
+        ("snapshot_index", snapshot_index),
+        ("epoch", epoch),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"{name} must be an integer")
+    if pool_size < 1 or patches_per_epoch < 1 or seed < 0 or snapshot_index < 0 or epoch < 0:
+        raise ValueError("patch schedule requires positive pool/budget and nonnegative indices")
+    if pool_size % patches_per_epoch:
+        raise ValueError("pool_size must be a multiple of patches_per_epoch for exact coverage")
+
+    permutation = list(range(pool_size))
+    random.Random((seed + 1) * 1000003 + snapshot_index * 1009).shuffle(permutation)
+    cycle_length = pool_size // patches_per_epoch
+    slot = epoch % cycle_length
+    selected = permutation[slot * patches_per_epoch:(slot + 1) * patches_per_epoch]
+    return tuple(sorted(selected))
