@@ -168,8 +168,13 @@ class FlowMatchingTask(NodeRegressionTask):
         final_denoise: bool = False,
         sampling_seed: int = 5678,
         sampling_keys: Iterable[str] | None = None,
+        state_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Integrate ``dx/dt = v_theta(x,t)`` from deterministic Gaussian sources."""
+        """Integrate the Flow Matching ODE, optionally in a fixed coordinate subspace.
+
+        The Boolean mask acts on the INITIAL Gaussian and every velocity.
+        None preserves the exact historical M11 behavior and random draws.
+        """
 
         _validate_state_batch(batch)
         step_count = _positive_int(steps, "steps")
@@ -185,8 +190,19 @@ class FlowMatchingTask(NodeRegressionTask):
             raise ValueError("flow matching does not use a separate final_denoise step")
         seed = _nonnegative_int(sampling_seed, "sampling_seed")
         keys = _sampling_keys(batch, sampling_keys)
+        if state_mask is not None:
+            if not isinstance(state_mask, torch.Tensor) or state_mask.dtype != torch.bool:
+                raise TypeError("state_mask must be a Boolean torch.Tensor")
+            if state_mask.device != batch.inputs.device:
+                raise ValueError("state_mask must share the sampled state device")
+            if state_mask.ndim != 2 or state_mask.shape[0] != batch.inputs.shape[0] or (
+                state_mask.shape[1] not in (1, batch.inputs.shape[1])
+            ):
+                raise ValueError("state_mask must have shape [N,1] or [N,C]")
 
         state = _deterministic_sampling_source(batch, seed, keys)
+        if state_mask is not None:
+            state = state.masked_fill(~state_mask, 0.0)
         dt = 1.0 / step_count
         for step in range(step_count):
             t_value = step / step_count
@@ -203,6 +219,8 @@ class FlowMatchingTask(NodeRegressionTask):
                 times,
                 time_embedding_scale=self.time_embedding_scale,
             )
+            if state_mask is not None:
+                k1 = k1.masked_fill(~state_mask, 0.0)
             if solver_name == "euler":
                 state = state + dt * k1
                 continue
@@ -221,6 +239,8 @@ class FlowMatchingTask(NodeRegressionTask):
                 next_times,
                 time_embedding_scale=self.time_embedding_scale,
             )
+            if state_mask is not None:
+                k2 = k2.masked_fill(~state_mask, 0.0)
             state = state + 0.5 * dt * (k1 + k2)
 
         if not torch.isfinite(state).all():

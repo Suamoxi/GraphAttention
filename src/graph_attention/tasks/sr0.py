@@ -17,6 +17,7 @@ from graph_attention.data.nondimensionalization import ConvectiveNondimensionali
 from graph_attention.objectives import SampleLossAggregate
 
 from .flow_matching import FlowMatchingTask
+from .sr0_evaluation import point_sample_anchors
 from .regression import NodeRegressionBatch
 
 _CONSERVATIVE = ("rho", "rhou", "rhov", "rhow", "rhoE")
@@ -260,22 +261,32 @@ class SR0FlowProblem:
 
     flow: NodeRegressionBatch
     spatial_condition: torch.Tensor
+    free_node_mask: torch.Tensor | None = None
 
 
 class _StaticSpatialCondition(nn.Module):
     """Adapter that lets the unchanged M11 Heun solver call a 15-input M37."""
 
-    def __init__(self, backbone: nn.Module, spatial_condition: torch.Tensor) -> None:
+    def __init__(
+        self,
+        backbone: nn.Module,
+        spatial_condition: torch.Tensor,
+        free_node_mask: torch.Tensor | None = None,
+    ) -> None:
         super().__init__()
         self.backbone = backbone
         self.spatial_condition = spatial_condition
+        self.free_node_mask = free_node_mask
 
     def forward(self, inputs: torch.Tensor, **model_kwargs: object) -> torch.Tensor:
         if inputs.shape != (self.spatial_condition.shape[0], 5):
             raise ValueError("SR-0 Flow Matching state must have shape [N_f, 5]")
-        return self.backbone(
+        velocity = self.backbone(
             torch.cat((inputs, self.spatial_condition), dim=1), **model_kwargs
         )
+        if self.free_node_mask is not None:
+            velocity = velocity.masked_fill(~self.free_node_mask[:, None], 0.0)
+        return velocity
 
 
 class SR0FlowMatching:
@@ -288,10 +299,14 @@ class SR0FlowMatching:
         validation_seed: int = 1234,
         time_embedding_scale: float = 1.0,
         spatial_condition_mode: str = "interpolated_plus_baseline",
+        point_sample_constraint: bool = False,
     ) -> None:
         if spatial_condition_mode not in {"interpolated_only", "interpolated_plus_baseline"}:
             raise ValueError("unsupported SR-0 spatial_condition_mode")
         self.spatial_condition_mode = spatial_condition_mode
+        if not isinstance(point_sample_constraint, bool):
+            raise TypeError("point_sample_constraint must be a bool")
+        self.point_sample_constraint = point_sample_constraint
         self.scales = scales
         self.flow = FlowMatchingTask(
             state_fields=_RESIDUAL_CHANNELS,
@@ -333,20 +348,77 @@ class SR0FlowMatching:
             target_channels=_RESIDUAL_CHANNELS,
         )
 
+
+    def point_sample_free_mask(
+        self, pair: SR0PairBatch, *, require_target: bool = True
+    ) -> torch.Tensor | None:
+        """Unobserved fine nodes for the verified Q_sample point-sampling proxy.
+
+        Must NOT be used as a physical LES restriction; incompatible source
+        metadata, baseline/observation mismatch or target mismatches fail closed.
+        """
+        if not self.point_sample_constraint:
+            return None
+        if any(
+            meta.get("sr0_pilot") != "point_sampled_dns_not_les"
+            for meta in pair.fine.source.sample_metadata
+        ):
+            raise ValueError(
+                "point-sampling nullspace requires explicitly tagged SR-0 DNS proxy data"
+            )
+        anchor, coarse_id = point_sample_anchors(pair.transfer)
+        observed = pair.coarse_state[coarse_id]
+        if not torch.allclose(
+            pair.fine_baseline[anchor], observed, atol=1e-5, rtol=1e-6
+        ):
+            raise ValueError("point-sample interpolation must exactly reproduce coarse anchors")
+        if require_target:
+            if pair.fine_target is None:
+                raise ValueError("point-sample training requires a fine target")
+            if not torch.allclose(
+                pair.fine_target[anchor], observed, atol=1e-5, rtol=1e-6
+            ):
+                raise ValueError("point-sample fine target differs at observed coarse anchors")
+        free = torch.ones(
+            pair.fine.coords.shape[0], dtype=torch.bool, device=pair.fine.coords.device
+        )
+        free[anchor] = False
+        for graph in range(pair.fine.num_graphs):
+            f0, f1 = (int(x) for x in pair.fine.ptr[graph:graph + 2])
+            if not bool(free[f0:f1].any()):
+                raise ValueError("point-sample constraint leaves a graph with no free nodes")
+        return free
+
+    def _constrained_problem(
+        self, pair: SR0PairBatch, flow: NodeRegressionBatch
+    ) -> SR0FlowProblem:
+        free = self.point_sample_free_mask(pair)
+        if free is not None:
+            # M(z_t) and M(v*) are the exact straight FM path between
+            # M(epsilon) and the zero-at-anchor data residual. The source
+            # Gaussian/time RNG draws are unchanged.
+            weights = free.to(dtype=flow.inputs.dtype)
+            if flow.node_weights is not None:
+                weights = weights * flow.node_weights
+            flow = replace(
+                flow,
+                inputs=flow.inputs.masked_fill(~free[:, None], 0.0),
+                targets=flow.targets.masked_fill(~free[:, None], 0.0),
+                source=replace(flow.source, node_weights=weights),
+            )
+        return SR0FlowProblem(flow, self.spatial_condition(pair), free)
+
     def make_training_problem(
         self, pair: SR0PairBatch, *, generator: torch.Generator | None = None
     ) -> SR0FlowProblem:
         residual = self.residual_batch(pair, require_target=True)
-        return SR0FlowProblem(
-            self.flow.make_training_problem(residual, generator=generator),
-            self.spatial_condition(pair),
+        return self._constrained_problem(
+            pair, self.flow.make_training_problem(residual, generator=generator)
         )
 
     def make_validation_problem(self, pair: SR0PairBatch) -> SR0FlowProblem:
         residual = self.residual_batch(pair, require_target=True)
-        return SR0FlowProblem(
-            self.flow.make_validation_problem(residual), self.spatial_condition(pair)
-        )
+        return self._constrained_problem(pair, self.flow.make_validation_problem(residual))
 
     def model_probe(self, problem: SR0FlowProblem) -> NodeRegressionBatch:
         """Produce a [N_f,10 or 15]->[N_f,5] controlled M37 factory probe."""
@@ -364,7 +436,9 @@ class SR0FlowMatching:
     def training_loss(
         self, model: nn.Module, problem: SR0FlowProblem
     ) -> SampleLossAggregate:
-        predicted = _StaticSpatialCondition(model, problem.spatial_condition)(
+        predicted = _StaticSpatialCondition(
+            model, problem.spatial_condition, problem.free_node_mask
+        )(
             problem.flow.inputs,
             edge_index=problem.flow.edge_index,
             coords=problem.flow.coords,
@@ -387,7 +461,8 @@ class SR0FlowMatching:
     ) -> torch.Tensor:
         """Generate dimensionless fine conservative state from LES-only inputs."""
         residual_batch = self.residual_batch(pair, require_target=False)
-        adapter = _StaticSpatialCondition(model, self.spatial_condition(pair))
+        free = self.point_sample_free_mask(pair, require_target=False)
+        adapter = _StaticSpatialCondition(model, self.spatial_condition(pair), free)
         z = self.flow.sample_standardized(
             adapter,
             residual_batch,
@@ -395,6 +470,7 @@ class SR0FlowMatching:
             solver=solver,
             sampling_seed=sampling_seed,
             sampling_keys=sampling_keys,
+            state_mask=(free[:, None] if free is not None else None),
         )
         scale = self.scales.residual_rms.to(device=z.device, dtype=z.dtype)
         return pair.fine_baseline + z * scale
