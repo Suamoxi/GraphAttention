@@ -1,7 +1,6 @@
 """M44 SR-0.4: reproduce fixed-budget spatial diversity without changing SR-0.3."""
 
 from argparse import Namespace
-from dataclasses import replace
 import json
 import math
 from pathlib import Path
@@ -99,7 +98,7 @@ def test_synthetic_frozen_scale_diverse_training_resume_and_checkpoint_audit(tmp
     scale_reference = torch.load(base_dir / "scales.pt", weights_only=True)
 
     run_dir = tmp_path / "sr04_spatial_diversity"
-    diverse_args = replace_namespace = Namespace(**{
+    diverse_args = Namespace(**{
         **vars(args), "output": run_dir, "train_patch_pool_size": 16,
         "frozen_scales_run": base_dir,
     })
