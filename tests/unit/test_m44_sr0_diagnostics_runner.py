@@ -65,6 +65,15 @@ def test_synthetic_archive_checkpoint_diagnosis_does_not_modify_training_run(tmp
     assert summary["status"] == "sr0_checkpoint_diagnostics_complete"
     assert summary["best_epoch"] == 0
     assert summary["flow_matching_counterfactual"]["train"]["counterfactual_patches"] == 4
+    for split in ("train", "validation", "test"):
+        native = summary["repeated_flow_matching"][split]
+        common = native["common_unobserved_node_support"]
+        assert common["fine_nodes_per_patch"] == 125
+        assert common["coarse_nodes_per_patch"] == 27
+        assert common["unobserved_nodes_per_patch"] == 98
+        assert math.isfinite(common["matched_flow_mse"])
+        assert math.isfinite(common["zero_velocity_flow_mse"])
+        assert common["per_snapshot"]
     assert summary["flow_matching_counterfactual"]["validation"]["counterfactual_patches"] == 0
     assert summary["flow_matching_counterfactual"]["test"]["wrong_coarse_flow_mse"] is None
     assert math.isfinite(summary["flow_matching_counterfactual"]["test"]["matched_flow_mse"])

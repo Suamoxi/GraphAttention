@@ -13,7 +13,7 @@ from graph_attention.tasks.sr0 import SR0FlowMatching, fit_sr0_scales
 from graph_attention.tasks.sr0_evaluation import (
     per_field_mse, point_sample_anchors, project_point_sample,
 )
-from scripts.diagnose_m44_sr0 import run as diagnose
+from scripts.diagnose_m44_sr0 import _verified_point_proxy_free_mask, run as diagnose
 from scripts.train_m44_sr0 import run as train
 from test_m44_sr0 import _pair
 from test_m44_sr0_training_runner import _archive
@@ -124,6 +124,20 @@ def test_point_sampling_constraint_rejects_nonpoint_metadata_and_inconsistent_ta
         )
 
 
+def test_common_support_mask_rejects_non_point_sample_proxy():
+    pair = _point_pair()
+    assert _verified_point_proxy_free_mask(pair).tolist() == [False, True, False]
+    untagged = replace(
+        pair,
+        fine=replace(
+            pair.fine,
+            source=replace(pair.fine.source, sample_metadata=({},)),
+        ),
+    )
+    with pytest.raises(ValueError, match="explicitly tagged"):
+        _verified_point_proxy_free_mask(untagged)
+
+
 def test_free_node_metric_and_m11_optional_sampling_mask():
     predictions = torch.zeros(3, 5)
     target = torch.ones(3, 5)
@@ -166,6 +180,17 @@ def test_synthetic_hdf5_constrained_train_diagnose_and_manifest_parity(tmp_path:
     assert diagnosed["point_sample_constraint"] is True
     assert diagnosed["flow_mse_support"] == "unobserved_fine_nodes"
     assert diagnosed["repeated_flow_matching"]["train"]["paths_per_patch"] == 2
+    for split in ("train", "validation", "test"):
+        native = diagnosed["repeated_flow_matching"][split]
+        common = native["common_unobserved_node_support"]
+        assert common["unobserved_nodes_per_patch"] == 98
+        assert common["coarse_nodes_per_patch"] == 27
+        assert common["matched_flow_mse"] == pytest.approx(native["matched_flow_mse"])
+        assert common["zero_velocity_flow_mse"] == pytest.approx(native["zero_velocity_flow_mse"])
+        if native["wrong_minus_matched_mse"] is not None:
+            assert common["wrong_minus_matched_mse"] == pytest.approx(
+                native["wrong_minus_matched_mse"]
+            )
     assert math.isfinite(
         diagnosed["repeated_flow_matching"]["test"]["matched_flow_mse"]
     )
