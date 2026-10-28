@@ -165,6 +165,36 @@ def _evaluate_split(
 
 
 
+def _verified_point_proxy_free_mask(pair: Any) -> torch.Tensor:
+    """Shared unobserved-node support for comparing two SR-0 FM protocols.
+
+    Point-sampled DNS proxy only: require tagged source and exact observed
+    coarse/fine identity. This is not a physical LES/SGS restriction.
+    """
+    if any(
+        metadata.get("sr0_pilot") != "point_sampled_dns_not_les"
+        for metadata in pair.fine.source.sample_metadata
+    ):
+        raise ValueError("common-support evaluation requires explicitly tagged point-sampled DNS")
+    anchors, coarse_ids = point_sample_anchors(pair.transfer)
+    observed = pair.coarse_state[coarse_ids]
+    if not torch.allclose(pair.fine_baseline[anchors], observed, atol=1e-5, rtol=1e-6):
+        raise ValueError("common-support baseline fails exact point-sample identity")
+    if pair.fine_target is None or not torch.allclose(
+        pair.fine_target[anchors], observed, atol=1e-5, rtol=1e-6
+    ):
+        raise ValueError("common-support fine target fails point-sample identity")
+    free = torch.ones(
+        pair.fine.coords.shape[0], dtype=torch.bool, device=pair.fine.coords.device
+    )
+    free[anchors] = False
+    for graph in range(pair.fine.num_graphs):
+        start, end = (int(v) for v in pair.fine.ptr[graph : graph + 2])
+        if not bool(free[start:end].any()):
+            raise ValueError("common-support evaluation has a graph without unobserved nodes")
+    return free
+
+
 def _evaluate_repeated_paths(
     model: torch.nn.Module,
     task: SR0FlowMatching,
@@ -187,8 +217,15 @@ def _evaluate_repeated_paths(
     model.eval()
     per_snapshot: dict[str, list[dict[str, Any]]] = defaultdict(list)
     all_rows: list[dict[str, Any]] = []
+    common_rows: list[dict[str, Any]] = []
+    common_by_snapshot: dict[str, list[dict[str, Any]]] = defaultdict(list)
     with torch.inference_mode():
         conditions = [task.spatial_condition(pair) for pair in staged]
+        common_free_masks = [_verified_point_proxy_free_mask(pair) for pair in staged]
+        if task.point_sample_constraint:
+            for pair, mask in zip(staged, common_free_masks, strict=True):
+                if not torch.equal(task.point_sample_free_mask(pair), mask):
+                    raise RuntimeError("constrained and common point-node supports differ")
         for i, donor in donors.items():
             if donor is not None and not torch.equal(
                 staged[i].fine.coords, staged[donor].fine.coords
@@ -209,20 +246,33 @@ def _evaluate_repeated_paths(
                 problem = path_task.make_validation_problem(pair)
                 free = path_task.point_sample_free_mask(pair)
                 reference = problem.flow.targets
+                common_free = common_free_masks[index]
+                matched_velocity = _forward_condition(model, problem, conditions[index])
+                zero_velocity = torch.zeros_like(reference)
                 correct = per_field_mse(
-                    _forward_condition(model, problem, conditions[index]), reference,
-                    node_mask=free,
+                    matched_velocity, reference, node_mask=free
                 ).detach().cpu()
                 zero = per_field_mse(
-                    torch.zeros_like(reference), reference, node_mask=free
+                    zero_velocity, reference, node_mask=free
+                ).detach().cpu()
+                common_correct = per_field_mse(
+                    matched_velocity, reference, node_mask=common_free
+                ).detach().cpu()
+                common_zero = per_field_mse(
+                    zero_velocity, reference, node_mask=common_free
                 ).detach().cpu()
                 donor_index = donors[index]
-                wrong = (
-                    per_field_mse(
-                        _forward_condition(model, problem, conditions[donor_index]),
-                        reference, node_mask=free,
-                    ).detach().cpu()
+                wrong_velocity = (
+                    _forward_condition(model, problem, conditions[donor_index])
                     if donor_index is not None else None
+                )
+                wrong = (
+                    per_field_mse(wrong_velocity, reference, node_mask=free).detach().cpu()
+                    if wrong_velocity is not None else None
+                )
+                common_wrong = (
+                    per_field_mse(wrong_velocity, reference, node_mask=common_free).detach().cpu()
+                    if wrong_velocity is not None else None
                 )
                 row = {
                     "path_index": path_index,
@@ -233,6 +283,15 @@ def _evaluate_repeated_paths(
                 }
                 all_rows.append(row)
                 per_snapshot[_source_snapshot(row["sample_id"])].append(row)
+                common_row = {
+                    "path_index": path_index,
+                    "sample_id": row["sample_id"],
+                    "matched": common_correct,
+                    "zero": common_zero,
+                    "wrong": common_wrong,
+                }
+                common_rows.append(common_row)
+                common_by_snapshot[_source_snapshot(row["sample_id"])].append(common_row)
 
     def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
         matched = torch.stack([row["matched"] for row in rows]).double()
@@ -265,6 +324,29 @@ def _evaluate_repeated_paths(
 
     summary = _aggregate(all_rows)
     by_snapshot = {name: _aggregate(rows) for name, rows in per_snapshot.items()}
+    common_snapshots = {
+        name: _aggregate(rows) for name, rows in common_by_snapshot.items()
+    }
+    common_gaps = [
+        row["wrong_minus_matched_mse"] for row in common_snapshots.values()
+        if row["wrong_minus_matched_mse"] is not None
+    ]
+    common_support_summary = _aggregate(common_rows)
+    common_support_summary.update({
+        "fine_nodes_per_patch": int(staged[0].fine.coords.shape[0]),
+        "coarse_nodes_per_patch": int(staged[0].transfer.num_coarse_nodes),
+        "unobserved_nodes_per_patch": int(common_free_masks[0].sum()),
+        "per_snapshot": common_snapshots,
+        "snapshot_positive_gap_count": sum(gap > 0 for gap in common_gaps),
+        "snapshot_with_counterfactual_count": len(common_gaps),
+        "comparison_protocol": (
+            "All models scored only on the same unobserved fine nodes. "
+            "The random time and Gaussian at those nodes are identical for the "
+            "same seed/sample ID. The unconstrained model sees noisy observed-node "
+            "states, whereas the constrained model sees zero residual there; "
+            "this is a comparison of native trained protocols, not identical full inputs."
+        ),
+    })
     gaps = [
         value["wrong_minus_matched_mse"]
         for value in by_snapshot.values()
@@ -286,6 +368,7 @@ def _evaluate_repeated_paths(
             if len(gaps) > 1 else None
         ),
         "per_snapshot": by_snapshot,
+        "common_unobserved_node_support": common_support_summary,
         "warning": (
             "Repeated FM time/noise probes reduce path randomness but do not "
             "increase the number of independent DNS snapshots. Snapshot gaps "
