@@ -203,7 +203,10 @@ def ensemble_residual_moments_and_increments(
     )
     if not bool(nearest.any()):
         raise RuntimeError("nearest-neighbor edge selection is empty")
-    a, b = src[nearest], dst[nearest]
+    unique_pairs = torch.unique(
+        torch.stack((src[nearest], dst[nearest]), dim=1), dim=0
+    )
+    a, b = unique_pairs.unbind(dim=1)
     generated_increment = (
         residual[:, a, :] - residual[:, b, :]
     ).square().mean(dim=(0, 1)).sqrt()
@@ -230,7 +233,7 @@ def ensemble_residual_moments_and_increments(
         ),
         "nearest_neighbor_increments": {
             "separation_over_L_ref": float(distance[nearest].mean().detach().cpu()),
-            "graph_edge_count": int(nearest.sum().item()),
+            "graph_edge_count": int(unique_pairs.shape[0]),
             "generated_rms_by_field": fields(generated_increment),
             "reference_rms_by_field": fields(reference_increment),
             "metric": "RMS residual increments along unique minimum-distance fine-graph edges",
