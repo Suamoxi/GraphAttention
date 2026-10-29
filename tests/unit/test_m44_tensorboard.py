@@ -24,6 +24,12 @@ def _steps(log_dir: Path, tag: str) -> list[tuple[int, float]]:
     return [(int(row.step), float(row.value)) for row in acc.Scalars(tag)]
 
 
+def _assert_steps(log_dir: Path, tag: str, values: list[float]) -> None:
+    observed = _steps(log_dir, tag)
+    assert [step for step, _ in observed] == list(range(len(values)))
+    assert [value for _, value in observed] == pytest.approx(values)
+
+
 def test_history_validation_catches_nonfinite_and_discontinuous_epochs() -> None:
     validate_history(_rows())
     incorrect = _rows()
@@ -51,12 +57,8 @@ def test_existing_json_history_import_writes_epoch_scalar_tags(tmp_path: Path) -
     assert result["epochs_imported"] == 2
     assert result["optimizer_updates_per_epoch"] == 30
     assert list((run_dir / "tensorboard").glob("events.out.tfevents.*"))
-    assert _steps(run_dir / "tensorboard", "loss/validation_fm_velocity_mse") == pytest.approx(
-        [(0, 1.4), (1, 1.1)]
-    )
-    assert _steps(run_dir / "tensorboard", "loss/best_validation_fm_velocity_mse") == pytest.approx(
-        [(0, 1.4), (1, 1.1)]
-    )
+    _assert_steps(run_dir / "tensorboard", "loss/validation_fm_velocity_mse", [1.4, 1.1])
+    _assert_steps(run_dir / "tensorboard", "loss/best_validation_fm_velocity_mse", [1.4, 1.1])
     assert _steps(run_dir / "tensorboard", "optimizer/updates_per_epoch") == [
         (0, 30.0), (1, 30.0)
     ]
@@ -64,9 +66,7 @@ def test_existing_json_history_import_writes_epoch_scalar_tags(tmp_path: Path) -
         run(run_dir)
     result = run(run_dir, refresh=True)
     assert result["refreshed_existing_events"] is True
-    assert _steps(run_dir / "tensorboard", "loss/train_fm_velocity_mse") == pytest.approx(
-        [(0, 1.2), (1, 1.0)]
-    )
+    _assert_steps(run_dir / "tensorboard", "loss/train_fm_velocity_mse", [1.2, 1.0])
 
 
 def test_resume_existing_events_adds_only_restored_future_epoch(tmp_path: Path) -> None:
@@ -83,9 +83,7 @@ def test_resume_existing_events_adds_only_restored_future_epoch(tmp_path: Path) 
     ) as writer:
         write_epoch(writer, _rows()[1], best_validation=1.1,
                     learning_rate=0.001, updates_per_epoch=30)
-    assert _steps(path, "loss/validation_fm_velocity_mse") == pytest.approx(
-        [(0, 1.4), (1, 1.1)]
-    )
+    _assert_steps(path, "loss/validation_fm_velocity_mse", [1.4, 1.1])
     with pytest.raises(ValueError, match="resume_step"):
         open_writer(
             path, previous_history=_rows(), resume_step=1,
@@ -101,9 +99,7 @@ def test_resume_without_events_backfills_prior_epochs(tmp_path: Path) -> None:
     ) as writer:
         write_epoch(writer, _rows()[1], best_validation=1.1,
                     learning_rate=0.001, updates_per_epoch=30)
-    assert _steps(path, "loss/validation_fm_velocity_mse") == pytest.approx(
-        [(0, 1.4), (1, 1.1)]
-    )
+    _assert_steps(path, "loss/validation_fm_velocity_mse", [1.4, 1.1])
 
 
 def test_backfill_respects_diversity_update_budget(tmp_path: Path) -> None:
