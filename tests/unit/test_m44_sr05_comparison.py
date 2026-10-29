@@ -44,6 +44,8 @@ def _fixture() -> tuple[dict, dict]:
         "source_frozen_baseline_run": base_parent,
     }
     for role, report in (("baseline", baseline), ("diverse", diverse)):
+        for split in ("validation", "test"):
+            report["repeated_flow_matching"][split]["num_patches"] = 2
         report["draws_per_generation_patch"] = 16
         report["generation_heun_steps"] = 50
         for split in ("validation", "test"):

@@ -56,12 +56,23 @@ def _continuation(report: dict[str, Any], role: str) -> dict[str, Any]:
                  f"{role}/{split}: missing per-snapshot ensemble moments")
         _require(len(by_snapshot) == report["snapshot_splits"][split],
                  f"{role}/{split}: not all held-out source snapshots evaluated")
+        observed_ids: dict[str, set[str]] = {}
+        for sample in report["generation_ensemble"][split]:
+            sample_id = sample["sample_id"]
+            _require(sample_id.count("/sr0_patch_") == 1,
+                     f"{role}/{split}: invalid patch sample ID")
+            source = sample_id.split("/sr0_patch_", 1)[0]
+            observed_ids.setdefault(source, set()).add(sample_id)
+        _require(set(observed_ids) == set(by_snapshot),
+                 f"{role}/{split}: snapshot generation summaries differ from raw sample IDs")
         for sid, entry in by_snapshot.items():
             _require(entry.get("patches") == 2, f"{role}/{sid}: expected both fixed origins")
             _require(entry.get("draws_per_patch") == 16,
                      f"{role}/{sid}: expected 16 draws per origin")
             _require(len(entry.get("sample_ids", [])) == 2,
                      f"{role}/{sid}: missing original patch identities")
+            _require(set(entry["sample_ids"]) == observed_ids[sid],
+                     f"{role}/{sid}: summary sample IDs do not match generated patches")
     return c
 
 
@@ -175,6 +186,9 @@ def compare(baseline: dict[str, Any], diverse: dict[str, Any]) -> dict[str, Any]
     flow = {}
     for split in SPLITS:
         metrics = _assemble_split(baseline, diverse, split)
+        if split in GENERATED_SPLITS:
+            _require(metrics["patches"] == 2 * metrics["source_snapshots"],
+                     f"{split}: Flow Matching must use both fixed origins per snapshot")
         flow[split] = {
             "snapshots": metrics["source_snapshots"],
             "patches": metrics["patches"],
