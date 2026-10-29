@@ -22,8 +22,13 @@ SCALES_RUN=${M44_SR04_FROZEN_SCALES_RUN:-/scratch/coop/theret/GraphAttention_run
 POOL=${M44_SR04_POOL_SIZE:-16}
 EPOCHS=${M44_SR04_EPOCHS:-50}
 RESUME=${M44_SR04_RESUME:-0}
+TENSORBOARD=${M44_SR04_TENSORBOARD:-1}
 OUT=${M44_SR04_OUTPUT:-/scratch/coop/theret/GraphAttention_runs/m44_sr04/job_${SLURM_JOB_ID}}
 
+if [ "$TENSORBOARD" != 0 ] && [ "$TENSORBOARD" != 1 ]; then
+  echo "M44_SR04_TENSORBOARD must be 0 or 1" >&2
+  exit 2
+fi
 if [ "$RESUME" != 0 ] && [ "$RESUME" != 1 ]; then
   echo "M44_SR04_RESUME must be 0 or 1" >&2
   exit 2
@@ -63,6 +68,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv
 echo "=== Run SR-0.4 and legacy correctness gates in Singularity ==="
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   "$PYTHON" -m pytest -q \
+  tests/unit/test_m44_tensorboard.py \
   tests/unit/test_m44_sr04_patch_diversity.py \
   tests/unit/test_m44_sr0_training.py \
   tests/unit/test_m44_sr0_training_runner.py \
@@ -72,6 +78,7 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
 
 EXTRA=()
 if [ "$RESUME" = 1 ]; then EXTRA+=(--resume); fi
+if [ "$TENSORBOARD" = 1 ]; then EXTRA+=(--tensorboard); fi
 echo "=== SR-0.4 training inside Singularity ==="
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   "$PYTHON" -u -m scripts.train_m44_sr0 \

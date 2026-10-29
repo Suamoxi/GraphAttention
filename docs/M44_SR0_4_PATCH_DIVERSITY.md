@@ -159,3 +159,49 @@ from optimization randomness.
 Adding 240 spatial patches does not create 240 independent
 turbulent realizations: the training data still come from 15
 temporally correlated DNS snapshots.
+
+## TensorBoard logging for M44 training
+
+The standalone `scripts.train_m44_sr0` loop does not use Lightning's
+automatic TensorBoard logger. It now accepts the opt-in `--tensorboard`
+flag. The SR-0.4 Slurm training launcher enables this **by default**
+(`M44_SR04_TENSORBOARD=1`, set to 0 only to disable), and legacy
+SR-0.1 Slurm launcher uses `M44_SR01_TENSORBOARD=1` by default.
+
+TensorBoard events are written under
+`m44_sr04/job_<TRAIN_JOB_ID>/tensorboard/` with epoch-level tags:
+
+- `loss/train_fm_velocity_mse`
+- `loss/validation_fm_velocity_mse`
+- `loss/best_validation_fm_velocity_mse`
+- `optimizer/learning_rate`, `optimizer/updates_per_epoch`
+- `time/epoch_seconds`
+
+The writer does not modify losses, model weights, optimizer RNG, the
+original `history.json` or checkpoint format. On an exact checkpoint
+resume it uses TensorBoard's `purge_step` convention. If logging is
+enabled upon resuming a historical run that had no TensorBoard events,
+past epoch scalars are imported from the saved checkpoint history.
+
+**For a run already launched without TensorBoard**, editing the
+repository does not inject a writer into its running Python process.
+Instead create event files from the existing `history.json` with a
+separate grace Slurm job (no retraining):
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+git switch main
+git pull --rebase
+sbatch --export=ALL,M44_TB_SOURCE=/scratch/coop/theret/GraphAttention_runs/m44_sr04/job_<TRAIN_JOB_ID> \
+  scripts/slurm/m44_tensorboard_backfill.slurm
+```
+
+This imports the history currently on disk into
+`job_<TRAIN_JOB_ID>/tensorboard/`. If the training run continues to
+write `history.json` but has no native event writer, the previous
+import can be refreshed after additional epochs using
+`M44_TB_REFRESH=1` (TensorBoard purge and full-history replay).
+Do **not** use history refresh simultaneously with native event logging.
+The source checkpoints are never modified. All conversion Python and
+unit tests execute through Singularity on grace.
+

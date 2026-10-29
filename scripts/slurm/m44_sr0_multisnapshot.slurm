@@ -22,10 +22,15 @@ EPOCHS=${M44_SR01_EPOCHS:-5}
 MAX_SNAPSHOTS=${M44_SR01_MAX_SNAPSHOTS:-24}
 PATCHES=${M44_SR01_PATCHES:-2}
 RESUME=${M44_SR01_RESUME:-0}
+TENSORBOARD=${M44_SR01_TENSORBOARD:-1}
 POINT_CONSTRAINT=${M44_SR01_POINT_SAMPLE_CONSTRAINT:-0}
 
 if [ "$POINT_CONSTRAINT" != 0 ] && [ "$POINT_CONSTRAINT" != 1 ]; then
   echo "M44_SR01_POINT_SAMPLE_CONSTRAINT must be 0 or 1" >&2
+  exit 2
+fi
+if [ "$TENSORBOARD" != 0 ] && [ "$TENSORBOARD" != 1 ]; then
+  echo "M44_SR01_TENSORBOARD must be 0 or 1" >&2
   exit 2
 fi
 if [ "$RESUME" != 0 ] && [ "$RESUME" != 1 ]; then
@@ -58,6 +63,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv
 
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   "$PYTHON" -m pytest -q \
+  tests/unit/test_m44_tensorboard.py \
   tests/unit/test_m44_sr0.py \
   tests/unit/test_m44_sr03_point_constraint.py \
   tests/unit/test_m44_sr0_training.py \
@@ -68,6 +74,7 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
 
 EXTRA=()
 if [ "$RESUME" = 1 ]; then EXTRA+=(--resume); fi
+if [ "$TENSORBOARD" = 1 ]; then EXTRA+=(--tensorboard); fi
 if [ "$POINT_CONSTRAINT" = 1 ]; then EXTRA+=(--point-sample-constraint); fi
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   "$PYTHON" -u -m scripts.train_m44_sr0 \

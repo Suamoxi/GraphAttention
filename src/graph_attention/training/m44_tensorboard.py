@@ -62,6 +62,7 @@ def open_writer(
     resume_step: int | None,
     learning_rate: float,
     updates_per_epoch: int,
+    refresh_from_history: bool = False,
 ) -> Any:
     """Start live logging or import a validated history into one run directory.
 
@@ -69,12 +70,17 @@ def open_writer(
     On resume, PyTorch's purge_step hides steps from a partially interrupted
     session at or after the restored checkpoint epoch. If this is a legacy
     run without events, its saved checkpoint history is imported first.
+    Explicit history refresh uses a step-0 TensorBoard purge event and replays
+    the full saved history, replacing stale curves without touching checkpoints.
+    Do not refresh an actively logging native TensorBoard process.
     """
     validate_history(previous_history)
     if resume_step is not None and resume_step != len(previous_history):
         raise ValueError("TensorBoard resume_step differs from checkpoint history length")
+    if refresh_from_history and resume_step is not None:
+        raise ValueError("TensorBoard history refresh cannot run simultaneously with checkpoint resume")
     existing = log_dir.exists() and any(log_dir.glob("events.out.tfevents.*"))
-    if existing and resume_step is None:
+    if existing and resume_step is None and not refresh_from_history:
         raise FileExistsError(f"refusing to duplicate TensorBoard event files: {log_dir}")
     try:
         from torch.utils.tensorboard import SummaryWriter
@@ -85,10 +91,10 @@ def open_writer(
         ) from exc
     writer = SummaryWriter(
         log_dir=str(log_dir),
-        purge_step=resume_step if existing else None,
+        purge_step=(0 if refresh_from_history else resume_step) if existing else None,
         flush_secs=15,
     )
-    if not existing:
+    if not existing or refresh_from_history:
         best = float("inf")
         for row in previous_history:
             best = min(best, float(row["validation_loss"]))

@@ -556,7 +556,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if writer is not None:
         print(f"[M44] TensorBoard events: {output / 'tensorboard'}", flush=True)
 
-    with writer if writer is not None else nullcontext():
+    with (writer if writer is not None else nullcontext()):
         for epoch in range(first_epoch, args.epochs):
             order = list(_epoch_train_indices(manifest, epoch))
             random.Random(seed + epoch).shuffle(order)

@@ -100,7 +100,7 @@ def test_synthetic_frozen_scale_diverse_training_resume_and_checkpoint_audit(tmp
     run_dir = tmp_path / "sr04_spatial_diversity"
     diverse_args = Namespace(**{
         **vars(args), "output": run_dir, "train_patch_pool_size": 16,
-        "frozen_scales_run": base_dir,
+        "frozen_scales_run": base_dir, "tensorboard": True,
     })
     one_epoch = train(diverse_args)
     assert one_epoch["point_sample_constraint"] is True
@@ -111,6 +111,8 @@ def test_synthetic_frozen_scale_diverse_training_resume_and_checkpoint_audit(tmp
     assert info["training_patch_pool_size"] == 64
     assert info["active_train_patches_per_snapshot_per_epoch"] == 2
     assert info["validation_test_patch_origins_unchanged"] is True
+    assert one_epoch["tensorboard_log_dir"] == str(run_dir / "tensorboard")
+    assert list((run_dir / "tensorboard").glob("events.out.tfevents.*"))
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert set(map(tuple, manifest["patch_origins"])).issubset(
         set(map(tuple, manifest["train_patch_pool_origins"]))
@@ -128,6 +130,7 @@ def test_synthetic_frozen_scale_diverse_training_resume_and_checkpoint_audit(tmp
     assert len(ckpt0["train_scales"]["train_sample_ids"]) == 8
     resumed = train(Namespace(**{**vars(diverse_args), "resume": True, "epochs": 2}))
     assert resumed["epochs_completed"] == 2
+    assert list((run_dir / "tensorboard").glob("events.out.tfevents.*"))
     ckpt1 = torch.load(run_dir / "last.pt", weights_only=True)
     assert ckpt1["history"][0] == ckpt0["history"][0]
     assert ckpt1["epoch"] == 1

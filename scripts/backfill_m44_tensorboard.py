@@ -14,7 +14,7 @@ from pathlib import Path
 from graph_attention.training.m44_tensorboard import open_writer, validate_history
 
 
-def run(run_dir: Path) -> dict[str, object]:
+def run(run_dir: Path, *, refresh: bool = False) -> dict[str, object]:
     source = run_dir.expanduser().resolve(strict=True)
     manifest_path = source / "manifest.json"
     history_path = source / "history.json"
@@ -39,6 +39,7 @@ def run(run_dir: Path) -> dict[str, object]:
     with open_writer(
         log_dir, previous_history=rows, resume_step=None,
         learning_rate=lr, updates_per_epoch=updates,
+        refresh_from_history=refresh,
     ):
         pass
     output: dict[str, object] = {
@@ -49,6 +50,7 @@ def run(run_dir: Path) -> dict[str, object]:
         "first_epoch": int(rows[0]["epoch"]),
         "last_epoch": int(rows[-1]["epoch"]),
         "optimizer_updates_per_epoch": updates,
+        "refreshed_existing_events": bool(refresh),
     }
     return output
 
@@ -56,7 +58,10 @@ def run(run_dir: Path) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", type=Path, required=True)
-    result = run(parser.parse_args().run_dir)
+    parser.add_argument("--refresh", action="store_true",
+                        help="replace historical curves using TensorBoard's purge-step semantics")
+    args = parser.parse_args()
+    result = run(args.run_dir, refresh=args.refresh)
     print(json.dumps(result, indent=2, allow_nan=False), flush=True)
 
 
