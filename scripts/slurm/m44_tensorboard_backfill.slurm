@@ -12,7 +12,7 @@
 # One GPU is reserved for the validated grace allocation pattern but not used.
 set -euo pipefail
 
-REPO=/scratch/coop/theret/GraphAttention
+REPO=${M44_TB_REPO:-/scratch/coop/theret/GraphAttention}
 IMAGE=/softs/local_arm/singularity/images/pyg25.03.sif
 PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
 SOURCE=${M44_TB_SOURCE:-}

@@ -205,3 +205,22 @@ Do **not** use history refresh simultaneously with native event logging.
 The source checkpoints are never modified. All conversion Python and
 unit tests execute through Singularity on grace.
 
+If a training job is **still running from the main checkout**, avoid
+`git pull` on that live worktree: the old runner invokes `git rev-parse`
+when saving its checkpoints, so changing the checkout during a run would
+misattribute the checkpoint's Git revision. To backfill without modifying
+the running checkout, create a separate detached worktree using Git only
+on the login node:
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+git fetch origin main
+git worktree add --detach /scratch/coop/theret/GraphAttention_tb origin/main
+sbatch --export=ALL,M44_TB_REPO=/scratch/coop/theret/GraphAttention_tb,M44_TB_SOURCE=/scratch/coop/theret/GraphAttention_runs/m44_sr04/job_<TRAIN_JOB_ID> \
+  /scratch/coop/theret/GraphAttention_tb/scripts/slurm/m44_tensorboard_backfill.slurm
+```
+
+The backfill launcher accepts `M44_TB_REPO` to read code/tests from that
+isolated worktree while writing **only** event files under the specified
+training output directory.
+
