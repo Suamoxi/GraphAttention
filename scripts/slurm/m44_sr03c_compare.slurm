@@ -30,13 +30,23 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 2
 fi
 
+# The first-level source_run_dir is indented by exactly two spaces in
+# diagnose_m44_sr0's json.dump(indent=2). Do NOT grep the whole JSON:
+# SR-0.4 also contains the SR-0.3 path in frozen_scale_provenance.
+report_source_run() {
+  local report="$1"
+  local source_line
+  source_line=$(grep -m1 '^  "source_run_dir": "' "$report") || return 1
+  printf '%s\n' "$source_line" | cut -d '"' -f4
+}
+
 # Discover only the exact source_run_dir recorded in the report, not a
 # substring of the file name or an arbitrary first grep result.
 if [ -z "$NEW_REPORT" ]; then
   candidates=()
   for report in "$REPORT_ROOT"/job_*/diagnostic_summary.json; do
     [ -s "$report" ] || continue
-    if grep -Fq "\"source_run_dir\": \"$CONSTRAINED_RUN\"" "$report"; then
+    if [ "$(report_source_run "$report")" = "$CONSTRAINED_RUN" ]; then
       candidates+=("$report")
     fi
   done
@@ -59,7 +69,7 @@ if [ "$OLD_REPORT" = "$NEW_REPORT" ]; then
   echo "Constrained and unconstrained report paths are identical" >&2
   exit 2
 fi
-if ! grep -Fq "\"source_run_dir\": \"$CONSTRAINED_RUN\"" "$NEW_REPORT"; then
+if [ "$(report_source_run "$NEW_REPORT")" != "$CONSTRAINED_RUN" ]; then
   echo "Constrained report does not belong to $CONSTRAINED_RUN" >&2
   exit 2
 fi

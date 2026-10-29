@@ -28,13 +28,23 @@ fi
 BASE_RUN=${BASE_RUN%/}
 DIVERSE_RUN=${DIVERSE_RUN%/}
 
+# The first-level source_run_dir is indented by exactly two spaces in
+# diagnose_m44_sr0's json.dump(indent=2). Do NOT grep the whole JSON:
+# SR-0.4 also contains the SR-0.3 path in frozen_scale_provenance.
+report_source_run() {
+  local report="$1"
+  local source_line
+  source_line=$(grep -m1 '^  "source_run_dir": "' "$report") || return 1
+  printf '%s\n' "$source_line" | cut -d '"' -f4
+}
+
 find_for_run() {
   local source="$1"
   local matches=()
   local file
   for file in "$ROOT"/job_*/diagnostic_summary.json; do
     [ -s "$file" ] || continue
-    if grep -Fq "\"source_run_dir\": \"$source\"" "$file"; then
+    if [ "$(report_source_run "$file")" = "$source" ]; then
       matches+=("$file")
     fi
   done
@@ -60,11 +70,11 @@ if [ "$BASE_REPORT" = "$DIVERSE_REPORT" ]; then
   echo "Baseline and diversified diagnostics must be different files" >&2
   exit 2
 fi
-if ! grep -Fq "\"source_run_dir\": \"$BASE_RUN\"" "$BASE_REPORT"; then
+if [ "$(report_source_run "$BASE_REPORT")" != "$BASE_RUN" ]; then
   echo "Baseline diagnostic does not belong to $BASE_RUN" >&2
   exit 2
 fi
-if ! grep -Fq "\"source_run_dir\": \"$DIVERSE_RUN\"" "$DIVERSE_REPORT"; then
+if [ "$(report_source_run "$DIVERSE_REPORT")" != "$DIVERSE_RUN" ]; then
   echo "Diversified diagnostic does not belong to $DIVERSE_RUN" >&2
   exit 2
 fi
