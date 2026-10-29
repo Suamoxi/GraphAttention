@@ -667,8 +667,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         parent = Path(continuation["source_run_dir"])
         if _sha256(parent / "last.pt") != continuation["source_last_sha256"]:
             raise ValueError("parent training checkpoint changed after cloning")
-        if len(checkpoint["history"]) < int(continuation["initial_epochs"]):
-            raise ValueError("continued checkpoint has fewer epochs than its parent")
+        # best.pt is selected on validation and may predate the cloning
+        # point. Audit *last.pt* for total optimizer-budget completion.
+        last = torch.load(run_dir / "last.pt", map_location="cpu", weights_only=True)
+        target_epochs = int(continuation["target_epochs"])
+        initial_epochs = int(continuation["initial_epochs"])
+        if last["epoch"] != target_epochs - 1 or len(last["history"]) != target_epochs:
+            raise ValueError("continued last checkpoint has not finished the target epochs")
+        if last["manifest_sha256"] != continuation["source_manifest_sha256"]:
+            raise ValueError("continued last checkpoint manifest differs from parent")
+        parent_last = torch.load(parent / "last.pt", map_location="cpu", weights_only=True)
+        if last["history"][:initial_epochs] != parent_last["history"]:
+            raise ValueError("continuation did not preserve original epoch history")
         summary_path = run_dir / "summary.json"
         if not summary_path.is_file():
             raise FileNotFoundError("continued run has not completed its training summary")
