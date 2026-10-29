@@ -23,7 +23,9 @@ _PROTOCOL = "M44_SR05_IMMUTABLE_CONTINUATION_V1"
 _FILES = ("manifest.json", "last.pt", "best.pt", "scales.pt", "history.json")
 
 
-def _load_source(source: Path, mode: str, initial_epochs: int) -> dict[str, Any]:
+def _load_source(
+    source: Path, mode: str, initial_epochs: int, *, production_profile: bool = True
+) -> dict[str, Any]:
     manifest_path = source / "manifest.json"
     for filename in _FILES:
         path = source / filename
@@ -45,18 +47,19 @@ def _load_source(source: Path, mode: str, initial_epochs: int) -> dict[str, Any]
         "seed": 42,
         "spatial_condition_mode": "interpolated_only",
     }
-    for key, value in expected.items():
-        if manifest.get(key) != value:
-            raise ValueError(f"unexpected source {key}: {manifest.get(key)!r}")
+    if production_profile:
+        for key, value in expected.items():
+            if manifest.get(key) != value:
+                raise ValueError(f"unexpected source {key}: {manifest.get(key)!r}")
+        if {key: len(manifest["snapshot_indices"][key])
+                for key in ("train", "validation", "test", "embargo")} != {
+                    "train": 15, "validation": 3, "test": 4, "embargo": 2
+                }:
+            raise ValueError("source chronological split has changed")
     if len(manifest["patch_origins"]) != 2:
         raise ValueError("expected two fixed validation/test origins")
-    if {key: len(manifest["snapshot_indices"][key])
-            for key in ("train", "validation", "test", "embargo")} != {
-                "train": 15, "validation": 3, "test": 4, "embargo": 2
-            }:
-        raise ValueError("source chronological split has changed")
     model = manifest["model"]
-    if (
+    if production_profile and (
         model.get("hidden_dim") != 64 or model.get("num_layers") != 4
         or model.get("num_heads") != 4
         or model.get("sparse_attention_backend") != "scatter"
@@ -73,9 +76,9 @@ def _load_source(source: Path, mode: str, initial_epochs: int) -> dict[str, Any]
         frozen = manifest.get("frozen_training_scales")
         if (
             not isinstance(schedule, dict)
-            or schedule.get("pool_size") != 16
             or schedule.get("patches_per_snapshot_per_epoch") != 2
-            or len(manifest["train_patch_pool_origins"]) != 16
+            or (production_profile and schedule.get("pool_size") != 16)
+            or (production_profile and len(manifest["train_patch_pool_origins"]) != 16)
             or not isinstance(frozen, dict)
         ):
             raise ValueError("source SR-0.4 patch schedule/frozen normalization mismatch")
@@ -143,6 +146,7 @@ def prepare(
     initial_epochs: int = 50,
     target_epochs: int = 150,
     resume: bool = False,
+    production_profile: bool = True,
 ) -> dict[str, Any]:
     if mode not in ("baseline", "diverse"):
         raise ValueError("mode must be 'baseline' or 'diverse'")
@@ -152,7 +156,9 @@ def prepare(
     target = output.expanduser().resolve()
     if source == target:
         raise ValueError("continuation must use a separate output directory")
-    parent = _load_source(source, mode, initial_epochs)
+    parent = _load_source(
+        source, mode, initial_epochs, production_profile=production_profile
+    )
     record = {
         **parent,
         "target_epochs": target_epochs,
