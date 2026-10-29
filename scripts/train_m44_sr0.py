@@ -12,6 +12,7 @@ It reuses M37, the existing FlowMatchingTask, and the M44 SR-0 pair contract.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 import hashlib
 import json
@@ -36,6 +37,7 @@ from graph_attention.data.sr0_training import (
 from graph_attention.geometry.sr0_cartesian import build_sr0_cartesian_patch
 from graph_attention.tasks.sr0 import SR0FlowMatching, SR0PairBatch, SR0Scales, fit_sr0_scales
 from graph_attention.training.model_factory import instantiate_controlled_model
+from graph_attention.training.m44_tensorboard import open_writer, write_epoch
 
 _FIELDS = ("rho", "rhou", "rhov", "rhow", "rhoE")
 
@@ -541,53 +543,74 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if first_epoch >= args.epochs:
             print("[M44 SR-0.1] No more epochs requested; evaluating saved best", flush=True)
 
-    for epoch in range(first_epoch, args.epochs):
-        order = list(_epoch_train_indices(manifest, epoch))
-        random.Random(seed + epoch).shuffle(order)
-        model.train()
-        train_sum = 0.0
-        start = time.perf_counter()
-        for index in order:
-            pair = pairs["train"][index].to(device=device, dtype=torch.float32)
-            problem = task.make_training_problem(pair, generator=rng)
-            optimizer.zero_grad(set_to_none=True)
-            aggregate = task.training_loss(model, problem)
-            if not torch.isfinite(aggregate.mean):
-                raise ValueError(f"nonfinite training objective at epoch {epoch}")
-            aggregate.mean.backward()
-            optimizer.step()
-            train_sum += float(aggregate.mean.detach().cpu())
-        train_loss = train_sum / len(order)
-        val_loss = _evaluate(model, task, pairs["validation"], device)
-        if not (float("-inf") < val_loss < float("inf")):
-            raise ValueError("nonfinite validation loss")
-        history.append({
-            "epoch": epoch, "train_loss": train_loss, "validation_loss": val_loss,
-            "seconds": time.perf_counter() - start,
-        })
-        better = val_loss < best_val
-        if better:
-            best_val, best_epoch = val_loss, epoch
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "training_generator_state": rng.get_state(),
-            "history": history,
-            "best_validation_loss": best_val,
-            "best_epoch": best_epoch,
-            "model_config": effective_cfg,
-            "initialization": initialization,
-            "train_scales": _scales_dict(scales),
-            "manifest_sha256": _sha256(output / "manifest.json"),
-            "git_revision": _revision(),
-        }
-        _save_torch(output / "last.pt", checkpoint)
-        if better:
-            _save_torch(output / "best.pt", checkpoint)
-        _save_json(output / "history.json", {"history": history})
-        print(f"epoch={epoch:03d} train_fm_mse={train_loss:.8f} "
-              f"val_fm_mse={val_loss:.8f} seconds={history[-1]['seconds']:.2f}", flush=True)
+    writer = (
+        open_writer(
+            output / "tensorboard",
+            previous_history=history,
+            resume_step=first_epoch if args.resume else None,
+            learning_rate=float(optimizer.param_groups[0]["lr"]),
+            updates_per_epoch=len(_epoch_train_indices(manifest, 0)),
+        )
+        if bool(getattr(args, "tensorboard", False)) else None
+    )
+    if writer is not None:
+        print(f"[M44] TensorBoard events: {output / 'tensorboard'}", flush=True)
+
+    with writer if writer is not None else nullcontext():
+        for epoch in range(first_epoch, args.epochs):
+            order = list(_epoch_train_indices(manifest, epoch))
+            random.Random(seed + epoch).shuffle(order)
+            model.train()
+            train_sum = 0.0
+            start = time.perf_counter()
+            for index in order:
+                pair = pairs["train"][index].to(device=device, dtype=torch.float32)
+                problem = task.make_training_problem(pair, generator=rng)
+                optimizer.zero_grad(set_to_none=True)
+                aggregate = task.training_loss(model, problem)
+                if not torch.isfinite(aggregate.mean):
+                    raise ValueError(f"nonfinite training objective at epoch {epoch}")
+                aggregate.mean.backward()
+                optimizer.step()
+                train_sum += float(aggregate.mean.detach().cpu())
+            train_loss = train_sum / len(order)
+            val_loss = _evaluate(model, task, pairs["validation"], device)
+            if not (float("-inf") < val_loss < float("inf")):
+                raise ValueError("nonfinite validation loss")
+            history.append({
+                "epoch": epoch, "train_loss": train_loss, "validation_loss": val_loss,
+                "seconds": time.perf_counter() - start,
+            })
+            better = val_loss < best_val
+            if better:
+                best_val, best_epoch = val_loss, epoch
+            checkpoint = {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "training_generator_state": rng.get_state(),
+                "history": history,
+                "best_validation_loss": best_val,
+                "best_epoch": best_epoch,
+                "model_config": effective_cfg,
+                "initialization": initialization,
+                "train_scales": _scales_dict(scales),
+                "manifest_sha256": _sha256(output / "manifest.json"),
+                "git_revision": _revision(),
+            }
+            _save_torch(output / "last.pt", checkpoint)
+            if better:
+                _save_torch(output / "best.pt", checkpoint)
+            _save_json(output / "history.json", {"history": history})
+            if writer is not None:
+                write_epoch(
+                    writer, history[-1], best_validation=best_val,
+                    learning_rate=float(optimizer.param_groups[0]["lr"]),
+                    updates_per_epoch=len(order),
+                )
+                writer.flush()
+            print(f"epoch={epoch:03d} train_fm_mse={train_loss:.8f} "
+                  f"val_fm_mse={val_loss:.8f} seconds={history[-1]['seconds']:.2f}", flush=True)
 
     best = torch.load(output / "best.pt", map_location=device, weights_only=True)
     model.load_state_dict(best["model_state_dict"], strict=True)
@@ -624,6 +647,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "validation_generation_diagnostic": diagnostic,
         "sampling_heun_steps": args.sample_steps,
         "epochs_completed": len(history),
+        "tensorboard_log_dir": str(output / "tensorboard") if writer is not None else None,
         "wall_seconds_this_invocation": time.perf_counter() - started,
         "notes": [
             "Selection is by source snapshot; not by spatial patch",
@@ -684,6 +708,8 @@ def main() -> None:
     parser.add_argument("--absolute-coordinate-embedding", action="store_true")
     parser.add_argument("--point-sample-constraint", action="store_true",
                         help="train/sample in the point-selection nullspace (SR-0.3 ablation)")
+    parser.add_argument("--tensorboard", action="store_true",
+                        help="write per-epoch training and validation TensorBoard events")
     parser.add_argument("--sparse-attention-backend", choices=("scatter", "torch_sparse", "dgl"),
                         default="scatter")
     parser.add_argument("--checkpointing", action="store_true")
