@@ -20,6 +20,12 @@ DRAWS=${M44_SR02_DRAWS:-4}
 SAMPLE_STEPS=${M44_SR02_SAMPLE_STEPS:-50}
 MAX_PATCHES=${M44_SR02_MAX_PATCHES:-2}
 PATH_REPEATS=${M44_SR02_PATH_REPEATS:-16}
+ALL_ORIGINS=${M44_SR02_ALL_GENERATION_ORIGINS:-0}
+
+if [ "$ALL_ORIGINS" != 0 ] && [ "$ALL_ORIGINS" != 1 ]; then
+  echo 'M44_SR02_ALL_GENERATION_ORIGINS must be 0 or 1' >&2
+  exit 2
+fi
 
 if [ -z "$SOURCE" ]; then
   echo 'Required: M44_SR02_SOURCE=/absolute/path/to/existing/m44_sr01/run' >&2
@@ -48,7 +54,11 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   tests/unit/test_m44_sr0_evaluation.py \
   tests/unit/test_m44_sr03_point_constraint.py \
   tests/unit/test_m44_sr0_diagnostics_runner.py \
-  tests/unit/test_m44_sr0_training_runner.py
+  tests/unit/test_m44_sr0_training_runner.py \
+  tests/unit/test_m44_sr05_diagnostics.py
+
+EXTRA=()
+if [ "$ALL_ORIGINS" = 1 ]; then EXTRA+=(--all-generation-origins); fi
 
 echo '=== Re-evaluate saved best weights; zero training updates ==='
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
@@ -56,7 +66,7 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
   --run-dir "$SOURCE" --output "$OUT" --device cuda \
   --draws "$DRAWS" --sample-steps "$SAMPLE_STEPS" \
   --max-generation-patches "$MAX_PATCHES" \
-  --path-repeats "$PATH_REPEATS"
+  --path-repeats "$PATH_REPEATS" "${EXTRA[@]}"
 
 echo "SR-0.2 report: $OUT/diagnostic_summary.json"
 echo "SR-0.2 patch metrics: $OUT/flow_matching_per_patch.json"
