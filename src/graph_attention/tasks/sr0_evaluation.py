@@ -190,6 +190,14 @@ def ensemble_residual_moments_and_increments(
     reference = target - baseline
     ensemble_mean = residual.mean(dim=0)
     ensemble_var = residual.var(dim=0, unbiased=False)
+    mean_component = ensemble_mean.square().mean(dim=0)
+    variance_component = ensemble_var.mean(dim=0)
+    full_component = residual.square().mean(dim=(0, 1))
+    reference_component = reference.square().mean(dim=0)
+    if not torch.allclose(
+        mean_component + variance_component, full_component, rtol=1e-5, atol=1e-7
+    ):
+        raise RuntimeError("ensemble second-moment decomposition is inconsistent")
 
     src, dst = edge_index.unbind(dim=0)
     distance = torch.linalg.vector_norm(coords[src] - coords[dst], dim=1)
@@ -218,6 +226,13 @@ def ensemble_residual_moments_and_increments(
         return {name: float(values[i].detach().cpu()) for i, name in enumerate(STATE_FIELDS)}
 
     return {
+        "second_moment_decomposition": {
+            "ensemble_mean_square_by_field": fields(mean_component),
+            "stochastic_variance_by_field": fields(variance_component),
+            "generated_second_moment_by_field": fields(full_component),
+            "dns_reference_second_moment_by_field": fields(reference_component),
+            "identity": "E_draw,node[r^2] = E_node[(E_draw r)^2] + E_node[Var_draw(r)]",
+        },
         "ensemble_mean_residual_rms_by_field": fields(
             ensemble_mean.square().mean(dim=0).sqrt()
         ),
