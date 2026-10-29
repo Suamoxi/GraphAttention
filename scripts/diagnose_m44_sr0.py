@@ -669,6 +669,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("parent training checkpoint changed after cloning")
         if len(checkpoint["history"]) < int(continuation["initial_epochs"]):
             raise ValueError("continued checkpoint has fewer epochs than its parent")
+        summary_path = run_dir / "summary.json"
+        if not summary_path.is_file():
+            raise FileNotFoundError("continued run has not completed its training summary")
+        training_summary = json.loads(summary_path.read_text())
+        completed = int(training_summary["epochs_completed"])
+        if completed != int(continuation["target_epochs"]):
+            raise ValueError("continuation has not completed the target epoch budget")
+        if int(training_summary["best_epoch"]) != int(checkpoint["best_epoch"]):
+            raise ValueError("best checkpoint disagrees with completed training summary")
+    else:
+        completed = None
     ensemble_by_snapshot = {
         split: _snapshot_generation_moments(ensemble[split])
         for split in ("validation", "test")
@@ -693,6 +704,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "train_patch_diversity": manifest.get("train_patch_schedule"),
         "continuation_provenance": continuation,
+        "completed_training_epochs": completed,
         "frozen_scale_provenance": manifest.get("frozen_training_scales"),
         "snapshot_splits": {k: len(manifest["snapshot_indices"][k]) for k in ("train", "validation", "test")},
         "flow_matching_counterfactual": evaluated,
