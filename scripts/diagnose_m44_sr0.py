@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from collections import defaultdict
 import json
+import math
 from pathlib import Path
 import time
 from dataclasses import replace
@@ -40,6 +41,64 @@ def _source_snapshot(sample_id: str) -> str:
     if sample_id.count("/sr0_patch_") != 1:
         raise ValueError(f"unrecognized SR-0 patch sample ID: {sample_id}")
     return sample_id.split("/sr0_patch_", 1)[0]
+
+
+
+def _snapshot_generation_moments(
+    entries: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Pool equal-node patch second moments *within* each source snapshot.
+
+    Each snapshot, not each generated draw or spatial patch, is the
+    independent reporting unit. No temporal decorrelation is claimed.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for entry in entries:
+        grouped[_source_snapshot(entry["sample_id"])].append(entry)
+    output: dict[str, dict[str, Any]] = {}
+    for snapshot, patches in sorted(grouped.items()):
+        if len(set(p["sample_id"] for p in patches)) != len(patches):
+            raise ValueError("repeated source/patch ID in generation ensemble")
+        fields: dict[str, Any] = {}
+        for field in STATE_FIELDS:
+            def average(key: str) -> float:
+                values = [
+                    float(p["residual_spatial_moments"]["second_moment_decomposition"][key][field])
+                    for p in patches
+                ]
+                if not all(math.isfinite(v) and v >= 0 for v in values):
+                    raise ValueError("nonfinite or negative residual second moment")
+                return sum(values) / len(values)
+            mean_sq = average("ensemble_mean_square_by_field")
+            variance = average("stochastic_variance_by_field")
+            generated = average("generated_second_moment_by_field")
+            dns = average("dns_reference_second_moment_by_field")
+            if not math.isclose(mean_sq + variance, generated, rel_tol=1e-5, abs_tol=1e-7):
+                raise ValueError("per-snapshot ensemble decomposition does not close")
+            if dns <= 0:
+                raise ValueError("DNS reference second moment must be positive")
+            fields[field] = {
+                "ensemble_mean_square": mean_sq,
+                "stochastic_variance": variance,
+                "generated_second_moment": generated,
+                "dns_reference_second_moment": dns,
+                "ensemble_mean_rms_over_dns": math.sqrt(mean_sq / dns),
+                "ensemble_std_rms_over_dns": math.sqrt(variance / dns),
+                "generated_rms_over_dns": math.sqrt(generated / dns),
+                "mean_fraction_of_generated_second_moment": (
+                    mean_sq / generated if generated > 0 else None
+                ),
+                "variance_fraction_of_generated_second_moment": (
+                    variance / generated if generated > 0 else None
+                ),
+            }
+        output[snapshot] = {
+            "patches": len(patches),
+            "sample_ids": sorted(p["sample_id"] for p in patches),
+            "draws_per_patch": patches[0]["draws"],
+            "fields": fields,
+        }
+    return output
 
 
 def _origin_key(sample_id: str) -> str:
@@ -389,18 +448,23 @@ def _ensemble_split(
     sample_steps: int,
     max_patches: int,
     seed: int,
+    all_origins: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    # One origin per source snapshot, avoiding oversampling one DNS snapshot.
+    # max_patches bounds distinct source snapshots. When all_origins=True,
+    # include every fixed patch origin for each selected source snapshot.
     chosen = []
     snapshots = set()
     for pair in pairs:
         sid = pair.fine.source.sample_ids[0]
         group = _source_snapshot(sid)
-        if group not in snapshots:
-            snapshots.add(group)
-            chosen.append(pair)
-            if len(chosen) >= max_patches:
-                break
+        if group in snapshots:
+            if all_origins:
+                chosen.append(pair)
+            continue
+        if len(snapshots) >= max_patches:
+            break
+        snapshots.add(group)
+        chosen.append(pair)
     results = []
     example = None
     model.eval()
@@ -583,9 +647,32 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             draws=args.draws, sample_steps=args.sample_steps,
             max_patches=args.max_generation_patches,
             seed=int(manifest["seed"]) + 3000,
+            all_origins=bool(getattr(args, "all_generation_origins", False)),
         )
+        if bool(getattr(args, "all_generation_origins", False)):
+            counts = _snapshot_generation_moments(ensemble[split])
+            expected = len(manifest["patch_origins"])
+            if any(row["patches"] != expected for row in counts.values()):
+                raise ValueError("all-origin diagnostic did not cover every fixed origin")
         if example is not None:
             examples[split] = example
+    continuation_path = run_dir / "continuation_provenance.json"
+    continuation = None
+    if continuation_path.is_file():
+        continuation = json.loads(continuation_path.read_text())
+        if continuation.get("protocol") != "M44_SR05_IMMUTABLE_CONTINUATION_V1":
+            raise ValueError("unrecognized continuation provenance protocol")
+        if continuation.get("source_manifest_sha256") != _sha256(manifest_path):
+            raise ValueError("continued checkpoint manifest differs from parent")
+        parent = Path(continuation["source_run_dir"])
+        if _sha256(parent / "last.pt") != continuation["source_last_sha256"]:
+            raise ValueError("parent training checkpoint changed after cloning")
+        if len(checkpoint["history"]) < int(continuation["initial_epochs"]):
+            raise ValueError("continued checkpoint has fewer epochs than its parent")
+    ensemble_by_snapshot = {
+        split: _snapshot_generation_moments(ensemble[split])
+        for split in ("validation", "test")
+    }
     report = {
         "status": "sr0_checkpoint_diagnostics_complete",
         "source_run_dir": str(run_dir),
@@ -605,11 +692,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "original_fixed_train_origins_only" if diverse_training else "all_training_patches"
         ),
         "train_patch_diversity": manifest.get("train_patch_schedule"),
+        "continuation_provenance": continuation,
         "frozen_scale_provenance": manifest.get("frozen_training_scales"),
         "snapshot_splits": {k: len(manifest["snapshot_indices"][k]) for k in ("train", "validation", "test")},
         "flow_matching_counterfactual": evaluated,
         "repeated_flow_matching": repeated_paths,
         "generation_ensemble": ensemble,
+        "generation_ensemble_by_snapshot": ensemble_by_snapshot,
+        "all_generation_origins": bool(getattr(args, "all_generation_origins", False)),
         "draws_per_generation_patch": args.draws,
         "generation_heun_steps": args.sample_steps,
         "wall_seconds": time.perf_counter() - start,
@@ -639,7 +729,10 @@ def main() -> None:
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--draws", type=int, default=4)
     parser.add_argument("--sample-steps", type=int, default=50)
-    parser.add_argument("--max-generation-patches", type=int, default=2)
+    parser.add_argument("--max-generation-patches", type=int, default=2,
+                        help="maximum distinct source snapshots for ensemble generation")
+    parser.add_argument("--all-generation-origins", action="store_true",
+                        help="sample every fixed patch origin per selected snapshot")
     parser.add_argument("--path-repeats", type=int, default=1,
                         help="independent, deterministic FM paths per patch; 1 disables repetition")
     args = parser.parse_args()
