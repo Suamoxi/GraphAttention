@@ -121,3 +121,20 @@ def test_synthetic_core_fm_optimizer_step_and_owned_loss(mode):
     assert torch.isfinite(model.fine_decoder.final_layer.projection.weight.grad).all()
     opt.step()
     assert torch.isfinite(model.fine_decoder.final_layer.projection.weight).all()
+
+
+@pytest.mark.parametrize("operator", ["block_average", "anchor_trilinear"])
+def test_projected_flow_path_stays_in_q_nullspace(operator):
+    from scripts.m45_synthetic_pilot import _path
+
+    mesh = build_hit_two_scale_geometry(coarse_side=3, refinement=2)
+    qb = SyntheticQB(mesh, operator)
+    pair = make_synthetic_pair(qb, case="shared_mode", sample_id=1, seed=77)
+    x1 = pair.residual / fit_synthetic_scales([
+        pair, make_synthetic_pair(qb, case="shared_mode", sample_id=2, seed=78)
+    ]).rms_residual
+    xt, velocity, _ = _path(x1, 444, qb)
+    torch.testing.assert_close(qb.restrict(xt), torch.zeros_like(pair.coarse), atol=1e-6, rtol=1e-6)
+    torch.testing.assert_close(qb.restrict(velocity), torch.zeros_like(pair.coarse), atol=1e-6, rtol=1e-6)
+    xt_full, _, _ = _path(x1, 444)
+    assert qb.restrict(xt_full).abs().max() > 1e-4
