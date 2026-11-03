@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import torch
 from math import isfinite
+
+import torch
 
 
 def edge_relative_displacement(
