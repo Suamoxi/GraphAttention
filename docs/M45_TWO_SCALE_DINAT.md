@@ -116,3 +116,23 @@ Not yet implemented:
 Do not report either architecture as trained or large-mesh qualified until
 these gates have been completed.
 
+
+## Grace qualification job
+
+The numerical qualification Slurm file is
+`scripts/slurm/m45_two_scale_tests.slurm`. It runs both the static and
+dynamic M45 unit gates, then the M37 geometric-DiNAT and M44 Flow Matching
+regression tests using the existing Grace Singularity/Python environment.
+
+Submit from the Grace login node after updating a clean working tree:
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+git pull --rebase
+sbatch scripts/slurm/m45_two_scale_tests.slurm
+```
+
+Logs are written to
+`/scratch/coop/theret/GraphAttention/m45_two_scale_tests_<jobid>.out`
+and the corresponding `.err`. This is a **qualification/test job only**:
+there is no M45 training entry point or large-mesh inference job yet.
