@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import torch
+from math import isfinite
 
 
 def edge_relative_displacement(
     coords: torch.Tensor,
     edge_index: torch.Tensor,
+    *,
+    periodic_length: float | None = None,
 ) -> torch.Tensor:
     """Return target-to-source displacement for every directed edge.
 
@@ -36,4 +39,11 @@ def edge_relative_displacement(
 
     source = edge_index[0]
     target = edge_index[1]
-    return coords[source] - coords[target]
+    displacement = coords[source] - coords[target]
+    if periodic_length is None:
+        return displacement
+    length = float(periodic_length)
+    if not isfinite(length) or length <= 0:
+        raise ValueError("periodic_length must be finite and positive")
+    half = length / 2.0
+    return torch.remainder(displacement + half, length) - half

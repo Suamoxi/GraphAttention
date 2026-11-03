@@ -240,6 +240,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         batch_index: torch.Tensor | None = None,
         conditioning: torch.Tensor | None = None,
         attention_edge_indices: Mapping[str, torch.Tensor] | None = None,
+        periodic_length: float | None = None,
     ) -> torch.Tensor:
         _validate_model_inputs(
             inputs,
@@ -310,10 +311,12 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         local_displacement = edge_relative_displacement(
             coords,
             local_attention_edge_index,
+            periodic_length=periodic_length,
         )
         dilated_displacement = edge_relative_displacement(
             coords,
             dilated_attention_edge_index,
+            periodic_length=periodic_length,
         )
 
         local_sparse_adj = None
