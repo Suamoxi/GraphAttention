@@ -136,3 +136,15 @@ Logs are written to
 `/scratch/coop/theret/GraphAttention/m45_two_scale_tests_<jobid>.out`
 and the corresponding `.err`. This is a **qualification/test job only**:
 there is no M45 training entry point or large-mesh inference job yet.
+
+
+## Synthetic evaluation pilot
+
+Before audited physical `dnstoles` Q/B pairs are ready, M45 supports a separate,
+**synthetic-only** operator-consistent FM experiment. It compares static versus
+dynamic two-scale DiNAT on local and globally coherent unresolved residuals.
+This is a numerical/architectural study and must not be reported as filtered
+LES/DNS super-resolution validation.
+
+See `docs/M45_SYNTHETIC_PILOT.md` for the exact Q/B definitions, projected
+Flow Matching option, evaluation metrics, Grace `sbatch` command, and result paths.
