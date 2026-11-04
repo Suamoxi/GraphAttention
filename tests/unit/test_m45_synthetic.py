@@ -74,24 +74,30 @@ def test_synthetic_statistics_are_train_only():
 
 
 @pytest.mark.parametrize("mode", ["static", "dynamic"])
-def test_synthetic_core_fm_optimizer_step_and_owned_loss(mode):
+@pytest.mark.parametrize("depth", [1, 2])
+def test_synthetic_core_fm_optimizer_step_and_owned_loss(mode, depth):
     mesh = build_hit_two_scale_geometry(coarse_side=3, refinement=2)
     qb = SyntheticQB(mesh, "block_average")
     pair = make_synthetic_pair(qb, case="shared_mode", sample_id=1, seed=2026)
     scales = fit_synthetic_scales([pair, make_synthetic_pair(qb, case="shared_mode", sample_id=2, seed=2027)])
     model = TwoScaleDiNAT(
         mode=mode, coarse_width=16, fine_width=16, num_heads=4,
-        fine_pre_layers=1, fine_post_layers=1,
-        coarse_static_layers=1, coarse_dynamic_layers=1,
+        fine_pre_layers=depth, fine_post_layers=depth,
+        coarse_static_layers=depth, coarse_dynamic_layers=depth,
     )
+    assert len(model.fine_encoder.blocks) == len(model.fine_decoder.blocks) == depth
+    assert len(model.coarse_encoder.blocks) == depth
+    if mode == "dynamic":
+        assert len(model.coarse_dynamic.blocks) == depth
     owned = torch.arange(27, dtype=torch.long)
     plan = two_scale_patch_dependencies(
         owned,
         fine_local=mesh.fine_edges, fine_dilated=mesh.fine_dilated,
         coarse_local=mesh.coarse_edges, coarse_dilated=mesh.coarse_dilated,
         coarse_to_fine=mesh.coarse_to_fine, fine_to_coarse=mesh.fine_to_coarse,
-        fine_pre_layers=1, fine_post_layers=1, coarse_static_layers=1,
-        coarse_dynamic_layers=int(mode == "dynamic"),
+        fine_pre_layers=depth, fine_post_layers=depth,
+        coarse_static_layers=depth,
+        coarse_dynamic_layers=depth * int(mode == "dynamic"),
     )
     patch = extract_two_scale_patch_geometry(mesh, plan)
     coarse = (pair.coarse - scales.mean_coarse) / scales.std_coarse

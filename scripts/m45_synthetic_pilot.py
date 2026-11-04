@@ -271,6 +271,10 @@ def main() -> None:
     parser.add_argument("--generated-samples", type=int, default=4)
     parser.add_argument("--core-side", type=int, default=4)
     parser.add_argument("--width", type=int, default=16)
+    parser.add_argument("--fine-pre-layers", type=int, default=1)
+    parser.add_argument("--fine-post-layers", type=int, default=1)
+    parser.add_argument("--coarse-static-layers", type=int, default=1)
+    parser.add_argument("--coarse-dynamic-layers", type=int, default=1)
     parser.add_argument("--heads", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=2026)
@@ -278,7 +282,9 @@ def main() -> None:
     parser.add_argument("--source-subspace", choices=("nullspace", "full"), default="nullspace")
     args = parser.parse_args()
     if (min(args.train_samples, args.val_samples, args.steps, args.heun_steps,
-            args.generated_samples, args.core_side, args.width, args.heads) < 1
+            args.generated_samples, args.core_side, args.width, args.heads,
+            args.fine_pre_layers, args.fine_post_layers,
+            args.coarse_static_layers, args.coarse_dynamic_layers) < 1
             or args.generated_samples > args.val_samples
             or args.width % args.heads):
         parser.error("positive counts, generated-samples <= val-samples, width divisible by heads required")
@@ -312,8 +318,10 @@ def main() -> None:
                for i in range(args.val_samples)]
         scales = fit_synthetic_scales(train)
         params = dict(coarse_width=args.width, fine_width=args.width, num_heads=args.heads,
-                      fine_pre_layers=1, fine_post_layers=1,
-                      coarse_static_layers=1, coarse_dynamic_layers=1)
+                      fine_pre_layers=args.fine_pre_layers,
+                      fine_post_layers=args.fine_post_layers,
+                      coarse_static_layers=args.coarse_static_layers,
+                      coarse_dynamic_layers=args.coarse_dynamic_layers)
         torch.manual_seed(args.seed + 77)
         static = TwoScaleDiNAT(mode="static", **params)
         torch.manual_seed(args.seed + 77)

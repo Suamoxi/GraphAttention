@@ -132,7 +132,8 @@ def test_patch_extract_preserves_global_ids_and_bipartite_weights():
 
 
 @pytest.mark.parametrize("mode", ["static", "dynamic"])
-def test_owned_velocities_match_global_forward_after_dependency_closure(mode):
+@pytest.mark.parametrize("depth", [1, 2])
+def test_owned_velocities_match_global_forward_after_dependency_closure(mode, depth):
     """Real M37 integration gate (requires the installed GraphAttention repo)."""
     from graph_attention.geometry.two_scale_partition import extract_two_scale_patch_geometry
 
@@ -140,8 +141,8 @@ def test_owned_velocities_match_global_forward_after_dependency_closure(mode):
     torch.manual_seed(17)
     model = TwoScaleDiNAT(
         mode=mode, coarse_width=16, fine_width=16, num_heads=4,
-        fine_pre_layers=1, fine_post_layers=1,
-        coarse_static_layers=1, coarse_dynamic_layers=1,
+        fine_pre_layers=depth, fine_post_layers=depth,
+        coarse_static_layers=depth, coarse_dynamic_layers=depth,
     ).eval()
     # Expose attention dependencies rather than only the initialized zero
     # velocity head or initially closed adaLN residual gates.
@@ -173,8 +174,9 @@ def test_owned_velocities_match_global_forward_after_dependency_closure(mode):
         owned, fine_local=mesh.fine_edges, fine_dilated=mesh.fine_dilated,
         coarse_local=mesh.coarse_edges, coarse_dilated=mesh.coarse_dilated,
         coarse_to_fine=mesh.coarse_to_fine, fine_to_coarse=mesh.fine_to_coarse,
-        fine_pre_layers=1, fine_post_layers=1,
-        coarse_static_layers=1, coarse_dynamic_layers=int(mode == 'dynamic'),
+        fine_pre_layers=depth, fine_post_layers=depth,
+        coarse_static_layers=depth,
+        coarse_dynamic_layers=depth * int(mode == 'dynamic'),
     )
     patch = extract_two_scale_patch_geometry(mesh, plan)
     local = model(
@@ -187,6 +189,24 @@ def test_owned_velocities_match_global_forward_after_dependency_closure(mode):
         cross_weights=patch.cross_weights, **common,
     )
     torch.testing.assert_close(local[patch.owned_fine_local], whole[owned], atol=2e-4, rtol=2e-4)
+    if depth == 2:
+        # Equal owned-node outputs must also yield equal parameter gradients.
+        # This catches missing halo dependencies that forward-only checks can miss.
+        model.zero_grad(set_to_none=True)
+        whole[owned].square().mean().backward()
+        global_grads = {
+            name: parameter.grad.detach().clone() if parameter.grad is not None else None
+            for name, parameter in model.named_parameters()
+        }
+        model.zero_grad(set_to_none=True)
+        local[patch.owned_fine_local].square().mean().backward()
+        for name, parameter in model.named_parameters():
+            reference = global_grads[name]
+            if reference is None:
+                assert parameter.grad is None, name
+            else:
+                assert parameter.grad is not None, name
+                torch.testing.assert_close(parameter.grad, reference, atol=2e-5, rtol=2e-3)
 
 
 def test_periodic_displacement_uses_minimum_image():
@@ -196,4 +216,3 @@ def test_periodic_displacement_uses_minimum_image():
     edge = torch.tensor([[1], [0]], dtype=torch.long)
     displ = edge_relative_displacement(coords, edge, periodic_length=1.0)
     torch.testing.assert_close(displ, torch.tensor([[-0.25, 0., 0.]]))
-
