@@ -99,6 +99,31 @@ def shared_mode(qb: SyntheticQB) -> torch.Tensor:
     return projected / rms
 
 
+def sample_conditional_residual(
+    qb: SyntheticQB, coarse: torch.Tensor, *, case: str,
+    generator: torch.Generator,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Independent fine residual for a *fixed* coarse state and PRNG stream.
+
+    Return (R, spatial_template). Reuses the identical stochastic construction
+    as the training pairs; unlike make_synthetic_pair, coarse is not resampled.
+    """
+    if case not in CASES:
+        raise ValueError(f"case must be one of {CASES}")
+    qb._shape(coarse, qb.nc**3, "coarse")
+    baseline = qb.reconstruct(coarse)
+    local_noise = torch.randn((qb.nf**3, 5), generator=generator, dtype=coarse.dtype)
+    strength = 0.75 + 0.25 * torch.tanh(20 * (baseline[:, :1] - 1.0))
+    channel_scale = coarse.new_tensor((0.018, 0.023, 0.023, 0.023, 0.050))
+    candidate = local_noise * strength * channel_scale
+    template = shared_mode(qb)
+    if case == "shared_mode":
+        latent = torch.randn((), generator=generator, dtype=coarse.dtype)
+        candidate = candidate + latent * template * channel_scale * 1.7
+    residual = qb.nullspace(candidate)
+    return residual, template
+
+
 def make_synthetic_pair(
     qb: SyntheticQB, *, case: str, sample_id: int, seed: int
 ) -> SyntheticPair:
@@ -127,15 +152,7 @@ def make_synthetic_pair(
     ), dim=1)
     baseline = qb.reconstruct(coarse)
 
-    local_noise = torch.randn((qb.nf**3, 5), generator=generator, dtype=coarse.dtype)
-    strength = 0.75 + 0.25 * torch.tanh(20 * (baseline[:, :1] - 1.0))
-    channel_scale = coarse.new_tensor((0.018, 0.023, 0.023, 0.023, 0.050))
-    candidate = local_noise * strength * channel_scale
-    template = shared_mode(qb)
-    if case == "shared_mode":
-        latent = torch.randn((), generator=generator, dtype=coarse.dtype)
-        candidate = candidate + latent * template * channel_scale * 1.7
-    residual = qb.nullspace(candidate)
+    residual, template = sample_conditional_residual(qb, coarse, case=case, generator=generator)
     fine = baseline + residual
     torch.testing.assert_close(qb.restrict(fine), coarse, atol=1e-6, rtol=1e-6)
     torch.testing.assert_close(qb.restrict(residual), torch.zeros_like(coarse), atol=1e-6, rtol=1e-6)
