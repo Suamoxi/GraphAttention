@@ -445,6 +445,14 @@ def _broadcast_graph_features(
         if features.shape[0] != 1:
             raise ValueError("single-graph inputs require exactly one graph feature row")
         return features.expand(num_nodes, -1)
+    # Packed batch IDs have already been validated by _condition_embedding().
+    # A single physical graph has B=1 even when its batch_index is supplied.
+    # Expand is a view whose backward reduces per-node gradients instead of
+    # using a highly contended scatter/index_put into the sole graph row.
+    if features.shape[0] == 1:
+        return features.expand(num_nodes, -1)
+    # Multiple meshes can have different node counts and conditioning times.
+    # Keep the original indexed broadcasting semantics for genuine B > 1.
     return features[batch_index]
 
 
