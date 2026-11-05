@@ -10,7 +10,6 @@ The initial M3.3 reference YAML and its hash are NEVER changed by this script.
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 from pathlib import Path
 
@@ -111,7 +110,8 @@ def read_reference_states(reference_dir: Path, state_dir: Path,
             scales[name] = _reference_value(value, case, name)
             meta[name] = {"value": scales[name], "units": value.units,
                           "definition": value.definition, "provenance": value.provenance,
-                          "source": str(extra_path if new and name in new.names else base.source_path)}
+                          "source": str(extra_path if new and name in new.names
+                                        else base.source_path)}
         if missing and not allow_incomplete:
             raise ValueError(f"{case}: missing {missing} from explicit state reference YAML "
                              f"{extra_path}; run --mode inspect and complete the template")
@@ -154,7 +154,8 @@ def run_inspect(audit_root: Path, destination: Path, reference_dir: Path,
         if case in states:
             refs = states[case]
             drho = float(np.mean(hist["std_rho"][40:]))
-            report[case]["mean_density_offset_over_rms"] = abs(observed_mean - refs.rho0) / max(drho, 1e-30)
+            report[case]["mean_density_offset_over_rms"] = (
+                abs(observed_mean - refs.rho0) / max(drho, 1e-30))
             report[case]["mean_scaled_density_offset"] = (
                 observed_mean - refs.rho0) / (refs.rho0 * refs.mach**2)
             if report[case]["mean_density_offset_over_rms"] > 0.2:
@@ -549,7 +550,8 @@ def run_compare(audit_root: Path, qualification_root: Path, destination: Path,
         density_rms = float(np.mean(history[case]["std_rho"][40:]))
         refs = state_refs[case]
         audit[case]["mean_rho_from_audit_diagnostic_only"] = rho_obs
-        audit[case]["density_center_offset_over_rms"] = abs(rho_obs-refs.rho0)/max(density_rms,1e-20)
+        audit[case]["density_center_offset_over_rms"] = (
+            abs(rho_obs - refs.rho0) / max(density_rms, 1e-20))
         audit[case]["mach_scaled_density_rms"] = density_rms/(refs.rho0*refs.mach**2)
         audit[case]["density_center_offset_in_mach_scaled_units"] = (
             rho_obs-refs.rho0)/(refs.rho0*refs.mach**2)
@@ -578,7 +580,8 @@ def run_compare(audit_root: Path, qualification_root: Path, destination: Path,
             "W1 half-trajectory baseline and time-block bootstrap are descriptive, not p-values.",
             "Spatial nodes are not independent Monte Carlo samples of DNS realizations.",
             "Reynolds number and grid resolution are confounded in this six-case dataset.",
-            "Common k support stays below 70% (or selected fraction) of minimum directional Nyquist.",
+            "Common k support stays below 70% (or selected fraction) of minimum "
+            "directional Nyquist.",
             "Equal dimensionless coarse-filter width does not match fine-grid bandwidth.",
             "Reference-state similarity is diagnostic, NOT a new model preprocessing choice.",
         ],
