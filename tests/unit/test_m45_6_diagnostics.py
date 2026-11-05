@@ -29,7 +29,7 @@ def test_canonical_gaussian_transport_matches_analytic_mode_moment(case):
     oracle = BlockGaussianOracle(qb, train[0].coarse, scales, case, torch.device("cpu"))
     direct = CanonicalGaussianTransport(oracle)
     assert direct.sqrt_local.shape == (qb.nc**3, 5)
-    template = train[0].mode[:, 0]
+    template = train[0].mode[:, 0].to(dtype=torch.float64)
     draws = []
     for seed in range(256):
         x = direct.apply(_source(qb, seed)) * scales.rms_residual
