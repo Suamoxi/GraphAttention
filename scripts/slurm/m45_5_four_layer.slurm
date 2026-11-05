@@ -34,7 +34,8 @@ nvidia-smi --query-gpu=name,memory.total --format=csv
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m py_compile scripts/m45_synthetic_pilot.py \
     scripts/m45_checkpoint_diagnostics.py tests/unit/test_two_scale_hit.py \
-    tests/unit/test_m45_synthetic.py tests/unit/test_m45_4_controls.py
+    tests/unit/test_m45_synthetic.py tests/unit/test_m45_4_controls.py \
+    tests/unit/test_m45_checkpoint_diagnostics.py
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m pytest -q \
     tests/unit/test_two_scale_hit.py tests/unit/test_m45_synthetic.py \

@@ -9,7 +9,8 @@
 
 # M45.4: keep the TWO-layer architecture unchanged; vary ONLY training scope,
 # independent training count and seed. The same held-out split is fixed across jobs.
-# The optional --array=0-11 matrix covers: 2 scopes x 2 sizes x 3 seeds.set -euo pipefail
+# The optional --array=0-11 matrix covers: 2 scopes x 2 sizes x 3 seeds.
+set -euo pipefail
 REPO=/scratch/coop/theret/GraphAttention
 IMAGE=/softs/local_arm/singularity/images/pyg25.03.sif
 PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
@@ -57,7 +58,9 @@ nvidia-smi --query-gpu=name,memory.total --format=csv
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m py_compile \
     scripts/m45_synthetic_pilot.py scripts/m45_checkpoint_diagnostics.py \
-    tests/unit/test_m45_4_controls.py
+    tests/unit/test_m45_4_controls.py \
+    tests/unit/test_two_scale_hit.py tests/unit/test_m45_synthetic.py \
+    tests/unit/test_m45_checkpoint_diagnostics.py
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m pytest -q \
     tests/unit/test_two_scale_hit.py \
