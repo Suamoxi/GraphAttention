@@ -44,7 +44,8 @@ def test_direct_local_transport_matches_exact_heun_endpoint():
     mesh = build_hit_two_scale_geometry(coarse_side=3, refinement=2)
     qb = SyntheticQB(mesh, "block_average")
     train = [make_synthetic_pair(qb, case="local", sample_id=i, seed=130+i)
-             for i in range(5)]    scales = fit_synthetic_scales(train)
+             for i in range(5)]
+    scales = fit_synthetic_scales(train)
     oracle = BlockGaussianOracle(qb, train[0].coarse, scales, "local", torch.device("cpu"))
     direct = CanonicalGaussianTransport(oracle)
     source = _source(qb, 231)
