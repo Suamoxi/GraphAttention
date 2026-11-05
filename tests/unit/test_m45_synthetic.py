@@ -74,7 +74,7 @@ def test_synthetic_statistics_are_train_only():
 
 
 @pytest.mark.parametrize("mode", ["static", "dynamic"])
-@pytest.mark.parametrize("depth", [1, 2])
+@pytest.mark.parametrize("depth", [1, 2, 4])
 def test_synthetic_core_fm_optimizer_step_and_owned_loss(mode, depth):
     mesh = build_hit_two_scale_geometry(coarse_side=3, refinement=2)
     qb = SyntheticQB(mesh, "block_average")

@@ -179,7 +179,10 @@ def _train_one(
     model, mesh_cpu, mesh_gpu, qb, qb_gpu, train_pairs, val_pairs, scales, *,
     projected: bool, device: torch.device, seed: int, steps: int, lr: float, core_side: int,
     heun_steps: int, sample_count: int, out_dir: Path,
+    training_scope: str = "patch_owned",
 ) -> dict:
+    if training_scope not in ("patch_owned", "full_owned", "full_all"):
+        raise ValueError(f"invalid training scope: {training_scope}")
     model = model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     patches = _patches(mesh_cpu, model, core_side, device)
@@ -196,13 +199,25 @@ def _train_one(
         patch_cpu, patch_gpu = patches[int(core_ids[step])]
         c, b, x1 = _state(pair, scales)
         xt, target_v, t = _path(x1, seed + 500_000 + step * 997, qb if projected else None)
-        predicted = _velocity(
-            model, xt[patch_cpu.fine_global].to(device),
-            b[patch_cpu.fine_global].to(device),
-            c[patch_cpu.coarse_global].to(device), patch_gpu, t.to(device),
-        )
-        observed = target_v[patch_cpu.fine_global].to(device)
-        loss = (predicted[patch_gpu.owned_fine_local] - observed[patch_gpu.owned_fine_local]).square().mean()
+        if training_scope == "patch_owned":
+            predicted = _velocity(
+                model, xt[patch_cpu.fine_global].to(device),
+                b[patch_cpu.fine_global].to(device),
+                c[patch_cpu.coarse_global].to(device), patch_gpu, t.to(device),
+            )
+            observed = target_v[patch_cpu.fine_global].to(device)
+            indices = patch_gpu.owned_fine_local
+            fine_read, coarse_read = len(patch_cpu.fine_global), len(patch_cpu.coarse_global)
+        else:
+            # Compare identical owned-node gradients on the complete graph,
+            # or train on all fine nodes using the same sampled FM path.
+            predicted = _velocity(model, xt.to(device), b.to(device), c.to(device),
+                                  mesh_gpu, t.to(device))
+            observed = target_v.to(device)
+            indices = (patch_cpu.fine_global[patch_cpu.owned_fine_local].to(device)
+                       if training_scope == "full_owned" else slice(None))
+            fine_read, coarse_read = mesh_cpu.fine_side**3, mesh_cpu.coarse_side**3
+        loss = (predicted[indices] - observed[indices]).square().mean()
         if not torch.isfinite(loss):
             raise RuntimeError(f"nonfinite M45 synthetic training loss at step {step}")
         optimizer.zero_grad(set_to_none=True)
@@ -212,15 +227,17 @@ def _train_one(
         record = {
             "step": step + 1, "training_loss": float(loss.item()),
             "gradient_norm": grad_norm,
-            "fine_owned_nodes": len(patch_cpu.owned_fine_local),
-            "fine_read_nodes": len(patch_cpu.fine_global),
-            "coarse_read_nodes": len(patch_cpu.coarse_global),
+            "fine_owned_nodes": (mesh_cpu.fine_side**3 if training_scope == "full_all"
+                                 else len(patch_cpu.owned_fine_local)),
+            "fine_read_nodes": fine_read,
+            "coarse_read_nodes": coarse_read,
         }
         history.append(record)
         if (step + 1) % max(1, steps // 4) == 0:
             print(f"{model.mode:7} step {step+1:4}/{steps}: "
                   f"loss={record['training_loss']:.5g}; "
-                  f"fine read/owned={len(patch_cpu.fine_global)}/{len(patch_cpu.owned_fine_local)}", flush=True)
+                  f"scope={training_scope} fine read/owned="
+                  f"{record['fine_read_nodes']}/{record['fine_owned_nodes']}", flush=True)
     elapsed = time.perf_counter() - start
     val_loss = _validate(model, mesh_gpu, qb, val_pairs, scales, device, seed + 90000, projected)
     sample_metrics = _sample_diagnostics(
@@ -243,6 +260,8 @@ def _train_one(
     }, out_dir / "checkpoint.pt")
     result = {
         "mode": model.mode,
+        "training_scope": training_scope,
+        "train_samples": len(train_pairs),
         "training_steps": steps,
         "final_training_loss": history[-1]["training_loss"],
         "heldout_fm_loss": val_loss,
@@ -278,6 +297,10 @@ def main() -> None:
     parser.add_argument("--heads", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--val-seed", type=int, default=None,
+                        help="Fixed validation seed across training seeds; default retains M45.2 split")
+    parser.add_argument("--training-scope", choices=("patch_owned", "full_owned", "full_all"),
+                        default="patch_owned")
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--source-subspace", choices=("nullspace", "full"), default="nullspace")
     args = parser.parse_args()
@@ -288,6 +311,8 @@ def main() -> None:
             or args.generated_samples > args.val_samples
             or args.width % args.heads):
         parser.error("positive counts, generated-samples <= val-samples, width divisible by heads required")
+    if args.seed < 0 or (args.val_seed is not None and args.val_seed < 0):
+        parser.error("random seeds must be nonnegative")
     if not (0 < args.learning_rate < 1):
         parser.error("learning-rate must be in (0,1)")
     if args.output_dir.exists():
@@ -313,8 +338,9 @@ def main() -> None:
         print(f"=== M45 case={case} operator={args.operator} r={args.refinement} ===", flush=True)
         train = [make_synthetic_pair(qb, case=case, sample_id=i, seed=args.seed + i * 3001)
                  for i in range(args.train_samples)]
+        validation_seed = args.seed + 7_000_000 if args.val_seed is None else args.val_seed
         val = [make_synthetic_pair(qb, case=case, sample_id=i + 100000,
-                                   seed=args.seed + 7_000_000 + i * 3001)
+                                   seed=validation_seed + i * 3001)
                for i in range(args.val_samples)]
         scales = fit_synthetic_scales(train)
         params = dict(coarse_width=args.width, fine_width=args.width, num_heads=args.heads,
@@ -340,6 +366,7 @@ def main() -> None:
                 seed=args.seed, steps=args.steps, lr=args.learning_rate,
                 core_side=args.core_side, heun_steps=args.heun_steps,
                 sample_count=args.generated_samples, out_dir=out,
+                training_scope=args.training_scope,
             )
             result.update({"case": case, "operator": args.operator, "refinement": args.refinement})
             all_results.append(result)

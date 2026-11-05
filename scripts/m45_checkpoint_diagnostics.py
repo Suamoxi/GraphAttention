@@ -51,8 +51,7 @@ class BlockGaussianOracle:
                  scales: SyntheticScales, case: str, device: torch.device):
         if qb.kind != "block_average":
             raise ValueError("exact Gaussian oracle currently requires block_average Q/B")
-        if case not in CASES:
-            raise ValueError(f"unknown synthetic case: {case}")
+        if case not in CASES:            raise ValueError(f"unknown synthetic case: {case}")
         self.nc, self.r, self.case = qb.nc, qb.r, case
         m = qb.r**3
         p = torch.eye(m, device=device, dtype=torch.float64) - torch.ones((m, m), device=device, dtype=torch.float64) / m
@@ -239,6 +238,29 @@ def _time_metrics(model: TwoScaleDiNAT, qb: SyntheticQB, qb_gpu: SyntheticQB,
     return rows
 
 
+@torch.no_grad()
+def _generate_oracle(oracle: BlockGaussianOracle, qb: SyntheticQB,
+                     scales: SyntheticScales, *, device: torch.device,
+                     seed: int, steps: int) -> torch.Tensor:
+    """Positive-control FM sampler: integrate the *exact* Gaussian velocity.
+
+    Uses the same projected Gaussian source and Heun formula as neural
+    inference, then returns the residual in original synthetic units.
+    """
+    if steps < 1:
+        raise ValueError("Heun steps must be positive")
+    gen = torch.Generator(device="cpu").manual_seed(int(seed))
+    x = qb.nullspace(torch.randn((qb.nf**3, 5), generator=gen)).to(device)
+    dt = 1.0 / steps
+    for n in range(steps):
+        t = n * dt
+        k1 = oracle.velocity(x, t)
+        xp = x + dt * k1
+        k2 = oracle.velocity(xp, (n + 1) * dt)
+        x = x + 0.5 * dt * (k1 + k2)
+    return (x.cpu() * scales.rms_residual).contiguous()
+
+
 def _generate_ensemble(model: TwoScaleDiNAT, mesh_gpu, qb_gpu, pair, scales,
                        *, device, seeds: list[int], steps: int, feedback_off: bool) -> torch.Tensor:
     def _run() -> torch.Tensor:
@@ -268,6 +290,10 @@ def main() -> None:
     parser.add_argument("--heun-steps", type=int, nargs="+", default=[8, 25, 50])
     parser.add_argument("--eval-times", type=float, nargs="+", default=[0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0])
     parser.add_argument("--velocity-noise-draws", type=int, default=4)
+    parser.add_argument("--oracle-sampling", action="store_true",
+                        help="Heun-integrate exact conditional Gaussian FM velocity as positive control")
+    parser.add_argument("--oracle-heun-steps", type=int, nargs="+", default=None,
+                        help="Separate step list for exact-oracle Heun sampling")
     parser.add_argument("--seed", type=int, default=53177)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     args = parser.parse_args()
@@ -275,7 +301,9 @@ def main() -> None:
         parser.error("refusing to overwrite output directory")
     if args.generated_samples < 2 or args.velocity_noise_draws < 1 or args.seed < 0:
         parser.error("generated-samples >= 2, velocity-noise-draws >= 1, and seed >= 0 required")
-    if any(x < 1 for x in args.heun_steps) or any(not 0 <= x <= 1 for x in args.eval_times):
+    if (any(x < 1 for x in args.heun_steps)
+            or (args.oracle_heun_steps is not None and any(x < 1 for x in args.oracle_heun_steps))
+            or any(not 0 <= x <= 1 for x in args.eval_times)):
         parser.error("Heun steps must be positive and evaluation times must be in [0,1]")
     summary = json.loads((args.checkpoint_root / "summary.json").read_text())
     settings = summary["settings"]
@@ -292,11 +320,14 @@ def main() -> None:
     qb = SyntheticQB(mesh, settings["operator"])
     qb_gpu = SyntheticQB(mesh_gpu, settings["operator"])
     train_seed = settings["seed"]
+    val_seed = settings.get("val_seed")
+    if val_seed is None:
+        val_seed = train_seed + 7_000_000
     args.output_dir.mkdir(parents=True)
     timing, generation, correlations, amplitudes, references = [], [], [], [], []
     for case in args.cases:
         pairs = [make_synthetic_pair(qb, case=case, sample_id=i + 100000,
-                 seed=train_seed + 7_000_000 + 3001 * i) for i in range(settings["val_samples"])]
+                 seed=val_seed + 3001 * i) for i in range(settings["val_samples"])]
         fixed = pairs[args.val_index]
         template = fixed.mode[:, 0]
         reference_samples = _fixed_coarse_references(qb, fixed.coarse, case, seed=args.seed + 700000,
@@ -322,6 +353,28 @@ def main() -> None:
                               case=case, times=args.eval_times, draws=args.velocity_noise_draws,
                               seed=args.seed, device=device))
                 seeds = [args.seed + 1_000_000 + 3277 * i for i in range(args.generated_samples)]
+                if args.oracle_sampling and mode == args.modes[0]:
+                    oracle = BlockGaussianOracle(qb, fixed.coarse, scales, case, device)
+                    for steps in (args.oracle_heun_steps or args.heun_steps):
+                        ensemble = torch.stack([
+                            _generate_oracle(oracle, qb, scales, device=device,
+                                             seed=seed, steps=steps) for seed in seeds
+                        ])
+                        metrics = _ensemble_metrics(ensemble, template, qb)
+                        metrics.update({"case": case, "mode": "oracle", "variant": "exact_velocity",
+                                        "heun_steps": steps,
+                                        "analytic_mode_second_moment": ref_metrics["analytic_mode_second_moment"]})
+                        generation.append(metrics)
+                        correlations.extend({"case": case, "mode": "oracle", "variant": "exact_velocity",
+                                             "heun_steps": steps, **r}
+                                            for r in _correlations(ensemble, qb.nf))
+                        denominator = template.square().sum()
+                        for draw, sample in enumerate(ensemble):
+                            amplitudes.append({"case": case, "mode": "oracle", "variant": "exact_velocity",
+                                               "heun_steps": steps, "draw": draw,
+                                               "amplitude": float(sample[:, 1] @ template / denominator)})
+                        print(f"case={case} oracle Heun={steps}: "
+                              f"mode_M2={metrics['mode_second_moment']:.6g}", flush=True)
                 for steps in args.heun_steps:
                     variants = ["normal"]
                     if mode == "dynamic" and steps == max(args.heun_steps):

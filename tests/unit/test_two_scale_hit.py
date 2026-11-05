@@ -65,8 +65,7 @@ def test_dynamic_patch_dependency_includes_cross_scale_both_directions():
         coarse_to_fine=mesh.coarse_to_fine, fine_to_coarse=mesh.fine_to_coarse,
         fine_pre_layers=1, fine_post_layers=1, coarse_static_layers=1,
     )
-    assert torch.isin(a.owned_fine, a.fine_read).all()
-    assert torch.isin(a.coarse_up_keys, a.coarse_read).all()
+    assert torch.isin(a.owned_fine, a.fine_read).all()    assert torch.isin(a.coarse_up_keys, a.coarse_read).all()
     assert len(a.fine_read) >= len(s.fine_read)
     assert len(a.coarse_read) >= len(s.coarse_read)
 
@@ -132,7 +131,7 @@ def test_patch_extract_preserves_global_ids_and_bipartite_weights():
 
 
 @pytest.mark.parametrize("mode", ["static", "dynamic"])
-@pytest.mark.parametrize("depth", [1, 2])
+@pytest.mark.parametrize("depth", [1, 2, 4])
 def test_owned_velocities_match_global_forward_after_dependency_closure(mode, depth):
     """Real M37 integration gate (requires the installed GraphAttention repo)."""
     from graph_attention.geometry.two_scale_partition import extract_two_scale_patch_geometry
