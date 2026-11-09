@@ -146,3 +146,29 @@ def test_refuse_missing_reference_value(cache, tmp_path):
     with pytest.raises(ValueError, match="missing"):
         similarity.run_compare(audit, qual, tmp_path/"failed", refs, state, cutoff,
                                repeats=16, seed=16, nyquist_fraction=0.70)
+
+
+def test_spatial_mode_requires_no_thermodynamic_sidecars(cache, tmp_path):
+    audit, qual, refs, state, cutoff, _ = cache
+    assert not state.exists()
+    original = [(refs / (case.replace("/", "_") + ".yaml")).read_bytes()
+                for case in _CASES]
+    output = tmp_path / "spatial"
+    similarity.run_spatial(audit, qual, output, refs, cutoff,
+                           repeats=16, seed=12, nyquist_fraction=0.70)
+    summary = json.loads((output / "spatial_similarity_summary.json").read_text())
+    assert summary["mode"] == "spatial"
+    assert summary["pairwise_comparisons"] == 1
+    assert summary["matched_filter_pairs"] == 1
+    assert summary["spectral_support"]["kstar_max"] == pytest.approx(.7*np.pi*64)
+    assert (output / "pairwise_well_resolved_spectra.csv").exists()
+    assert (output / "pairwise_matched_delta_residual.csv").exists()
+    assert (output / "well_resolved_common_k_spectra.pdf").exists()
+    assert (output / "matched_delta_residual_S2.pdf").exists()
+    assert not (output / "reference_state_one_point_pdfs.pdf").exists()
+    assert not state.exists()
+    for case, content in zip(_CASES, original, strict=True):
+        assert (refs / (case.replace("/", "_") + ".yaml")).read_bytes() == content
+    with pytest.raises(RuntimeError, match="incompatible"):
+        similarity.run_spatial(audit, qual, output, refs, cutoff,
+                               repeats=16, seed=12, nyquist_fraction=0.80)
