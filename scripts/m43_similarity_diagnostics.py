@@ -2,6 +2,7 @@
 
 Modes:
   inspect: inventory immutable M3.3 references, create EMPTY thermodynamic templates
+  spatial: cached spectra and matched-filter statistics without thermodynamic sidecars
   compare: use explicitly provided physical reference states and reviewed
            41..100-style snapshots; no DNS read, model or normalizer writes
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib
 matplotlib.use("Agg")
@@ -460,7 +462,11 @@ def _plots(destination: Path, original: dict, samples: dict, k: np.ndarray,
     axes[0,0].legend(fontsize=9)
     fig.savefig(destination / "reference_state_one_point_pdfs.pdf")
     plt.close(fig)
+    _plots_spatial(destination, k, spectra, lag)
 
+
+def _plots_spatial(destination: Path, k: np.ndarray, spectra: dict, lag: dict) -> None:
+    """Plot spatial diagnostics without generating thermodynamic one-point PDFs."""
     fig, ax = plt.subplots(figsize=(11, 7), constrained_layout=True)
     for case in qualification.ALL_CASES:
         ax.loglog(k, np.mean(spectra[case], axis=0), lw=2.1, label=case)
@@ -507,6 +513,107 @@ def _rows_summary(rows: list[dict], field: str, key: str) -> dict:
             out[category] = {"median": float(np.median(values)),
                              "min": float(min(values)), "max": float(max(values))}
     return out
+
+
+
+def run_spatial(audit_root: Path, qualification_root: Path, destination: Path,
+                reference_dir: Path, cutoff_path: Path, *,
+                repeats: int, seed: int, nyquist_fraction: float) -> None:
+    """Run corrected spatial comparisons from immutable M43 caches and M3.3 scales."""
+    if repeats < 16:
+        raise ValueError("at least 16 bootstrap repeats required")
+    bounds = qualification._reviewed_bounds(cutoff_path)
+    old_refs, scheme = qualification._read_reference_scales(reference_dir)
+    cache = _trusted_inputs(audit_root, qualification_root, old_refs, bounds)
+    sig = {
+        "version": VERSION, "mode": "spatial",
+        "old_sample_cache_signature": cache,
+        "reviewed_cutoffs_sha256": qualification._sha256(cutoff_path),
+        "reference_scheme": scheme,
+        "m3_3_reference_sha256": {case: old_refs[case]["sha256"]
+                                for case in qualification.ALL_CASES},
+        "audit_cache_sha256": {case: qualification._sha256(
+            qualification._case_path(audit_root, case) / "source_signature.json")
+            for case in qualification.ALL_CASES},
+        "bootstrap_repeats": repeats, "seed": seed,
+        "nyquist_fraction": nyquist_fraction,
+    }
+    qualification._verify_signature(destination / "input_signature.json", sig)
+    qualification._write_json(destination / "input_signature.json", sig)
+
+    spectra, history = {}, {}
+    for case in qualification.ALL_CASES:
+        indices = list(range(bounds[case]["stationary_start_index"], 100))
+        spectra[case] = qualification._read_spectra(audit_root, case, indices)
+        history[case] = qualification._read_history(audit_root, case)
+    lengths = _block_lengths(history, bounds)
+    # common_shell_spectra needs only u_ref and l_ref, not rho0/a_ref/e_ref.
+    spatial_refs = {
+        case: SimpleNamespace(u_ref=old_refs[case]["U_ref"],
+                              l_ref=old_refs[case]["L_ref"])
+        for case in qualification.ALL_CASES
+    }
+    kstar, spectral, spectral_pairs, support = _spectral_rows(
+        audit_root, spectra, spatial_refs, lengths, repeats, seed, nyquist_fraction)
+    residual_pairs, lag = _matched_lag_rows(
+        audit_root, bounds, old_refs, lengths, repeats, seed)
+    qualification._write_csv(destination / "pairwise_well_resolved_spectra.csv",
+                             spectral_pairs)
+    qualification._write_csv(destination / "pairwise_matched_delta_residual.csv",
+                             residual_pairs)
+    _plots_spatial(destination, kstar, spectral, lag)
+
+    summary = {
+        "version": VERSION, "mode": "spatial",
+        "status": "exploratory_nonstationarity_not_excluded",
+        "reviewed_cutoffs": bounds, "reference_scheme": scheme,
+        "references": {case: {
+            "source": old_refs[case]["source"],
+            "sha256": old_refs[case]["sha256"],
+            "U_ref": old_refs[case]["U_ref"],
+            "L_ref": old_refs[case]["L_ref"],
+            "block_length_snapshots": lengths[case],
+        } for case in qualification.ALL_CASES},
+        "spectral_support": {
+            "kstar_min": float(kstar[0]), "kstar_max": float(kstar[-1]),
+            "points": len(kstar), "nyquist_fraction": nyquist_fraction,
+            "individual_kstar_upper_limits": support,
+            "three_equal_log_span_band_edges":
+                np.geomspace(kstar[0], kstar[-1], 4).tolist(),
+        },
+        "pairwise_comparisons": len(spectral_pairs),
+        "matched_filter_pairs": sum(row["status"] == "matched_filter_width"
+                                    for row in residual_pairs),
+        "warnings": [
+            "Stationary cutoffs are exploratory, not proof of stationarity.",
+            "Reynolds number and DNS resolution are confounded.",
+            "Matching dimensionless coarse-filter width does not match DNS bandwidth.",
+            "Spectral shells are restricted below the minimum directional Nyquist.",
+            "Moving-block intervals are descriptive for correlated snapshots.",
+            "No thermodynamic reference state or model transformation is assumed.",
+        ],
+    }
+    qualification._write_json(destination / "spatial_similarity_summary.json", summary)
+    lines = [
+        "# M43 corrected spatial similarity diagnostics", "",
+        f"Scheme: `{scheme}`; reviewed exploratory cutoffs, immutable M43 caches.",
+        f"Shared support: {kstar[0]:.5g} <= k* <= {kstar[-1]:.5g}, "
+        f"Nyquist fraction {nyquist_fraction:g}.",
+        "", "| Case A | Case B | Spectral relative L1 | Residual S2 relative L1 | Filter status |",
+        "|---|---|---:|---:|---|",
+    ]
+    for spectrum, residual in zip(spectral_pairs, residual_pairs, strict=True):
+        s2 = residual["residual_S2_relative_L1"]
+        value = f"{s2:.4g}" if s2 is not None else "n/a"
+        lines.append(
+            f"| {spectrum['case_a']} | {spectrum['case_b']} | "
+            f"{spectrum['spectral_relative_L1_on_common_resolved_k']:.4g} | "
+            f"{value} | {residual['status']} |"
+        )
+    lines += ["", "Exploratory only: temporal dependence remains, and "
+              "Reynolds number cannot be separated from DNS resolution.", ""]
+    (destination / "spatial_similarity_report.md").write_text("\n".join(lines))
+    print(f"M43 corrected spatial comparison complete: {destination}", flush=True)
 
 
 def run_compare(audit_root: Path, qualification_root: Path, destination: Path,
@@ -613,7 +720,7 @@ def run_compare(audit_root: Path, qualification_root: Path, destination: Path,
 
 def _args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--mode", choices=("inspect", "compare"), default="inspect")
+    p.add_argument("--mode", choices=("inspect", "spatial", "compare"), default="inspect")
     p.add_argument("--audit-root", type=Path, default=Path(
         "/scratch/coop/theret/GraphAttention_runs/m43_dns_stationarity_audit"))
     p.add_argument("--qualification-root", type=Path, default=None)
@@ -633,15 +740,21 @@ def main() -> None:
     args = _args()
     root = args.audit_root.expanduser().resolve(strict=True)
     qual = (args.qualification_root or root / "m43_qualification_v1").resolve()
-    destination = (args.output_dir or root / VERSION).resolve()
+    destination = (args.output_dir or root / (
+        "m43_spatial_similarity_v1" if args.mode == "spatial" else VERSION)).resolve()
     refs = args.reference_dir.expanduser().resolve(strict=True)
     sidecars = args.state_reference_dir.expanduser().resolve()
-    if args.mode == "compare":
+    if args.mode in ("spatial", "compare"):
         if args.reviewed_cutoffs is None:
             raise ValueError("--reviewed-cutoffs must explicitly name the reviewed JSON")
     destination.mkdir(parents=True, exist_ok=True)
     if args.mode == "inspect":
         run_inspect(root, destination, refs, sidecars)
+    elif args.mode == "spatial":
+        run_spatial(root, qual, destination, refs,
+                    args.reviewed_cutoffs.expanduser().resolve(strict=True),
+                    repeats=args.bootstrap_repeats, seed=args.seed,
+                    nyquist_fraction=args.nyquist_fraction)
     else:
         run_compare(root, qual, destination, refs, sidecars,
                     args.reviewed_cutoffs.expanduser().resolve(strict=True),
