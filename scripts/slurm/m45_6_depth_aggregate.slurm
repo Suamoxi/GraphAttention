@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=m45_6_aggregate
 #SBATCH --partition=grace
+#SBATCH --gres=gpu:0
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=4G
 #SBATCH --time=00:10:00
