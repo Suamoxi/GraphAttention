@@ -16,7 +16,12 @@ REPO=${M43_S_REPO:-/scratch/coop/theret/GraphAttention_dns_similarity}
 MODE=${M43_S_MODE:-inspect}
 AUDIT=${M43_S_AUDIT_ROOT:-/scratch/coop/theret/GraphAttention_runs/m43_dns_stationarity_audit}
 QUAL=${M43_S_QUAL_ROOT:-${AUDIT}/m43_qualification_v1}
-OUT=${M43_S_OUT:-${AUDIT}/m43_${MODE}_similarity_v1}
+if [ "$MODE" = "spatial" ]; then
+  DEFAULT_OUT="${AUDIT}/m43_spatial_similarity_v1"
+else
+  DEFAULT_OUT="${AUDIT}/m43_reference_similarity_v1"
+fi
+OUT=${M43_S_OUT:-$DEFAULT_OUT}
 REFS=${M43_S_REFERENCE_DIR:-/scratch/coop/theret/HIT_DNS_COMP_case_references}
 STATE=${M43_S_STATE_DIR:-/scratch/coop/theret/HIT_DNS_COMP_similarity_references}
 CUTOFFS=${M43_S_REVIEWED_CUTOFFS:-}
