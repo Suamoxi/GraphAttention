@@ -22,11 +22,18 @@ def _write(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def aggregate(root: Path, output_dir: Path) -> dict:
+def aggregate(root: Path, output_dir: Path, *, exclude_jobs: frozenset[str] = frozenset()) -> dict:
     if output_dir.exists():
         raise FileExistsError(output_dir)
+    paths = sorted(root.glob("job_*/summary.json"))
+    available_jobs = {path.parent.name for path in paths}
+    unknown = exclude_jobs - available_jobs
+    if unknown:
+        raise ValueError(f"excluded jobs not present in input root: {sorted(unknown)}")
     rows = []
-    for path in sorted(root.glob("job_*/summary.json")):
+    for path in paths:
+        if path.parent.name in exclude_jobs:
+            continue
         data = json.loads(path.read_text())
         settings = data["settings"]
         if settings.get("training_scope") != "full_all":
@@ -102,6 +109,7 @@ def aggregate(root: Path, output_dir: Path) -> dict:
     _write(output_dir / "aggregates.csv", aggregates)
     summary = {"schema": "graph_attention.m45_6_depth_aggregate.v1",
                "root": str(root), "n_runs": len(rows),
+               "excluded_jobs": sorted(exclude_jobs),
                "n_matched": len(matched), "aggregates": aggregates}
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     return summary
@@ -111,8 +119,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--exclude-job", action="append", default=[],
+                        help="Explicit run-directory name to exclude (repeatable); "
+                             "duplicates still error unless excluded")
     args = parser.parse_args()
-    print(json.dumps(aggregate(args.root, args.output_dir), indent=2))
+    print(json.dumps(aggregate(
+        args.root, args.output_dir, exclude_jobs=frozenset(args.exclude_job),
+    ), indent=2))
 
 
 if __name__ == "__main__":
