@@ -1,9 +1,9 @@
-"""M45.7.1: matched ordinary FM versus exact Gaussian velocity supervision.
+"""M45.7: matched FM/oracle supervision with fixed or resampled residuals.
 
 This is a synthetic block-average Q/B qualification, NOT DNS/LES validation.
-Only the training target changes: data, FM paths, initialization, architecture,
-optimizer, training budget, held-out split, and sampling remain identical.
-The complete graph is used because the oracle has genuinely global coupling.
+For each matched experiment only the supervision and/or conditional-residual
+sampling policy changes. Coarse fields, fitted scales, FM noise/times,
+initialization, model, optimizer, validation split, and evaluation are shared.
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from pathlib import Path
 import torch
 
 from graph_attention.data.two_scale_synthetic import (
-    CASES, SyntheticQB, fit_synthetic_scales, make_synthetic_pair,
+    CASES, SyntheticPair, SyntheticQB, SyntheticScales,
+    fit_synthetic_scales, make_synthetic_pair, sample_conditional_residual,
 )
 from graph_attention.geometry.two_scale_hit import build_hit_two_scale_geometry
 from graph_attention.models.two_scale_dinat import TwoScaleDiNAT
@@ -62,9 +63,34 @@ def _supervision_target(
     raise ValueError("supervision must be fm or oracle")
 
 
+def _training_residual(
+    pair: SyntheticPair, qb: SyntheticQB, scales: SyntheticScales, *,
+    policy: str, case: str, seed: int, step: int,
+) -> torch.Tensor:
+    """Choose an R_f paired with the given coarse field; return normalized R_f.
+
+    Both policies use the same frozen train-set normalization. Resampling
+    changes only the unresolved conditional realization, never U_c or B(U_c).
+    This RNG stream is independent of pair selection and FM source/time draws.
+    """
+    if policy == "fixed":
+        return pair.residual / scales.rms_residual
+    if policy != "resample":
+        raise ValueError(f"unknown residual policy: {policy}")
+    generator = torch.Generator(device="cpu").manual_seed(
+        int(seed) + 81_000_000 + (step + 1) * 1_000_003,
+    )
+    residual, _ = sample_conditional_residual(
+        qb, pair.coarse, case=case, generator=generator,
+    )
+    return residual / scales.rms_residual
+
+
 def run(args: argparse.Namespace) -> dict:
     if args.output_dir.exists():
         raise FileExistsError(f"refusing existing output directory: {args.output_dir}")
+    if args.residual_policy not in ("fixed", "resample"):
+        raise ValueError(f"unknown residual policy: {args.residual_policy}")
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA requested but not available")
     if (min(args.coarse_side, args.refinement, args.train_samples, args.val_samples,
@@ -91,6 +117,8 @@ def run(args: argparse.Namespace) -> dict:
                             seed=args.val_seed + 3001 * i)
         for i in range(args.val_samples)
     ]
+    # Keep these reference scales FIXED across both policies. This isolates
+    # conditional residual diversity from changes to normalization statistics.
     scales = fit_synthetic_scales(train)
     model = _make_model(
         mode=args.mode, seed=args.seed, width=args.width,
@@ -108,7 +136,11 @@ def run(args: argparse.Namespace) -> dict:
     started = time.perf_counter()
     for step, sample_id in enumerate(sample_ids.tolist()):
         pair = train[sample_id]
-        c, b, x1 = _state(pair, scales)
+        c, b, _ = _state(pair, scales)
+        x1 = _training_residual(
+            pair, qb, scales, policy=args.residual_policy, case=args.case,
+            seed=args.seed, step=step,
+        )
         xt, fm_target, t = _path(
             x1, args.seed + 500_000 + step * 997, qb,
         )
@@ -148,6 +180,7 @@ def run(args: argparse.Namespace) -> dict:
         if (step + 1) % max(1, args.steps // 4) == 0:
             print(
                 f"M45.7 case={args.case} {args.mode}/{args.supervision} "
+                f"residual={args.residual_policy} "
                 f"step={step + 1}/{args.steps} loss={loss.item():.6g}",
                 flush=True,
             )
@@ -181,6 +214,7 @@ def run(args: argparse.Namespace) -> dict:
         "case": args.case,
         "mode": args.mode,
         "supervision": args.supervision,
+        "residual_policy": args.residual_policy,
         "training_scope": "full_all",
         "training_steps": args.steps,
         "final_training_loss": history[-1]["training_loss"],
@@ -211,11 +245,17 @@ def run(args: argparse.Namespace) -> dict:
         "learning_rate": args.learning_rate,
         "training_scope": "full_all",
         "supervision": args.supervision,
+        "residual_policy": args.residual_policy,
+        "normalization": "fitted_once_on_initial_fixed_training_pairs",
+        "residual_resampling_seed_rule": (
+            "seed + 81000000 + (step + 1) * 1000003"
+            if args.residual_policy == "resample" else None
+        ),
         "device": args.device,
         "output_dir": str(output),
     }
     report = {
-        "schema": "graph_attention.m45_7_oracle_supervision.v1",
+        "schema": "graph_attention.m45_7_oracle_supervision.v2",
         "scope": "synthetic block-average residuals, NOT physical DNS/LES",
         "settings": settings,
         "results": [metrics],
@@ -242,6 +282,11 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--mode", choices=("static", "dynamic"), required=True)
     parser.add_argument("--supervision", choices=("fm", "oracle"), required=True)
+    parser.add_argument(
+        "--residual-policy", choices=("fixed", "resample"), default="fixed",
+        help="Reuse one residual per coarse field, or sample a fresh R_f|U_c "
+             "at every training update. Scales remain fitted on fixed pairs.",
+    )
     parser.add_argument("--case", choices=CASES, default="shared_mode")
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--coarse-side", type=int, default=4)
