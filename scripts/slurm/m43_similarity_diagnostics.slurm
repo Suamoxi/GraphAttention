@@ -16,7 +16,7 @@ REPO=${M43_S_REPO:-/scratch/coop/theret/GraphAttention_dns_similarity}
 MODE=${M43_S_MODE:-inspect}
 AUDIT=${M43_S_AUDIT_ROOT:-/scratch/coop/theret/GraphAttention_runs/m43_dns_stationarity_audit}
 QUAL=${M43_S_QUAL_ROOT:-${AUDIT}/m43_qualification_v1}
-OUT=${M43_S_OUT:-${AUDIT}/m43_reference_similarity_v1}
+OUT=${M43_S_OUT:-${AUDIT}/m43_${MODE}_similarity_v1}
 REFS=${M43_S_REFERENCE_DIR:-/scratch/coop/theret/HIT_DNS_COMP_case_references}
 STATE=${M43_S_STATE_DIR:-/scratch/coop/theret/HIT_DNS_COMP_similarity_references}
 CUTOFFS=${M43_S_REVIEWED_CUTOFFS:-}
@@ -24,8 +24,8 @@ REPEATS=${M43_S_BOOTSTRAP_REPEATS:-64}
 IMAGE=/softs/local_arm/singularity/images/pyg25.03.sif
 PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
 
-case "$MODE" in inspect|compare) ;; *) echo "Invalid M43_S_MODE=$MODE" >&2; exit 2;; esac
-if [ "$MODE" = "compare" ]; then
+case "$MODE" in inspect|spatial|compare) ;; *) echo "Invalid M43_S_MODE=$MODE" >&2; exit 2;; esac
+if [ "$MODE" != "inspect" ]; then
   if [ ! -f "$CUTOFFS" ]; then
     echo "Required explicit reviewed cutoff JSON missing: $CUTOFFS" >&2; exit 2
   fi
