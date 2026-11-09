@@ -5,9 +5,12 @@ import torch
 
 from graph_attention.data.two_scale_synthetic import (
     SyntheticQB, fit_synthetic_scales, make_synthetic_pair,
+    sample_conditional_residual,
 )
 from graph_attention.geometry.two_scale_hit import build_hit_two_scale_geometry
-from scripts.m45_7_oracle_supervision import _make_model, _supervision_target
+from scripts.m45_7_oracle_supervision import (
+    _make_model, _supervision_target, _training_residual,
+)
 from scripts.m45_checkpoint_diagnostics import BlockGaussianOracle
 from scripts.m45_synthetic_pilot import _path, _state
 
@@ -85,3 +88,76 @@ def test_m457_oracle_targets_match_known_endpoint_velocities():
         _supervision_target("oracle", x1, zeros, torch.tensor([1.0]), oracle),
         x1, atol=1e-5, rtol=1e-5,
     )
+
+
+@pytest.mark.parametrize("case", ["local", "shared_mode"])
+def test_m457_fixed_residual_is_identical_to_original_training_pair(case):
+    qb, pairs, scales = _fixture(case)
+    pair = pairs[0]
+    actual = _training_residual(
+        pair, qb, scales, policy="fixed", case=case, seed=2028, step=7,
+    )
+    expected = _state(pair, scales)[2]
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
+@pytest.mark.parametrize("case", ["local", "shared_mode"])
+def test_m457_resampled_residual_is_paired_nullspace_and_reproducible(case):
+    qb, pairs, scales = _fixture(case)
+    pair = pairs[1]
+    kw = dict(policy="resample", case=case, seed=2028)
+    a = _training_residual(pair, qb, scales, step=7, **kw)
+    b = _training_residual(pair, qb, scales, step=7, **kw)
+    another = _training_residual(pair, qb, scales, step=8, **kw)
+    torch.testing.assert_close(a, b, atol=0, rtol=0)
+    assert not torch.equal(a, another)
+    assert not torch.equal(a, _state(pair, scales)[2])
+
+    physical = a * scales.rms_residual
+    torch.testing.assert_close(
+        qb.restrict(physical), torch.zeros_like(pair.coarse),
+        atol=1e-6, rtol=1e-6,
+    )
+    torch.testing.assert_close(
+        qb.restrict(pair.baseline + physical), pair.coarse,
+        atol=1e-6, rtol=1e-6,
+    )
+    # The resampler must use precisely the existing conditional generator.
+    rng = torch.Generator(device="cpu").manual_seed(
+        2028 + 81_000_000 + (7 + 1) * 1_000_003,
+    )
+    expected, _ = sample_conditional_residual(
+        qb, pair.coarse, case=case, generator=rng,
+    )
+    torch.testing.assert_close(
+        a, expected / scales.rms_residual, atol=0, rtol=0,
+    )
+
+
+def test_m457_resampling_is_independent_of_fm_time_and_noise_stream():
+    qb, pairs, scales = _fixture()
+    pair = pairs[1]
+    seed, step = 2028, 12
+    residual = _training_residual(
+        pair, qb, scales, policy="resample",
+        case="shared_mode", seed=seed, step=step,
+    )
+    path_seed = seed + 500_000 + step * 997
+    a = _path(residual, path_seed, qb)
+    # Recreate the residual using the same isolated RNG, then the FM path.
+    residual_again = _training_residual(
+        pair, qb, scales, policy="resample",
+        case="shared_mode", seed=seed, step=step,
+    )
+    b = _path(residual_again, path_seed, qb)
+    for first, second in zip(a, b):
+        torch.testing.assert_close(first, second, atol=0, rtol=0)
+
+
+def test_m457_invalid_residual_policy_fails():
+    qb, pairs, scales = _fixture()
+    with pytest.raises(ValueError, match="unknown residual policy"):
+        _training_residual(
+            pairs[0], qb, scales, policy="other",
+            case="shared_mode", seed=2028, step=0,
+        )
