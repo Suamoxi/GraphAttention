@@ -91,13 +91,36 @@ velocity errors.
 sbatch --array=0-11%2 scripts/slurm/m45_6_depth_full_all.slurm
 ```
 
-After copying all results to the common root, summarize matched pairs:
+After collecting results in the common root, submit the aggregation itself
+as a **CPU-only Slurm job**, using the same Singularity/Python environment as
+the training jobs. Do not run Python or pytest directly on the login node:
 
 ```bash
-python -m scripts.m45_6_compare_depth \
-  --root /scratch/coop/theret/GraphAttention_runs/m45_6_depth_full_all \
-  --output-dir /scratch/coop/theret/GraphAttention_runs/m45_6_depth_comparison
+cd /scratch/coop/theret/GraphAttention
+git pull --rebase
+sbatch scripts/slurm/m45_6_depth_aggregate.slurm
 ```
+
+Drive contains an explicit rerun: job_493421 has the same
+(seed=2028, train_samples=256, depth=2) as job_493366. The Slurm
+launcher defaults to excluding the *later* job_493421, and the output
+summary records this choice in `excluded_jobs`. Override with
+`--export=ALL,M45_6_AGG_EXCLUDE_JOB=none` for strict behavior,
+which will reject duplicate configurations. No deduplication is silent.
+
+Expected outputs:
+
+```text
+/scratch/coop/theret/GraphAttention_runs/m45_6_depth_comparison/job_<SLURM_JOB_ID>/
+  summary.json
+  per_job.csv
+  matched_depth.csv
+  aggregates.csv
+```
+
+Logs: `/scratch/coop/theret/GraphAttention/m45_6_aggregate_<SLURM_JOB_ID>.out`
+and `.err`. The job requires all 24 per-model rows and 12 matched depth
+comparisons; any missing run or unexpected duplicate causes a failure.
 
 The comparator rejects duplicate `(seed, train_samples, depth, mode)` keys and
 inconsistent training/validation configurations instead of silently merging
