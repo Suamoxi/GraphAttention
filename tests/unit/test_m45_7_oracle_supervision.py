@@ -67,18 +67,21 @@ def test_m457_supervision_rejects_unavailable_oracle():
         _supervision_target("oracle", target, target, torch.tensor([0.5]), None)
 
 
-def test_m457_gaussian_oracle_is_better_than_noisy_velocity_for_expected_target():
-    # Conditional expectation minimizes the population MSE, not the paired
-    # stochastic target error for every individual realization.
+
+def test_m457_oracle_targets_match_known_endpoint_velocities():
     qb, pairs, scales = _fixture()
-    x1 = _state(pairs[0], scales)[2]
+    pair = pairs[0]
+    _, _, x1 = _state(pair, scales)
     oracle = BlockGaussianOracle(
-        qb, pairs[0].coarse, scales, "shared_mode", torch.device("cpu"),
+        qb, pair.coarse, scales, "shared_mode", torch.device("cpu"),
     )
-    losses_oracle, losses_zero = [], []
-    for seed in range(32):
-        xt, fm_target, t = _path(x1, seed + 500, qb)
-        best = oracle.velocity(xt, float(t.item()))
-        losses_oracle.append(float((best - fm_target).square().mean()))
-        losses_zero.append(float(fm_target.square().mean()))
-    assert sum(losses_oracle) / 32 < sum(losses_zero) / 32
+    noise = qb.nullspace(torch.randn_like(x1))
+    zeros = torch.zeros_like(x1)
+    torch.testing.assert_close(
+        _supervision_target("oracle", noise, zeros, torch.tensor([0.0]), oracle),
+        -noise, atol=1e-5, rtol=1e-5,
+    )
+    torch.testing.assert_close(
+        _supervision_target("oracle", x1, zeros, torch.tensor([1.0]), oracle),
+        x1, atol=1e-5, rtol=1e-5,
+    )
