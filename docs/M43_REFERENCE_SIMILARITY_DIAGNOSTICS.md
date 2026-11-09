@@ -103,6 +103,34 @@ Copy each template to the sidecar reference directory and replace **all**
 `value: null` fields and placeholder provenance with the original
 simulation-setup values. Do not use the observed late-time rho for `rho0`.
 
+Stage 1b — run corrected **spatial-only** diagnostics without thermodynamic
+sidecars (requires the same reviewed exploratory cutoffs and immutable cache):
+
+```bash
+export M43_S_REVIEWED_CUTOFFS=/scratch/coop/theret/reviewed_cutoffs_exploratory_40.json
+export M43_S_MODE=spatial
+sbatch --export=ALL scripts/slurm/m43_similarity_diagnostics.slurm
+```
+
+This writes only to `m43_spatial_similarity_v1/` by default, separately from
+the inspect and full compare output directory. It verifies the M43-Q sampled
+cache signature, original M3.3 YAML SHA-256 hashes and reviewed cutoff labels.
+It does not require or open the extra rho0/a_ref/e_ref sidecar YAMLs, and does
+not produce transformed marginal distributions. It reuses the existing
+bootstrap estimators, conservative common-k interpolation and matched-filter
+residual S2 diagnostics. Outputs:
+
+- `input_signature.json`, `spatial_similarity_summary.json`,
+  `spatial_similarity_report.md`
+- `pairwise_well_resolved_spectra.csv`,
+  `well_resolved_common_k_spectra.pdf`
+- `pairwise_matched_delta_residual.csv`,
+  `matched_delta_residual_S2.pdf`
+
+Changing cutoff input, bootstrap settings, reference YAMLs or audit signatures
+requires a distinct output directory. The reference-state `compare` mode
+is unchanged.
+
 Stage 2 — compare with *explicit* reviewed exploratory cutoffs:
 
 ```bash
