@@ -27,7 +27,7 @@ DIAG_DRAWS=$(printenv M45_7_VELOCITY_DRAWS || echo 4)
 HEUN=$(printenv M45_7_HEUN_STEPS || echo 25)
 DEPTH=$(printenv M45_7_DEPTH || echo 4)
 OUTPUT_ROOT=$(printenv M45_7_OUT_ROOT || echo /scratch/coop/theret/GraphAttention_runs/m45_7_oracle)
-OUT="$OUTPUT_ROOT/job_$SLURM_ARRAY_JOB_ID_$TASK_$MODE_$SUPERVISION"
+OUT="$OUTPUT_ROOT/job_"$SLURM_ARRAY_JOB_ID"_"$TASK"_"$MODE"_"$SUPERVISION
 cd "$REPO"
 
 [ -z "$(git status --porcelain)" ] || { echo 'Dirty checkout' >&2; exit 2; }
