@@ -35,7 +35,7 @@ GENERATED=$(printenv M45_7_2_GENERATED_SAMPLES || echo 128)
 VELOCITY_DRAWS=$(printenv M45_7_2_VELOCITY_DRAWS || echo 4)
 HEUN=$(printenv M45_7_2_HEUN_STEPS || echo 25)
 OUT_ROOT=$(printenv M45_7_2_OUT_ROOT || echo /scratch/coop/theret/GraphAttention_runs/m45_7_2_resampling)
-OUT="$OUT_ROOT/job_$SLURM_ARRAY_JOB_ID"_"$TASK"_"$MODE"_"$SUPERVISION"_"$POLICY"_"$STEPS"steps"
+OUT="${OUT_ROOT}/job_${SLURM_ARRAY_JOB_ID}_${TASK}_${MODE}_${SUPERVISION}_${POLICY}_${STEPS}steps"
 
 cd "$REPO"
 [ -z "$(git status --porcelain)" ] || {
