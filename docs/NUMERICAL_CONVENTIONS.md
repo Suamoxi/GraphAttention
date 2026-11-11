@@ -426,3 +426,29 @@ The explicit clamp to zero guards floating-point roundoff in a theoretically non
 No x0 clipping, dynamic thresholding, learned reverse variance, SNR loss weighting, or alternate prediction parameterization is applied in M13. Introducing any of those changes the numerical/scientific baseline and requires separate validation.
 
 Training and generation use separate scripts. Generation reloads the exact persisted `standardizers.pt` and `dataset_split_manifest.json`; it does not refit statistics or regenerate the split. Generated standardized states are inverse-transformed using the frozen **input/state** standardizer. The generation artifact stores generated RNG IDs and reference test IDs separately, and benchmark comparison is population-level rather than index-paired.
+
+
+## M46 all-snapshot similarity numerical conventions
+
+- All available snapshots are included. The physical sample is one snapshot of one case;
+  each case has its own empirical distribution and no node-count importance factor.
+- On endpoint-inclusive Cartesian periodic meshes, the three maximum-coordinate planes
+  are omitted from moments and FFTs. The native-node-to-Cartesian map is verified
+  exhaustively and is independent of original node IDs.
+- Full-grid moments use population conventions, with Pébay chunk aggregation.
+  Velocity TKE uses volume-mean-subtracted \`u_i = (rho*u_i)/rho\`, divided by
+  \`U_ref\`, without Favre weighting. Any sound-speed Mach diagnostic requires an explicit
+  \`a_ref\` in the case reference YAML.
+- Full-cube normalized real Fourier coefficients and Hermitian mirror weights are used
+  for Helmholtz energy fractions. Plotted \`E*(kL)\` uses nearest-integer radial shells,
+  shell spacing \`2*pi\`, and the inscribed Nyquist sphere. Parseval tests compare
+  total spectral fluctuation energy with spatial TKE; the plotted spectrum reports
+  its energy capture separately.
+- Distribution draws sample a fixed number of Cartesian spatial locations per snapshot
+  with a reproducible case/snapshot seed, rather than choosing native node IDs.
+  Pairwise W1 is the equal-quantile 1024-midpoint approximation; dividing by the
+  pooled full-field standard deviation produces a dimensionless normalization
+  separate from M29's frozen-training-scaler standardized W1.
+- Cached snapshots are invalidated by changes in options, reference checksum or source
+  file size/mtime. Archive/pilot collisions are resolved by ID/counter with archived
+  data preferred; identity is a provenance assumption rather than a hash proof.

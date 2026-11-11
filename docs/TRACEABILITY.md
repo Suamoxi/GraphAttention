@@ -1531,3 +1531,13 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
 - The one-update Grace smoke path now exercises the common checkpoint restoration routine, including model, AdamW state and Flow Matching generator. A synthetic optimizer/RNG round-trip and signature mismatch test was added.
 - Training history and summary now report synchronized forward/backward time by resolution, wall time per optimizer step and physical samples/s in addition to the existing MSE and CUDA peak metrics. CUDA timing synchronization has diagnostic overhead.
 - No GPU smoke run or actual scientific training is claimed by this source-only change.
+
+
+## M46 — all-snapshot HIT similarity (implementation; real-volume validation pending)
+
+| Concept | Type | Specification | Implementation | Validation | Evidence status |
+|---|---|---|---|---|---|
+| Archive/pilot source inventory, archive-first collision resolution, all snapshots | Project data policy | \`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\` | \`scripts/m46_hit_similarity.py:inventory\` | \`tests/unit/test_m46_hit_similarity.py\` (synthetic duplicate case) | Implemented; 32-case Calypso inventory pending |
+| M3.3-scaled conservative moments on unique periodic grid | Project adaptation of M3.3 and streaming moments | \`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\`, \`docs/M3_3_NONDIMENSIONALIZATION.md\` | \`scripts/m46_hit_similarity.py:_mesh_index,_analyze_sample,Moments\` | Unit test for node renumbering, numerical moments and small analytic field | Synthetic validated; Calypso unvalidated |
+| Fourier kinetic energy and solenoidal/dilatational Helmholtz split | Established Fourier projection, project shell convention | \`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\` | \`scripts/m46_hit_similarity.py:_spectral\` | Analytic solenoidal/longitudinal sine fields, Parseval | Synthetic validated; 320^3 performance unvalidated |
+| Per-case normalized approximate Wasserstein-1 | Project statistical comparison estimator | \`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\` | \`scripts/m46_hit_similarity.py:_combine\` | Code inspection + synthetic suite; real comparator validation pending | 1024-quantile estimator, not full-field exact W1 |

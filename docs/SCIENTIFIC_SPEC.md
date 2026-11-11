@@ -910,3 +910,19 @@ include_local_self_attention=true with include_self_attention=false enables
 **only** local self-edges. Defaults remain false for reproducibility of
 historical M37 and M39 resolved configurations. No changes to the
 exact-two-hop geometry itself are allowed.
+
+
+## M46 empirical HIT similarity across all stored snapshots
+
+M46 characterizes the empirical mixture of available HIT snapshots. The data policy accepts
+all snapshots and imposes no stationarity/quality gate; acceptance is not a claim of
+statistical stationarity or independent samples. Each snapshot is spatially reduced before
+case comparisons, so grid node count does not determine sample importance.
+
+M3.3 physical references remain case-specific, explicit and inference-available.
+Folder labels containing measured turbulent Mach numbers are metadata identifiers,
+not automatically valid a priori conditioning parameters. The analysis compares
+dimensionless conservative fields, kinetic energy, velocity spectra and compressible
+Helmholtz energy partition; forcing-family differences are preserved in the dataset
+provenance. Numerical methods and limitations are documented in
+\`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\`; the model/trainer is unchanged.
