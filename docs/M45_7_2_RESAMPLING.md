@@ -74,6 +74,8 @@ On the login node, submit commands only:
 ```bash
 cd /scratch/coop/theret/GraphAttention
 git pull --rebase
+# Bash syntax check on the login node; does not execute Python or require CUDA.
+bash -n scripts/slurm/m45_7_2_resampling.slurm
 
 # Recommended: verify all stages in a short job array first.
 sbatch --array=0-7%2 \
