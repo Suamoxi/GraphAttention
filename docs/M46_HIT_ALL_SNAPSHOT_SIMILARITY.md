@@ -13,24 +13,46 @@ This is a **read-only analysis implementation**, not a model/conditioning change
 
 ## Usage
 
-From the repository root, in the existing Python environment:
+From the repository root, submit the **inventory** as a Slurm job (never run
+Python on the login node). The wrapper uses the proven project Singularity
+image and explicitly selects `avbpML_env/bin/python3`:
 
 ```bash
-python scripts/m46_hit_similarity.py inventory \
-  --archive-root /archive2/cfd-phlusim/HIT_DNS_COMP \
-  --pilot-root /scratch/ai/HIT_DNS_pilot \
-  --output /scratch/coop/theret/GraphAttention_runs/m46_hit_similarity
+sbatch scripts/slurm/m46_hit_inventory.slurm
 ```
+
+The job uses default roots `/archive2/cfd-phlusim/HIT_DNS_COMP` and
+`/scratch/ai/HIT_DNS_pilot` and writes to
+`/scratch/coop/theret/GraphAttention_runs/m46_hit_similarity`. Override
+paths via `M46_ARCHIVE_ROOT`, `M46_PILOT_ROOT`, and `M46_OUTPUT_ROOT`
+at submission time using `sbatch --export=ALL,...`.
 
 Inspect `inventory.json`: expected case count is 32 when the six legacy and 26 pilot cases are present. The snapshot count is computed from actual filenames, not hard-coded.
 
 Supply one authoritative case definition per case in the specified reference directory, named `Re54_Ma0.05.yaml`, `ReT060_Mt0.59_Xi0.3.yaml`, etc. Each file must be a valid M3.3 `CaseDefinition`, have a matching `case_id`, use the same reference scheme, and declare inference-available `rho_ref`, `U_ref`, and `L_ref`, with the declared `L_ref` equaling the physical cubic box side. A named `a_ref` is optional and required only for a reference-sound-speed turbulent Mach diagnostic. Do **not** use a posteriori `Mt` labels as inference conditioning metadata.
 
+Submit the **analysis** through Slurm after the inventory succeeds and
+the complete per-case reference YAML directory exists:
+
 ```bash
-python scripts/m46_hit_similarity.py analyze \
-  --output /scratch/coop/theret/GraphAttention_runs/m46_hit_similarity \
-  --reference-dir /scratch/coop/theret/HIT_DNS_COMP_case_references
+sbatch scripts/slurm/m46_hit_analyze.slurm
 ```
+
+For the memory-lighter, **no-spectra** pass, use:
+
+```bash
+sbatch --export=ALL,M46_NO_SPECTRA=YES scripts/slurm/m46_hit_analyze.slurm
+```
+
+This places results in `m46_hit_similarity_no_spectra` and copies the
+inventory manifest from the original output directory. A subsequent
+full-spectra run writes into the original `m46_hit_similarity` directory.
+Use `M46_REFERENCE_DIR` to override the default reference directory and
+`M46_ANALYSIS_OUTPUT` to override the analysis output; each job retains
+per-snapshot caches to support repeat submissions. Both wrappers execute
+tests and the analysis *inside* the allocated Slurm job, not on login nodes.
+The requested `grace` GPU is a cluster-allocation convention copied from
+existing job scripts; no GPU kernels are used in this analysis.
 
 All snapshots receive exact full-grid field moments and turbulent kinetic energy. By default they also receive an FFT spectrum and solenoidal/dilatational energy split. FFTs at `320^3` unique points are memory- and CPU-intensive: use a high-memory CPU node, not the login node. For the lower-memory first execution of all-snapshot field statistics and pairwise distribution comparisons, use `--no-spectra` in a **separate output directory**. Results are resumable per snapshot; changing analysis options or reference-file contents invalidates existing caches explicitly.
 

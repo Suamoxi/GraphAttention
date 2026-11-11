@@ -1,0 +1,47 @@
+#!/bin/bash
+#SBATCH --job-name=m46_inventory
+#SBATCH --partition=grace
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
+#SBATCH --time=02:00:00
+#SBATCH --output=/scratch/coop/theret/GraphAttention_runs/%x_%j.out
+#SBATCH --error=/scratch/coop/theret/GraphAttention_runs/%x_%j.err
+
+# M46 inventory: metadata-only, all snapshots, no stationarity selection.
+# Submit from the GraphAttention repository with:
+#   sbatch scripts/slurm/m46_hit_inventory.slurm
+set -euo pipefail
+
+REPO=${M46_REPO:-/scratch/coop/theret/GraphAttention}
+IMAGE=${M46_IMAGE:-/softs/local_arm/singularity/images/pyg25.03.sif}
+ENV_ROOT=${M46_ENV_ROOT:-/scratch/coop/theret/avbpML_env}
+PYTHON="${M46_PYTHON:-$ENV_ROOT/bin/python3}"
+ARCHIVE=${M46_ARCHIVE_ROOT:-/archive2/cfd-phlusim/HIT_DNS_COMP}
+PILOT=${M46_PILOT_ROOT:-/scratch/ai/HIT_DNS_pilot}
+OUT=${M46_OUTPUT_ROOT:-/scratch/coop/theret/GraphAttention_runs/m46_hit_similarity}
+
+for path in "$REPO" "$IMAGE" "$ARCHIVE" "$PILOT/data"; do
+    test -e "$path" || { echo "Missing required path: $path" >&2; exit 2; }
+done
+test -x "$PYTHON" || { echo "Missing environment Python: $PYTHON" >&2; exit 2; }
+
+# Use the pinned virtual environment executable even if activate is unavailable.
+if [ -f "$ENV_ROOT/bin/activate" ]; then
+    source "$ENV_ROOT/bin/activate"
+fi
+cd "$REPO"
+mkdir -p "$OUT"
+printf '%s\n' "$(git rev-parse HEAD)" > "$OUT/inventory_git_commit.txt"
+git status --short > "$OUT/inventory_git_status.txt"
+printf 'M46 inventory job=%s host=%s\n' "$SLURM_JOB_ID" "$(hostname)"
+printf 'archive=%s pilot=%s output=%s\n' "$ARCHIVE" "$PILOT" "$OUT"
+
+BIND=(-B /home:/home -B /scratch:/scratch -B /archive2:/archive2)
+if [ -d /archivenfs ]; then BIND+=(-B /archivenfs:/archivenfs); fi
+singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q     tests/unit/test_m46_hit_similarity.py
+
+singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -u -m scripts.m46_hit_similarity inventory     --archive-root "$ARCHIVE"     --pilot-root "$PILOT"     --output "$OUT"
+
+test -s "$OUT/inventory.json"
+echo "M46 inventory complete: $OUT/inventory.json"
