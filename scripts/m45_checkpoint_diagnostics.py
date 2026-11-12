@@ -182,6 +182,7 @@ def _load_model(path: Path, settings: dict, device: torch.device) -> tuple[TwoSc
     model = TwoScaleDiNAT(
         mode=config["mode"], coarse_width=settings["width"],
         fine_width=settings["width"], num_heads=settings["heads"],
+        channels=config.get("channels", settings.get("channels", 5)),
         fine_pre_layers=config["fine_pre_layers"],
         fine_post_layers=config["fine_post_layers"],
         coarse_static_layers=config["coarse_static_layers"],
