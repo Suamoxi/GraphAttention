@@ -70,7 +70,7 @@ def _candidates(archive: Path, pilot: Path):
 
 
 def _m46_snapshots(directory: Path) -> tuple[tuple[int, Path], ...]:
-    """Inventory every numbered HDF5 path; M43's strict unique-counter rule is not used.
+    """Inventory all HDF5 solution paths; M43's strict numeric rule is not used.
 
     Distinct snapshots may share a numeric counter or have no numeric suffix
     (for example last_solution.h5). Both remain eligible; filesystem aliases
@@ -134,9 +134,11 @@ def inventory(archive: Path, pilot: Path) -> dict:
             file_stat = snapshot.stat()
             inode_key = (case_id, source, file_stat.st_dev, file_stat.st_ino)
             if inode_key in seen_inodes:
+                canonical = seen_inodes[inode_key]
                 duplicates.append({
                     "sample_id": sample_id,
-                    "selected": seen_inodes[inode_key]["snapshot"],
+                    "selected": canonical["selected"],
+                    "canonical_in_source": canonical["snapshot"],
                     "discarded": str(snapshot),
                     "policy": "same_filesystem_object_alias",
                 })
@@ -153,19 +155,31 @@ def inventory(archive: Path, pilot: Path) -> dict:
                     "discarded": str(snapshot),
                     "policy": "archive_preferred_by_case_and_numeric_counter_not_byte_identity",
                 })
+                # A later unnumbered alias may refer to this discarded pilot
+                # snapshot. Remember the inode so it cannot re-enter the set.
+                seen_inodes[inode_key] = {
+                    "snapshot": str(snapshot), "selected": selected[0]["snapshot"],
+                }
                 continue
             if sample_id in samples:
-                raise ValueError(
-                    f"{directory}: duplicate sample identifier {sample_id}; "
-                    "source naming must uniquely identify each distinct file"
-                )
+                if counter is None and samples[sample_id]["source"] != source:
+                    # Same unnumbered basename in archive and pilot does not
+                    # prove identical physical time or realization.
+                    sample_id = f"{case_id}:{source}__{snapshot.stem}"
+                if sample_id in samples:
+                    raise ValueError(
+                        f"{directory}: duplicate sample identifier {sample_id}; "
+                        "distinct HDF5 paths must be distinguishable"
+                    )
             item = {
                 "sample_id": sample_id, "case_id": case_id, "source": source,
                 "snapshot": str(snapshot), "mesh": str(mesh.resolve(strict=True)),
                 "side": side, "counter": counter,
             }
             samples[sample_id] = item
-            seen_inodes[inode_key] = item
+            seen_inodes[inode_key] = {
+                "snapshot": str(snapshot), "selected": str(snapshot),
+            }
             if counter_key is not None:
                 by_counter.setdefault(counter_key, []).append(item)
             case["snapshots"] += 1
@@ -192,7 +206,7 @@ def inventory(archive: Path, pilot: Path) -> dict:
         for item in ordered if item["counter"] is None
     ]
     return {
-        "version": "m46_all_snapshots_v2", "stationarity_filter": False,
+        "version": "m46_all_snapshots_v3", "stationarity_filter": False,
         "source_roots": {"archive": str(archive), "pilot": str(pilot)},
         "deduplication": (
             "same-inode aliases excluded; within-source counter collisions retained; "

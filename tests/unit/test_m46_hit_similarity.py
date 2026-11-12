@@ -220,3 +220,44 @@ def test_inventory_retains_unnumbered_distinct_solution_and_inode_alias(
     assert any(entry["policy"] == "same_filesystem_object_alias" for entry in found["duplicates"])
     assert any("archive_preferred" in entry["policy"] for entry in found["duplicates"])
     assert found["stationarity_filter"] is False
+
+def test_unnumbered_pilot_paths_do_not_collide_or_reintroduce_excluded_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from graph_attention.data.multicase_avbp import HITCaseSpec
+
+    archive, pilot = tmp_path / "archive", tmp_path / "pilot"
+    monkeypatch.setattr(audit, "DEFAULT_M43_CASES", (HITCaseSpec("Re54/Ma0.05", 5),))
+    monkeypatch.setattr(audit, "PILOT_SIDES", {"ReT060": 5})
+    legacy = archive / "Re54" / "Ma0.05"
+    xyz = _mesh(legacy / "MESH" / "mesh.mesh.h5")
+    _snapshot(legacy / "SOLUT" / "solut_hit_00000001.h5", xyz)
+
+    case = "ReT060/Mt0.59_Xi0.3"
+    archive_case = archive / case
+    xyz = _mesh(archive_case / "MESH" / "mesh.mesh.h5")
+    _snapshot(archive_case / "RUN" / "SOLUT" / "solut_hit_00000001.h5", xyz)
+    _snapshot(archive_case / "RUN" / "SOLUT" / "last_solution.h5", xyz)
+    pilot_case = pilot / "data" / case
+    xyz = _mesh(pilot_case / "MESH" / "mesh.mesh.h5")
+    psol = pilot_case / "RUN" / "SOLUT"
+    _snapshot(psol / "solut_hit_00000001.h5", xyz)
+    (psol / "replay_last_solution.h5").symlink_to("solut_hit_00000001.h5")
+    _snapshot(psol / "last_solution.h5", xyz)
+
+    result = audit.inventory(archive, pilot)
+    assert result["counts"] == {
+        "cases": 2,
+        "snapshots": 4,
+        "duplicate_paths": 2,
+        "within_source_counter_collisions": 0,
+        "unnumbered_snapshots": 2,
+    }
+    assert {item["sample_id"] for item in result["samples"]} == {
+        "Re54/Ma0.05:solut_hit_00000001",
+        f"{case}:solut_hit_00000001",
+        f"{case}:last_solution",
+        f"{case}:reT_pilot__last_solution",
+    }
+    assert not any("replay_last_solution" in item["snapshot"] for item in result["samples"])
+    assert result["stationarity_filter"] is False

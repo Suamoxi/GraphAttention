@@ -135,3 +135,14 @@ are counted once using device/inode identity. Distinct unnumbered files
 remain eligible with **unknown physical time**; consequently, time-series
 ordering and cross-source pairing for those files cannot be inferred.
 The strict M43 reader remains unchanged.
+
+### M46 archive/pilot filenames without counters
+
+Unnumbered files in different sources cannot be paired using timestep counters.
+If archive and pilot both contain a distinct `last_solution.h5`, the pilot
+sample receives a source-qualified ID (e.g.,
+`ReT060/Mt0.59_Xi0.3:reT_pilot__last_solution`) and both are retained.
+An unnumbered symlink to a numbered pilot snapshot that was already rejected
+by archive-first precedence is also rejected, using the pilot inode registry.
+Without independent provenance, distinct unnumbered files can still contain
+byte-identical physical states; this implementation does not claim otherwise.
