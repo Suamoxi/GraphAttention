@@ -98,7 +98,13 @@ def score_job(folder: Path) -> tuple[dict, list[dict]]:
         "mode": s["mode"], "context_hops": s["generator"]["context_hops"],
         "train_fields": s["train_fields"], "train_steps": s["steps"],
         "width": s["width"], "depth": s["depth"],
-        "data_seed": s["dataset_seed"], "model_init_seed": s["init_seed"],
+        "coarse_side": s["coarse_side"], "refinement": s["refinement"],
+        "normalization_fields": s["normalization_fields"],
+        "residual_policy": s["residual_policy"],
+        "data_seed": s["dataset_seed"], "residual_seed": s["residual_seed"],
+        "model_init_seed": s["init_seed"], "schedule_seed": s["schedule_seed"],
+        "validation_seed": s["validation_seed"],
+        "eval_seed": e["eval_seed"],
         "eval_fields": e["val_fields"], "draws": e["draws"],
         "heun_steps": e["heun_steps"],
         "heldout_fm_mse": train["results"]["heldout_fm_loss"],
@@ -140,7 +146,10 @@ def aggregate(root: Path, output: Path) -> dict:
     if keys != {("static", 1), ("dynamic", 1), ("static", 2), ("dynamic", 2)}:
         raise ValueError(f"missing or duplicate model/context comparison: {keys}")
     for key in ("train_fields", "train_steps", "width", "depth",
-                "data_seed", "model_init_seed", "eval_fields", "draws", "heun_steps"):
+                "coarse_side", "refinement", "normalization_fields",
+                "residual_policy", "data_seed", "residual_seed",
+                "model_init_seed", "schedule_seed", "validation_seed",
+                "eval_seed", "eval_fields", "draws", "heun_steps"):
         if len({r[key] for r in scores}) != 1:
             raise ValueError(f"mismatched comparison setting {key}")
     output.mkdir(parents=True)
