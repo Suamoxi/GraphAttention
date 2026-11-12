@@ -87,7 +87,7 @@ def _m46_snapshots(directory: Path) -> tuple[tuple[int, Path], ...]:
         )
     numbered = []
     for path in groups[0]:
-        match = re.fullmatch(r"(.+?)(\\d+)", path.stem)
+        match = re.fullmatch(r"(.+?)(\d+)", path.stem)
         if match is None:
             raise ValueError(f"{directory}: snapshot {path.name!r} has no numeric suffix")
         numbered.append((int(match.group(2)), path))
