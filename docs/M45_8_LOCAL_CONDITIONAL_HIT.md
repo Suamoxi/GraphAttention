@@ -40,8 +40,10 @@ block-average operator.
    the requested graph-hop conditioning radius.
 3. Generate independent fine-grid Gaussian noise, project it into
    solenoidal Fourier modes and apply a bandpass/small-scale spectral filter.
-4. Multiply the correlated fine noise by trilinearly interpolated local
+4. Multiply the correlated fine noise by parent-cell lifted local
    \(\sigma\) and a bounded strain-aligned anisotropy transformation.
+   Parent-cell lifting preserves the **exact configured coarse-hop support**;
+   smoothing the amplitude by trilinear interpolation would enlarge it.
 5. Project the candidate to the **block-average Q nullspace**:
    \(R_f=(I-B_0 Q)\,\tilde R_f\), where \(B_0\) repeats coarse block values.
 6. Construct a locally interpolated, block-corrected baseline
