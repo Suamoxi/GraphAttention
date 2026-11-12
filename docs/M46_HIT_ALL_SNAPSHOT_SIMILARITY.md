@@ -38,7 +38,7 @@ at submission time using `sbatch --export=ALL,...`.
 
 Inspect `inventory.json`: expected case count is 32 when the six legacy and 26 pilot cases are present. The snapshot count is computed from actual filenames, not hard-coded.
 
-Supply one authoritative case definition per case in the specified reference directory, named `Re54_Ma0.05.yaml`, `ReT060_Mt0.59_Xi0.3.yaml`, etc. Each file must be a valid M3.3 `CaseDefinition`, have a matching `case_id`, use the same reference scheme, and declare inference-available `rho_ref`, `U_ref`, and `L_ref`, with the declared `L_ref` equaling the physical cubic box side. A named `a_ref` is optional and required only for a reference-sound-speed turbulent Mach diagnostic. Do **not** use a posteriori `Mt` labels as inference conditioning metadata.
+Supply one authoritative case definition per **qualified analysis case** in the specified reference directory, named `Re54_Ma0.05.yaml`, `ReT060_Mt0.59_Xi0.3.yaml`, etc. Each file must be a valid M3.3 `CaseDefinition`, have a matching `case_id`, use the same reference scheme, and declare inference-available `rho_ref`, `U_ref`, and `L_ref`, with the declared `L_ref` equaling the physical cubic box side. A named `a_ref` is optional and required only for a reference-sound-speed turbulent Mach diagnostic. Do **not** use a posteriori `Mt` labels as inference conditioning metadata.
 
 Submit the **analysis** through Slurm after the inventory succeeds and
 the complete per-case reference YAML directory exists:
@@ -103,7 +103,7 @@ Full-grid scalar moments (mean, population standard deviation, skew, excess kurt
 - `snapshot_spectra.csv`: per-snapshot nondimensional kinetic-energy spectra when FFTs are enabled.
 - `analysis_summary.json`: reference convention, weighting and estimator descriptions.
 
-The outputs are for comparing candidate regimes and selecting explicit conditioning. They do not modify M43-B training code or any generator, and they do not establish causal effects of `Xi` when controller settings differ. Forcing families must remain distinct in subsequent interpretation; the current cross-case tables include cross-family pairs but do not claim those cases have identical stochastic forcing.
+The outputs compare qualified empirical regimes and help select explicit conditioning. They do not modify M43-B training code or any generator, and they do not establish causal effects of `Xi` when controller settings differ. Forcing families must remain distinct in subsequent interpretation: the bundled legacy selection compares only `random_forcing` cases. ReT `lowk_split_forcing` cases enter only after explicit review of their stationary windows.
 
 ## Tests and validation status
 

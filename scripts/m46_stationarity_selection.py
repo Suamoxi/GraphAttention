@@ -83,7 +83,11 @@ def select_snapshots(inventory: dict, policy: dict) -> tuple[dict, list[dict], d
             if missing or repeated:
                 raise ValueError(f"{case_id}: incomplete reviewed window; missing={missing}, repeated={repeated}")
 
-    qualified_cases = [c for c in inventory["cases"] if c["case_id"] in rules]
+    qualified_cases = [
+        {**case, "inventory_snapshots": case.get("snapshots"),
+         "snapshots": len(accepted_counters[case["case_id"]])}
+        for case in inventory["cases"] if case["case_id"] in rules
+    ]
     status_counts = Counter(row["eligibility"] for row in rows)
     pending = sorted(set(case_by_id) - set(rules))
     summary = {
