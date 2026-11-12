@@ -62,8 +62,10 @@ git status --short > "$OUT/analysis_git_status.txt"
 printf 'M46 analysis job=%s host=%s\n' "$SLURM_JOB_ID" "$(hostname)"
 printf 'references=%s inventory=%s output=%s no_spectra=%s\n'     "$REF_DIR" "$INVENTORY_OUT/inventory.json" "$OUT" "$NO_SPECTRA"
 
-BIND=(-B /home:/home -B /scratch:/scratch -B /archive2:/archive2)
-if [ -d /archivenfs ]; then BIND+=(-B /archivenfs:/archivenfs); fi
+BIND=(-B /home:/home -B /scratch:/scratch)
+for mount in /archivenfs /archive2; do
+    if [ -d "$mount" ]; then BIND+=(-B "$mount:$mount"); fi
+done
 singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q     tests/unit/test_m46_hit_similarity.py
 
 # Per-snapshot caches permit resubmitting the same job after a time limit.

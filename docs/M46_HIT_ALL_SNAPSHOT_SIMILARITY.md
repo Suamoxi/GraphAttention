@@ -21,8 +21,13 @@ image and explicitly selects `avbpML_env/bin/python3`:
 sbatch scripts/slurm/m46_hit_inventory.slurm
 ```
 
-The job uses default roots `/archive2/cfd-phlusim/HIT_DNS_COMP` and
-`/scratch/ai/HIT_DNS_pilot` and writes to
+The inventory launcher selects the first compute-node-visible archive
+containing Re54, Re94, ReT060 and ReT100, trying
+`/archivenfs/phlusim/HIT_DNS_COMP` (used by M43 on Grace), then
+`/archive2/cfd-phlusim/HIT_DNS_COMP`. It does not silently accept a
+legacy-only archive. The pilot root defaults to
+`/scratch/ai/HIT_DNS_pilot`; selected paths are printed in Slurm logs.
+The inventory writes to
 `/scratch/coop/theret/GraphAttention_runs/m46_hit_similarity`. Override
 paths via `M46_ARCHIVE_ROOT`, `M46_PILOT_ROOT`, and `M46_OUTPUT_ROOT`
 at submission time using `sbatch --export=ALL,...`.
