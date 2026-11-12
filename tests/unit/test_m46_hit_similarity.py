@@ -130,7 +130,12 @@ def test_inventory_keeps_all_unique_snapshots_and_prefers_archive(tmp_path: Path
         for k in counters:
             _snapshot(basedir / "RUN" / "SOLUT" / f"solut_hit_{k:08d}.h5", xyz)
     found = audit.inventory(archive, pilot)
-    assert found["counts"] == {"cases": 3, "snapshots": 6, "duplicate_paths": 1,\n                               "within_source_counter_collisions": 0}
+    assert found["counts"] == {
+        "cases": 3,
+        "snapshots": 6,
+        "duplicate_paths": 1,
+        "within_source_counter_collisions": 0,
+    }
     sample = next(s for s in found["samples"] if s["sample_id"] == "ReT060/Mt0.59_Xi0.3:solut_hit_00000002")
     assert sample["source"] == "reT_archive"
     assert found["stationarity_filter"] is False
