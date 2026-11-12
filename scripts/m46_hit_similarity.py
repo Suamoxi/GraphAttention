@@ -527,7 +527,8 @@ def _combine(samples: list[dict], root: Path, output: Path, draws: int) -> None:
         "weighting": "equal snapshot draw count within case; pairwise comparisons give each case one distribution",
         "statistics": "full unique-periodic-node moments, approximate equal-probability quantile W1",
         "w1_approximation": "1024 equal-probability quantile midpoints on sampled interior nodes",
-        "stationarity_filter": False, "source_manifest": str(root),
+        "stationarity_filter": True, "source_manifest": str(root),
+        "selection_policy": "reviewed exploratory candidate subset",
         "references_required": True,
     })
 
@@ -593,7 +594,7 @@ def run_analyze(manifest: dict, reference_dir: Path, output: Path,
                                 **{field: arr.astype(np.float32) for field, arr in values.items()})
         tmp.replace(out)
         print(f"analyzed {sample['sample_id']}", flush=True)
-    _combine(manifest["samples"], output / "inventory.json", output, draws)
+    _combine(manifest["samples"], output / "qualified_manifest.json", output, draws)
 
 
 def main() -> None:
@@ -603,6 +604,8 @@ def main() -> None:
     parser.add_argument("--pilot-root", type=Path, default=Path("/scratch/ai/HIT_DNS_pilot"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reference-dir", type=Path)
+    parser.add_argument("--selection-manifest", type=Path)
+    parser.add_argument("--selection-policy", type=Path)
     parser.add_argument("--draws-per-snapshot", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=46)
     parser.add_argument("--no-spectra", action="store_true")
@@ -620,7 +623,31 @@ def main() -> None:
         parser.error("analyze requires --reference-dir")
     if not manifest_file.is_file():
         parser.error(f"run inventory first: {manifest_file}")
-    manifest = json.loads(manifest_file.read_text())
+    if args.selection_manifest is None or args.selection_policy is None:
+        parser.error("analyze requires a reviewed --selection-manifest and --selection-policy")
+    if not args.selection_manifest.is_file() or not args.selection_policy.is_file():
+        parser.error("run the M46 selection Slurm job first; selection or policy file is missing")
+    full_manifest = json.loads(manifest_file.read_text())
+    manifest = json.loads(args.selection_manifest.read_text())
+    qualification = manifest.get("qualification", {})
+    if manifest.get("stationarity_filter") is not True or manifest.get("version") != "m46_qualified_manifest_v1":
+        raise ValueError("M46 analysis refuses unqualified or all-snapshot manifests")
+    if qualification.get("source_inventory_sha256") != _sha256(manifest_file):
+        raise ValueError("qualified manifest is stale: inventory hash differs")
+    if qualification.get("policy_sha256") != _sha256(args.selection_policy):
+        raise ValueError("qualified manifest is stale: reviewed policy hash differs")
+    actual = {s["sample_id"]: s for s in full_manifest["samples"]}
+    selected_ids = {s["sample_id"] for s in manifest["samples"]}
+    if len(selected_ids) != len(manifest["samples"]):
+        raise ValueError("duplicate sample identifiers in qualified manifest")
+    if any(s["sample_id"] not in actual or s != actual[s["sample_id"]]
+           for s in manifest["samples"]):
+        raise ValueError("qualified manifest contains snapshots absent from source inventory")
+    selected_case_ids = {s["case_id"] for s in manifest["samples"]}
+    if selected_case_ids != {c["case_id"] for c in manifest["cases"]}:
+        raise ValueError("qualified manifest has inconsistent case selection")
+    if not manifest["samples"]:
+        raise ValueError("qualified manifest selects no snapshots")
     run_analyze(manifest, args.reference_dir, args.output, args.draws_per_snapshot,
                 not args.no_spectra, args.seed)
 

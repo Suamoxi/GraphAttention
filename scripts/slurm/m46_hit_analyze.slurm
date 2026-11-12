@@ -26,13 +26,15 @@ DRAWS=${M46_DRAWS_PER_SNAPSHOT:-2048}
 SEED=${M46_SEED:-46}
 
 case "$NO_SPECTRA" in
-    YES) DEFAULT_OUT="${INVENTORY_OUT}_no_spectra"; EXTRA=(--no-spectra) ;;
-    NO)  DEFAULT_OUT="$INVENTORY_OUT"; EXTRA=() ;;
+    YES) DEFAULT_OUT="${INVENTORY_OUT}_qualified_no_spectra"; EXTRA=(--no-spectra) ;;
+    NO)  DEFAULT_OUT="${INVENTORY_OUT}_qualified"; EXTRA=() ;;
     *)   echo "M46_NO_SPECTRA must be YES or NO" >&2; exit 2 ;;
 esac
 OUT=${M46_ANALYSIS_OUTPUT:-$DEFAULT_OUT}
+QUALIFIED=${M46_SELECTION_MANIFEST:-$INVENTORY_OUT/qualified_manifest.json}
+POLICY=${M46_SELECTION_POLICY:-$REPO/configs/m46_stationary_selection_reviewed_legacy.json}
 
-for path in "$REPO" "$IMAGE" "$REF_DIR" "$INVENTORY_OUT/inventory.json"; do
+for path in "$REPO" "$IMAGE" "$REF_DIR" "$INVENTORY_OUT/inventory.json" "$QUALIFIED" "$POLICY"; do
     test -e "$path" || {
         echo "Missing required path: $path" >&2
         echo "Run the M46 inventory Slurm job and provide the case reference YAMLs first." >&2
@@ -46,7 +48,7 @@ if [ -f "$ENV_ROOT/bin/activate" ]; then
 fi
 cd "$REPO"
 mkdir -p "$OUT"
-# Separate no-spectra analyses need the exact same source manifest.
+# Qualification and full source inventory must be copied together.
 if [ "$OUT" != "$INVENTORY_OUT" ]; then
     if [ -e "$OUT/inventory.json" ]; then
         cmp -s "$INVENTORY_OUT/inventory.json" "$OUT/inventory.json" || {
@@ -56,6 +58,14 @@ if [ "$OUT" != "$INVENTORY_OUT" ]; then
     else
         cp "$INVENTORY_OUT/inventory.json" "$OUT/inventory.json"
     fi
+fi
+if [ -e "$OUT/qualified_manifest.json" ]; then
+    cmp -s "$QUALIFIED" "$OUT/qualified_manifest.json" || {
+        echo "Qualification manifest changed; refusing to mix selected runs: $OUT" >&2
+        exit 2
+    }
+else
+    cp "$QUALIFIED" "$OUT/qualified_manifest.json"
 fi
 printf '%s\n' "$(git rev-parse HEAD)" > "$OUT/analysis_git_commit.txt"
 git status --short > "$OUT/analysis_git_status.txt"
@@ -69,7 +79,7 @@ done
 singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q     tests/unit/test_m46_hit_similarity.py
 
 # Per-snapshot caches permit resubmitting the same job after a time limit.
-singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -u -m scripts.m46_hit_similarity analyze     --output "$OUT"     --reference-dir "$REF_DIR"     --draws-per-snapshot "$DRAWS"     --seed "$SEED"     "${EXTRA[@]}"
+singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -u -m scripts.m46_hit_similarity analyze     --output "$OUT"     --reference-dir "$REF_DIR"     --draws-per-snapshot "$DRAWS"     --seed "$SEED"     --selection-manifest "$OUT/qualified_manifest.json"     --selection-policy "$POLICY"     "${EXTRA[@]}"
 
 test -s "$OUT/analysis_summary.json"
 echo "M46 analysis complete: $OUT/analysis_summary.json"

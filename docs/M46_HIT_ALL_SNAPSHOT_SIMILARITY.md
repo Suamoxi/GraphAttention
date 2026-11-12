@@ -1,16 +1,19 @@
-# M46 — All-snapshot cross-case HIT similarity audit
+# M46 — Stationarity-qualified cross-case HIT similarity audit
 
 ## Scope and evidence status
 
 This is a **read-only analysis implementation**, not a model/conditioning change.
+**Policy update:** M46 retains every path in `inventory.json` for provenance,
+but statistical analyses operate **only on explicitly reviewed stationary-candidate
+snapshots**. The former all-snapshot analytical policy is superseded.
 
 - Source inventory: six Re54/Re94 cases from `/archive2/cfd-phlusim/HIT_DNS_COMP` and all ReT060/ReT100 cases found in that archive and in `/scratch/ai/HIT_DNS_pilot/data/`.
-- All discovered snapshots enter the empirical dataset. **No stationarity or quality mask** is generated or applied.
+- All discovered snapshots remain in the full inventory, with no data deletion. A separate reviewed selection manifest determines which snapshots enter the primary statistical comparison. The full inventory is **not** an analysis dataset.
 - **Within a source**, distinct HDF5 files with the same numeric suffix are **both retained**, with all such counter collisions listed in `within_source_counter_collisions`. Unnumbered files such as `last_solution.h5` are also retained if they are distinct filesystem objects, with a null numeric counter and an entry in `unnumbered_snapshots`. Identical filesystem objects reached via two filenames (symlinks/hardlinks, same inode) are counted once, and their aliases are recorded.
 - **Between archive and pilot**, a matching `(case_id, numeric snapshot counter)` is selected from the archive, even if the zero-padding differs. The suppressed pilot paths are recorded in `duplicates`. Unnumbered paths cannot be matched across independent sources using time counters, so both remain until provenance establishes identity. This is a provenance convention, **not evidence of byte-identical arrays**. No scientific or stationarity filter is applied.
 - Physical reference scales come exclusively from explicit M3.3 case YAML files. The tool **does not** infer velocity, density or Mach from `ReT...`, `Mt...`, `Xi...`, grid resolution, or a posteriori statistics.
-- `inventory` works with no case YAML. `analyze` fails with an explicit list of missing YAML files rather than inventing scales or silently dropping cases. The M46 pilot has missing source references for some newer cases; their input provenance must be supplied before full analysis can run.
-- The result is a *time-mixture empirical distribution*. Treating all snapshots as eligible **does not prove** that their marginal distribution is statistically stationary or that samples are temporally independent.
+- `inventory` works with no case YAML. `select` requires only the inventory and the reviewed window policy. `analyze` requires case reference YAMLs **only for cases selected by the reviewed policy**; all unreviewed cases remain pending, not silently accepted. ReT case setup references and stationary intervals remain to be qualified.
+- The primary results are exploratory stationary-window distributions. Reviewed M43 cutoffs do not prove exact statistical stationarity or temporal independence.
 
 ## Usage
 
@@ -146,3 +149,51 @@ An unnumbered symlink to a numbered pilot snapshot that was already rejected
 by archive-first precedence is also rejected, using the pilot inode registry.
 Without independent provenance, distinct unnumbered files can still contain
 byte-identical physical states; this implementation does not claim otherwise.
+
+
+## Reviewed snapshot eligibility — revised M46 policy
+
+The input inventory remains immutable and records all 32 cases and 1,360
+discovered snapshots. It does **not** authorize using every snapshot in
+physical statistics.
+
+The bundled policy \`configs/m46_stationary_selection_reviewed_legacy.json\`
+encodes the previously reviewed M43 exploratory decision for each of the
+six Re54/Re94 cases: snapshots 1–10 are transient, 11–40 are
+transition/uncertain, and **41–100 are selected**. Hence 360 legacy
+snapshots enter the primary comparison. The remaining 240 legacy
+snapshots are retained in the provenance file but excluded from statistical
+aggregates. The boundary is an exploratory reviewed cutoff, not a proof of
+stationarity.
+
+**No corresponding reviewed stationary selection is available for the
+26 ReT060/ReT100 cases**. Their 760 snapshots remain
+\`pending_case_qualification\`; the 4–8-snapshot pilot sequences must not be
+treated as stationary merely because they are available. Do not copy
+the legacy snapshot-number cutoff onto the ReT sequences.
+
+Run selection through a Slurm job, after the completed inventory:
+
+\`\`\`bash
+sbatch scripts/slurm/m46_hit_select.slurm
+\`\`\`
+
+This writes \`qualified_manifest.json\`,
+\`snapshot_eligibility.csv\` (one row per discovered snapshot),
+and \`eligibility_summary.json\` alongside the complete \`inventory.json\`.
+Selected windows require complete, unique canonical \`solut_hit_NNNNNNNN.h5\`
+counters by default; crash, restart or unnumbered files are separately
+reported and never automatically added to stationary windows.
+
+The analysis launcher now refuses to operate until the qualified manifest
+exists, verifies it against the complete inventory and selection-policy
+checksums, and loads case references only for the selected cases.
+Separate output directories are
+\`m46_hit_similarity_qualified_no_spectra\` (recommended first pass)
+and \`m46_hit_similarity_qualified\` (FFT pass). Existing
+all-snapshot caches must **not** be relabeled as qualified analyses.
+
+To qualify ReT cases later, extend a copied policy with defensible
+case-specific counter intervals and evidence provenance, then submit
+selection using \`M46_SELECTION_POLICY\`. Do not modify the M43
+reference files or training dataset in place.

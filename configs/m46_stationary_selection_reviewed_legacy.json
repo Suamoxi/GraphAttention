@@ -1,0 +1,36 @@
+{
+  "version": "m46_stationary_eligibility_v1",
+  "purpose": "M43-reviewed exploratory stationary subset for the primary M46 comparison; ReT cases pending",
+  "cases": {
+    "Re54/Ma0.05": {
+      "first_counter": 41, "last_counter": 100, "transient_end_counter": 10,
+      "require_full_window": true,
+      "evidence": "M43 m43_stationarity_cutoff_review.md, reviewed common index-40 cutoff for exploratory postprocessing"
+    },
+    "Re54/Ma0.2": {
+      "first_counter": 41, "last_counter": 100, "transient_end_counter": 10,
+      "require_full_window": true,
+      "evidence": "M43 m43_stationarity_cutoff_review.md, reviewed common index-40 cutoff for exploratory postprocessing"
+    },
+    "Re54/Ma0.3": {
+      "first_counter": 41, "last_counter": 100, "transient_end_counter": 10,
+      "require_full_window": true,
+      "evidence": "M43 m43_stationarity_cutoff_review.md, reviewed common index-40 cutoff for exploratory postprocessing"
+    },
+    "Re94/Ma0.05": {
+      "first_counter": 41, "last_counter": 100, "transient_end_counter": 10,
+      "require_full_window": true,
+      "evidence": "M43 m43_stationarity_cutoff_review.md, reviewed common index-40 cutoff for exploratory postprocessing"
+    },
+    "Re94/Ma0.2": {
+      "first_counter": 41, "last_counter": 100, "transient_end_counter": 10,
+      "require_full_window": true,
+      "evidence": "M43 m43_stationarity_cutoff_review.md, reviewed common index-40 cutoff for exploratory postprocessing"
+    },
+    "Re94/Ma0.3": {
+      "first_counter": 41, "last_counter": 100, "transient_end_counter": 10,
+      "require_full_window": true,
+      "evidence": "M43 m43_stationarity_cutoff_review.md, reviewed common index-40 cutoff for exploratory postprocessing"
+    }
+  }
+}
