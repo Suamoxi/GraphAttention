@@ -6,8 +6,8 @@ This is a **read-only analysis implementation**, not a model/conditioning change
 
 - Source inventory: six Re54/Re94 cases from `/archive2/cfd-phlusim/HIT_DNS_COMP` and all ReT060/ReT100 cases found in that archive and in `/scratch/ai/HIT_DNS_pilot/data/`.
 - All discovered snapshots enter the empirical dataset. **No stationarity or quality mask** is generated or applied.
-- **Within a source**, distinct HDF5 files with the same numeric suffix are **both retained**, with all such counter collisions listed in `within_source_counter_collisions`. Identical filesystem objects reached via two filenames (symlinks/hardlinks, same inode) are counted once, and their aliases are recorded.
-- **Between archive and pilot**, a matching `(case_id, numeric snapshot counter)` is selected from the archive, even if the zero-padding of the filenames differs. The suppressed pilot paths are recorded in `duplicates`. This is a provenance convention, **not evidence of byte-identical arrays**. No scientific or stationarity filter is applied.
+- **Within a source**, distinct HDF5 files with the same numeric suffix are **both retained**, with all such counter collisions listed in `within_source_counter_collisions`. Unnumbered files such as `last_solution.h5` are also retained if they are distinct filesystem objects, with a null numeric counter and an entry in `unnumbered_snapshots`. Identical filesystem objects reached via two filenames (symlinks/hardlinks, same inode) are counted once, and their aliases are recorded.
+- **Between archive and pilot**, a matching `(case_id, numeric snapshot counter)` is selected from the archive, even if the zero-padding differs. The suppressed pilot paths are recorded in `duplicates`. Unnumbered paths cannot be matched across independent sources using time counters, so both remain until provenance establishes identity. This is a provenance convention, **not evidence of byte-identical arrays**. No scientific or stationarity filter is applied.
 - Physical reference scales come exclusively from explicit M3.3 case YAML files. The tool **does not** infer velocity, density or Mach from `ReT...`, `Mt...`, `Xi...`, grid resolution, or a posteriori statistics.
 - `inventory` works with no case YAML. `analyze` fails with an explicit list of missing YAML files rather than inventing scales or silently dropping cases. The M46 pilot has missing source references for some newer cases; their input provenance must be supplied before full analysis can run.
 - The result is a *time-mixture empirical distribution*. Treating all snapshots as eligible **does not prove** that their marginal distribution is statistically stationary or that samples are temporally independent.
@@ -122,3 +122,16 @@ This fixes the exception observed on Grace for
 `ReT060/Mt0.23_Xi0.0`; that case's specific colliding filenames
 and their scientific equivalence remain unknown until the new inventory
 reports them. The six-case M43 dataset reader has not been modified.
+
+### M46 nonnumeric solution filenames (job 503136)
+
+The scan of `ReT060/Mt0.23_Xi0.0` encountered
+`last_solution.h5`, which has no parseable timestep suffix. M46 retains
+unnumbered source files, recording `counter: null` and
+`unnumbered_snapshots` in the inventory rather than excluding them as
+transients or failing filename parsing. The metadata-only inventory still
+validates HDF5 schemas, and physically identical symlink/hardlink aliases
+are counted once using device/inode identity. Distinct unnumbered files
+remain eligible with **unknown physical time**; consequently, time-series
+ordering and cross-source pairing for those files cannot be inferred.
+The strict M43 reader remains unchanged.

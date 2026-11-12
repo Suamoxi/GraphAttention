@@ -135,6 +135,7 @@ def test_inventory_keeps_all_unique_snapshots_and_prefers_archive(tmp_path: Path
         "snapshots": 6,
         "duplicate_paths": 1,
         "within_source_counter_collisions": 0,
+        "unnumbered_snapshots": 0,
     }
     sample = next(s for s in found["samples"] if s["sample_id"] == "ReT060/Mt0.59_Xi0.3:solut_hit_00000002")
     assert sample["source"] == "reT_archive"
@@ -167,6 +168,7 @@ def test_inventory_retains_distinct_same_counter_files_and_reports_collisions(
     assert found["counts"] == {
         "cases": 2, "snapshots": 4, "duplicate_paths": 2,
         "within_source_counter_collisions": 1,
+        "unnumbered_snapshots": 0,
     }
     assert len(found["within_source_counter_collisions"]) == 1
     collision = found["within_source_counter_collisions"][0]
@@ -179,4 +181,42 @@ def test_inventory_retains_distinct_same_counter_files_and_reports_collisions(
         "same_filesystem_object_alias",
         "archive_preferred_by_case_and_numeric_counter_not_byte_identity",
     }
+    assert found["stationarity_filter"] is False
+
+def test_inventory_retains_unnumbered_distinct_solution_and_inode_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from graph_attention.data.multicase_avbp import HITCaseSpec
+
+    archive, pilot = tmp_path / "archive", tmp_path / "pilot"
+    monkeypatch.setattr(audit, "DEFAULT_M43_CASES", (HITCaseSpec("Re54/Ma0.05", 5),))
+    monkeypatch.setattr(audit, "PILOT_SIDES", {"ReT060": 5})
+    legacy = archive / "Re54" / "Ma0.05"
+    xyz = _mesh(legacy / "MESH" / "mesh.mesh.h5")
+    sol = legacy / "RUN" / "SOLUT"
+    _snapshot(sol / "solut_hit_00000001.h5", xyz)
+    _snapshot(sol / "restart_state.h5", xyz)
+    (sol / "last_solution.h5").symlink_to("solut_hit_00000001.h5")
+
+    modern = archive / "ReT060" / "Mt0.59_Xi0.3"
+    xyz = _mesh(modern / "MESH" / "mesh.mesh.h5")
+    _snapshot(modern / "RUN" / "SOLUT" / "solut_hit_00000001.h5", xyz)
+    modern_pilot = pilot / "data" / "ReT060" / "Mt0.59_Xi0.3"
+    xyz = _mesh(modern_pilot / "MESH" / "mesh.mesh.h5")
+    _snapshot(modern_pilot / "RUN" / "SOLUT" / "solut_hit_00000001.h5", xyz)
+
+    found = audit.inventory(archive, pilot)
+    assert found["counts"] == {
+        "cases": 2,
+        "snapshots": 3,
+        "duplicate_paths": 2,
+        "within_source_counter_collisions": 0,
+        "unnumbered_snapshots": 1,
+    }
+    selected = {entry["sample_id"] for entry in found["samples"]}
+    assert "Re54/Ma0.05:restart_state" in selected
+    assert len(found["unnumbered_snapshots"]) == 1
+    assert found["unnumbered_snapshots"][0]["snapshot"].endswith("restart_state.h5")
+    assert any(entry["policy"] == "same_filesystem_object_alias" for entry in found["duplicates"])
+    assert any("archive_preferred" in entry["policy"] for entry in found["duplicates"])
     assert found["stationarity_filter"] is False

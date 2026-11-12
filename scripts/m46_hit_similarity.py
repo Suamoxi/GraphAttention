@@ -72,8 +72,9 @@ def _candidates(archive: Path, pilot: Path):
 def _m46_snapshots(directory: Path) -> tuple[tuple[int, Path], ...]:
     """Inventory every numbered HDF5 path; M43's strict unique-counter rule is not used.
 
-    Two distinct files in the same source may have the same numeric suffix.
-    Both are retained, with the collision listed in inventory.json.
+    Distinct snapshots may share a numeric counter or have no numeric suffix
+    (for example last_solution.h5). Both remain eligible; filesystem aliases
+    are deduplicated separately by inode.
     """
     groups = []
     for location in (directory / "SOLUT", directory / "RUN" / "SOLUT"):
@@ -88,10 +89,14 @@ def _m46_snapshots(directory: Path) -> tuple[tuple[int, Path], ...]:
     numbered = []
     for path in groups[0]:
         match = re.fullmatch(r"(.+?)(\d+)", path.stem)
-        if match is None:
-            raise ValueError(f"{directory}: snapshot {path.name!r} has no numeric suffix")
-        numbered.append((int(match.group(2)), path))
-    return tuple(sorted(numbered, key=lambda pair: (pair[0], pair[1].name)))
+        numbered.append((int(match.group(2)) if match is not None else None, path))
+    # Keep unnumbered snapshots, but do not pretend to know their physical time.
+    return tuple(sorted(
+        numbered,
+        key=lambda pair: (
+            pair[0] is None, pair[0] if pair[0] is not None else -1, pair[1].name,
+        ),
+    ))
 
 
 def inventory(archive: Path, pilot: Path) -> dict:
@@ -99,8 +104,9 @@ def inventory(archive: Path, pilot: Path) -> dict:
 
     Same-inode aliases are the same physical file and appear once. Distinct
     files sharing a counter *within a source* all enter the empirical dataset.
-    Across archive/pilot sources, a matching (case_id, counter) uses archive
-    priority, with rejected paths recorded; no byte equality is implied.
+    Across archive/pilot sources, a matching *numbered* (case_id, counter)
+    uses archive priority, with rejected paths recorded; no byte equality
+    is implied. Unnumbered files cannot be matched by timestep alone.
     """
     samples: dict[str, dict] = {}
     cases: dict[str, dict] = {}
@@ -135,9 +141,10 @@ def inventory(archive: Path, pilot: Path) -> dict:
                     "policy": "same_filesystem_object_alias",
                 })
                 continue
-            # Archive cases are processed before their pilot counterparts.
-            counter_key = (case_id, counter)
-            selected = by_counter.get(counter_key, [])
+            # Archive cases precede their pilot counterparts. A missing numeric
+            # counter is NOT a shared time label across two source directories.
+            counter_key = (case_id, counter) if counter is not None else None
+            selected = by_counter.get(counter_key, []) if counter_key is not None else []
             if selected and any(item["source"] != source for item in selected):
                 duplicates.append({
                     "sample_id": sample_id,
@@ -159,7 +166,8 @@ def inventory(archive: Path, pilot: Path) -> dict:
             }
             samples[sample_id] = item
             seen_inodes[inode_key] = item
-            by_counter.setdefault(counter_key, []).append(item)
+            if counter_key is not None:
+                by_counter.setdefault(counter_key, []).append(item)
             case["snapshots"] += 1
     collisions = []
     for (case_id, counter), entries in sorted(by_counter.items()):
@@ -171,22 +179,35 @@ def inventory(archive: Path, pilot: Path) -> dict:
             })
     ordered = sorted(
         samples.values(),
-        key=lambda item: (item["case_id"], item["counter"], item["snapshot"]),
+        key=lambda item: (
+            item["case_id"],
+            item["counter"] is None,
+            item["counter"] if item["counter"] is not None else -1,
+            item["snapshot"],
+        ),
     )
+    unnumbered = [
+        {"sample_id": item["sample_id"], "snapshot": item["snapshot"],
+         "source": item["source"]}
+        for item in ordered if item["counter"] is None
+    ]
     return {
         "version": "m46_all_snapshots_v2", "stationarity_filter": False,
         "source_roots": {"archive": str(archive), "pilot": str(pilot)},
         "deduplication": (
             "same-inode aliases excluded; within-source counter collisions retained; "
-            "archive preferred over pilot for matching case ID and numeric counter"
+            "archive preferred over pilot for matching numbered case ID and counter; "
+            "unnumbered files retained with unknown timestep"
         ),
         "cases": sorted(cases.values(), key=lambda c: c["case_id"]),
         "samples": ordered, "duplicates": duplicates,
         "within_source_counter_collisions": collisions,
+        "unnumbered_snapshots": unnumbered,
         "counts": {
             "cases": len(cases), "snapshots": len(ordered),
             "duplicate_paths": len(duplicates),
             "within_source_counter_collisions": len(collisions),
+            "unnumbered_snapshots": len(unnumbered),
         },
     }
 
