@@ -1,8 +1,8 @@
-"""M46: all-snapshot, read-only cross-case HIT similarity audit.
+"""M46: stationarity-qualified, read-only cross-case HIT similarity audit.
 
-Inventory is metadata-only. Analyze requires explicit M3.3 case reference YAMLs;
-source directory labels never supply physical reference values. Analysis never
-applies a stationarity mask, reweights by node count, or changes raw data.
+Inventory retains all discovered paths for provenance. Analyze requires a
+reviewed eligibility manifest plus M3.3 references for selected cases only.
+No a posteriori fitting, node-count weighting, or raw-data mutation.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ import re
 import h5py
 import numpy as np
 
+from scripts.m46_stationarity_selection import select_snapshots
 from graph_attention.data.avbp import AVBP_FIELD_CATALOG
 from graph_attention.data.case_definition import load_case_definition
 from graph_attention.data.multicase_avbp import (
@@ -529,6 +530,7 @@ def _combine(samples: list[dict], root: Path, output: Path, draws: int) -> None:
         "w1_approximation": "1024 equal-probability quantile midpoints on sampled interior nodes",
         "stationarity_filter": True, "source_manifest": str(root),
         "selection_policy": "reviewed exploratory candidate subset",
+        "qualified_manifest_sha256": _sha256(output / "qualified_manifest.json"),
         "references_required": True,
     })
 
@@ -627,6 +629,8 @@ def main() -> None:
         parser.error("analyze requires a reviewed --selection-manifest and --selection-policy")
     if not args.selection_manifest.is_file() or not args.selection_policy.is_file():
         parser.error("run the M46 selection Slurm job first; selection or policy file is missing")
+    if args.selection_manifest.resolve() != (args.output / "qualified_manifest.json").resolve():
+        raise ValueError("qualified manifest must be in the analysis output directory")
     full_manifest = json.loads(manifest_file.read_text())
     manifest = json.loads(args.selection_manifest.read_text())
     qualification = manifest.get("qualification", {})
@@ -636,6 +640,12 @@ def main() -> None:
         raise ValueError("qualified manifest is stale: inventory hash differs")
     if qualification.get("policy_sha256") != _sha256(args.selection_policy):
         raise ValueError("qualified manifest is stale: reviewed policy hash differs")
+    expected, _, _ = select_snapshots(
+        full_manifest, json.loads(args.selection_policy.read_text()))
+    if (manifest["samples"] != expected["samples"]
+            or manifest["cases"] != expected["cases"]
+            or qualification.get("rules") != expected["qualification"]["rules"]):
+        raise ValueError("qualified manifest differs from reviewed selection policy")
     actual = {s["sample_id"]: s for s in full_manifest["samples"]}
     selected_ids = {s["sample_id"] for s in manifest["samples"]}
     if len(selected_ids) != len(manifest["samples"]):

@@ -76,7 +76,7 @@ BIND=(-B /home:/home -B /scratch:/scratch)
 for mount in /archivenfs /archive2; do
     if [ -d "$mount" ]; then BIND+=(-B "$mount:$mount"); fi
 done
-singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q     tests/unit/test_m46_hit_similarity.py
+singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q     tests/unit/test_m46_hit_similarity.py tests/unit/test_m46_stationarity_selection.py
 
 # Per-snapshot caches permit resubmitting the same job after a time limit.
 singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -u -m scripts.m46_hit_similarity analyze     --output "$OUT"     --reference-dir "$REF_DIR"     --draws-per-snapshot "$DRAWS"     --seed "$SEED"     --selection-manifest "$OUT/qualified_manifest.json"     --selection-policy "$POLICY"     "${EXTRA[@]}"

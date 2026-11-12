@@ -63,7 +63,7 @@ tests and the analysis *inside* the allocated Slurm job, not on login nodes.
 The requested `grace` GPU is a cluster-allocation convention copied from
 existing job scripts; no GPU kernels are used in this analysis.
 
-All snapshots receive exact full-grid field moments and turbulent kinetic energy. By default they also receive an FFT spectrum and solenoidal/dilatational energy split. FFTs at `320^3` unique points are memory- and CPU-intensive: use a high-memory CPU node, not the login node. For the lower-memory first execution of all-snapshot field statistics and pairwise distribution comparisons, use `--no-spectra` in a **separate output directory**. Results are resumable per snapshot; changing analysis options or reference-file contents invalidates existing caches explicitly.
+Every **selected** snapshot receives exact full-grid field moments and turbulent kinetic energy. By default selected snapshots also receive an FFT spectrum and solenoidal/dilatational energy split. FFTs at `320^3` unique points are memory- and CPU-intensive: use a high-memory CPU node, not the login node. For the lower-memory first execution of qualified field statistics and pairwise distribution comparisons, use `M46_NO_SPECTRA=YES` in the analysis Slurm submission. Results are resumable per snapshot; changing analysis options or reference-file contents invalidates existing caches explicitly.
 
 ## Mathematical definitions
 
@@ -157,7 +157,7 @@ The input inventory remains immutable and records all 32 cases and 1,360
 discovered snapshots. It does **not** authorize using every snapshot in
 physical statistics.
 
-The bundled policy \`configs/m46_stationary_selection_reviewed_legacy.json\`
+The bundled policy `configs/m46_stationary_selection_reviewed_legacy.json`
 encodes the previously reviewed M43 exploratory decision for each of the
 six Re54/Re94 cases: snapshots 1–10 are transient, 11–40 are
 transition/uncertain, and **41–100 are selected**. Hence 360 legacy
@@ -168,32 +168,33 @@ stationarity.
 
 **No corresponding reviewed stationary selection is available for the
 26 ReT060/ReT100 cases**. Their 760 snapshots remain
-\`pending_case_qualification\`; the 4–8-snapshot pilot sequences must not be
+`pending_case_qualification`; the 4–8-snapshot pilot sequences must not be
 treated as stationary merely because they are available. Do not copy
 the legacy snapshot-number cutoff onto the ReT sequences.
 
 Run selection through a Slurm job, after the completed inventory:
 
-\`\`\`bash
+```bash
 sbatch scripts/slurm/m46_hit_select.slurm
-\`\`\`
+```
 
-This writes \`qualified_manifest.json\`,
-\`snapshot_eligibility.csv\` (one row per discovered snapshot),
-and \`eligibility_summary.json\` alongside the complete \`inventory.json\`.
-Selected windows require complete, unique canonical \`solut_hit_NNNNNNNN.h5\`
+This writes `qualified_manifest.json`,
+`snapshot_eligibility.csv` (one row per discovered snapshot),
+and `eligibility_summary.json` alongside the complete `inventory.json`.
+Selected windows require complete, unique canonical `solut_hit_NNNNNNNN.h5`
 counters by default; crash, restart or unnumbered files are separately
 reported and never automatically added to stationary windows.
 
 The analysis launcher now refuses to operate until the qualified manifest
 exists, verifies it against the complete inventory and selection-policy
-checksums, and loads case references only for the selected cases.
+checksums, recomputes the reviewed case rule on the full inventory to reject
+manually altered selections, and loads case references only for selected cases.
 Separate output directories are
-\`m46_hit_similarity_qualified_no_spectra\` (recommended first pass)
-and \`m46_hit_similarity_qualified\` (FFT pass). Existing
+`m46_hit_similarity_qualified_no_spectra` (recommended first pass)
+and `m46_hit_similarity_qualified` (FFT pass). Existing
 all-snapshot caches must **not** be relabeled as qualified analyses.
 
 To qualify ReT cases later, extend a copied policy with defensible
 case-specific counter intervals and evidence provenance, then submit
-selection using \`M46_SELECTION_POLICY\`. Do not modify the M43
+selection using `M46_SELECTION_POLICY`. Do not modify the M43
 reference files or training dataset in place.
