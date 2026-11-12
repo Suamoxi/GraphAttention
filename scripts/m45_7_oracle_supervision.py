@@ -25,12 +25,13 @@ from scripts.m45_checkpoint_diagnostics import BlockGaussianOracle, _write_csv
 from scripts.m45_synthetic_pilot import _path, _state, _to_device, _validate, _velocity
 
 
-def _make_model(*, mode: str, seed: int, width: int, heads: int, depth: int) -> TwoScaleDiNAT:
+def _make_model(*, mode: str, seed: int, width: int, heads: int, depth: int,
+                channels: int = 5) -> TwoScaleDiNAT:
     """Match M45.6 initialization, including shared static/dynamic parameters."""
     if mode not in ("static", "dynamic"):
         raise ValueError("mode must be static or dynamic")
     params = dict(
-        coarse_width=width, fine_width=width, num_heads=heads,
+        coarse_width=width, fine_width=width, num_heads=heads, channels=channels,
         fine_pre_layers=depth, fine_post_layers=depth,
         coarse_static_layers=depth, coarse_dynamic_layers=depth,
     )
