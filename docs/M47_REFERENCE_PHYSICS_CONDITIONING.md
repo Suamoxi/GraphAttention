@@ -258,16 +258,20 @@ The published common mixture database's SHA256 is
 `7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f`;
 the uploaded common species database has SHA256
 `4d41e4bad08f277276681fa73d19e7d55bf311b6e60ecd1190598e2866ac82fd`.
-**Before the preparation job**, confirm that the `RUN/mixture_database.dat`
-actually deployed in **each** of the six archived cases matches the
-common audited file, or repeat the audit for any differing AIR blocks.
+**Source-location correction.** The user-supplied `mixture_database.dat`
+is the **shared generic AVBP database**. It is not present separately in
+each case's archive directory. A byte-for-byte copy is now retained at
+`data/avbp_reference/mixture_database.dat` in GraphAttention. The six M47
+viscosity declarations use
+`source_path: repo:data/avbp_reference/mixture_database.dat`.
+The preparation step hashes this shared file and does not require
+`RUN/mixture_database.dat` under any case directory.
 
-```bash
-ROOT=/archive2/cfd-phlusim/HIT_DNS_COMP
-for case in Re{54,94}/Ma{0.05,0.2,0.3}; do
-    sha256sum "$ROOT/$case/RUN/mixture_database.dat"
-done
-```
+The six case-specific `RUN/run.params` files select the AIR mixture;
+the user's supplied generic database is used as the corresponding model
+definition. This attribution follows the supplied setup and the user's
+confirmation that the file is shared; the archived per-case setup contains
+no separate mixture-database bytes to compare.
 
 With the frozen M3.3 `rho_ref=1.17 kg/m^3`, case-specific `U_ref`
 and box-side `L_ref` values, the resulting `Re_ref` is
@@ -286,7 +290,7 @@ effective heat-capacity ratio at 300 K. M47 therefore labels this a
 reference-scheme Mach parameter, not a verified a posteriori turbulent
 Mach number.
 
-After verifying the six deployed mixture source hashes, run:
+Using the repository-bundled generic AVBP mixture source, run:
 
 ```bash
 cd /scratch/coop/theret/GraphAttention
@@ -295,7 +299,7 @@ sbatch --export=ALL,M47_REF_MODE=prepare,M47_PHYSICAL_INPUT="$PWD/configs/m47_ph
   scripts/slurm/m47_reference_conditions.slurm
 ```
 
-If successful, launch the default one-step smoke test:
+After the preparation job passes its reference checks, launch the default one-step smoke test:
 
 ```bash
 sbatch scripts/slurm/m47_conditioned_train.slurm

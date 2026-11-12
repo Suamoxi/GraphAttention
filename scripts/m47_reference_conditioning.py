@@ -63,10 +63,24 @@ def _read_audited_source(
         if (not isinstance(supplied[key], str) or not supplied[key].strip()
             or supplied[key].strip().upper().startswith("TODO")):
             raise ValueError(f"{case_id}.{name}: audited {key} is required")
-    source = Path(supplied["source_path"]).expanduser()
-    if not source.is_absolute():
-        source = root / case_id / source
-    source = source.resolve(strict=True)
+    # A generic AVBP database can be supplied once and tracked inside the
+    # repository. Other source paths retain their original per-case/absolute
+    # meaning; do not require a nonexistent RUN/mixture_database.dat copy.
+    source_spec = supplied["source_path"].strip()
+    if source_spec.startswith("repo:"):
+        relative = Path(source_spec.removeprefix("repo:"))
+        if (not relative.parts or relative.is_absolute()
+            or ".." in relative.parts):
+            raise ValueError(f"{case_id}.{name}: invalid repository-relative source")
+        repository = Path(__file__).resolve().parents[1]
+        source = (repository / relative).resolve(strict=True)
+        if not source.is_relative_to(repository):
+            raise ValueError(f"{case_id}.{name}: source escapes repository")
+    else:
+        source = Path(source_spec).expanduser()
+        if not source.is_absolute():
+            source = root / case_id / source
+        source = source.resolve(strict=True)
     if not source.is_file():
         raise FileNotFoundError(source)
     evidence = {

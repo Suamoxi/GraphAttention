@@ -91,6 +91,54 @@ def test_build_explicit_conditions_and_preserve_original_refs(tmp_path, monkeypa
     assert payload[cases[0].case_id]["regime"]["Re_ref"]["value"] == payload[cases[1].case_id]["regime"]["Re_ref"]["value"]
 
 
+def test_shared_generic_avbp_mixture_without_per_case_copies(tmp_path, monkeypatch):
+    cases, refs, root = _base(tmp_path, monkeypatch)
+    for case in cases:
+        (root / case.case_id / "RUN" / "mixture_database.dat").unlink()
+    inputs = _physical_input(cases)
+    shared = "repo:data/avbp_reference/mixture_database.dat"
+    for case in cases:
+        record = inputs["cases"][case.case_id]
+        record["a_ref"]["source_path"] = str(refs / physical.reference_filename(case.case_id))
+        record["mu_ref"]["source_path"] = shared
+    input_path = tmp_path / "inputs.yaml"
+    OmegaConf.save(OmegaConf.create(inputs), input_path)
+    payload, report = physical.build_reference_cases(root, refs, input_path)
+    assert report["status"] == "ready"
+    assert len(payload) == 2
+    evidence = {
+        report["cases"][case.case_id]["evidence"]["mu_ref"]["source_sha256"]
+        for case in cases
+    }
+    assert evidence == {"7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f"}
+
+
+def test_bundled_avbp_source_matches_supplied_generic_file():
+    repo = Path(physical.__file__).resolve().parents[1]
+    shared = repo / "data/avbp_reference/mixture_database.dat"
+    assert physical._sha256(shared) == (
+        "7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f"
+    )
+    config = OmegaConf.to_container(OmegaConf.load(
+        repo / "configs/m47_physical_conditions_re54_re94_air_sutherland_300K.yaml"
+    ), resolve=False)
+    assert len(config["cases"]) == 6
+    assert all(
+        case["mu_ref"]["source_path"] == "repo:data/avbp_reference/mixture_database.dat"
+        for case in config["cases"].values()
+    )
+
+
+def test_repo_source_path_traversal_is_rejected(tmp_path, monkeypatch):
+    cases, refs, root = _base(tmp_path, monkeypatch)
+    inputs = _physical_input(cases)
+    inputs["cases"][cases[0].case_id]["mu_ref"]["source_path"] = "repo:../../etc/passwd"
+    path = tmp_path / "inputs.yaml"
+    OmegaConf.save(OmegaConf.create(inputs), path)
+    with pytest.raises(ValueError, match="invalid repository-relative source"):
+        physical.build_reference_cases(root, refs, path)
+
+
 def test_missing_or_conflicting_physics_fails(tmp_path, monkeypatch):
     cases, refs, root = _base(tmp_path, monkeypatch)
     p = tmp_path / "in.yaml"
