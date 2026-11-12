@@ -28,17 +28,16 @@ Ma_{\rm ref} = \frac{U_{\rm ref}}{a_{\rm ref}}.
   or the measured Taylor microscale; input references must be available
   before inference. The original M3.3 YAML files are not overwritten.
 
-**Current physical provenance gate:** The six legacy cases have `RUN/run.params`
-but no `case_info.json` in the supplied setup audit. `run.params` alone does
-not establish the original molecular reference viscosity and EOS/sound-speed
-convention. Consequently, the code deliberately produces a missing-reference
-report and non-runnable template until these inputs have been verified using
-original AVBP setup sources (e.g. the archived species/mixture databases,
-reference thermodynamic state and viscosity law). A source path and checksum
-anchor the evidence, but a file checksum **does not automatically verify**
-the physical interpretation of a numerical value. A human must verify the
-EOS and viscosity law, particularly temperature and dynamic-vs-kinematic
-viscosity conventions.
+**Physical reference status (2026-11-12):** The six legacy cases' `RUN/run.params`
+select `AIR`, and the user supplied the **generic AVBP mixture database**,
+which is not present as a separate file under each archived case. Its AIR
+block specifies Sutherland molecular viscosity, evaluated at the frozen
+M3.3 reference temperature of 300 K. The shared file and the six-case
+physical-input YAML are versioned in this repository. The sound-speed
+input explicitly follows the previously frozen M3.3 convention; it is not
+an independently verified AVBP effective-gas acoustic speed. Provenance
+hashes anchor the inputs but do not themselves verify their physical
+interpretation. Refer to the audited legacy AIR mixture section below.
 
 ## Phase 1 — Inspect references, without training
 
@@ -72,13 +71,13 @@ cases:
       units: m/s
       definition: reference_sound_speed_from_original_setup
       provenance: 'TODO: EOS, thermodynamic reference state, and source'
-      source_path: 'TODO: e.g. RUN/mixture_database.dat'
+      source_path: 'TODO: e.g. /scratch/coop/theret/HIT_DNS_COMP_case_references/Re54_Ma0.05.yaml'
     mu_ref:
       value: null           # molecular dynamic viscosity [kg/(m*s)]
       units: kg/(m*s)
       definition: molecular_dynamic_viscosity_at_reference_state
       provenance: 'TODO: viscosity law, thermodynamic reference state, and source'
-      source_path: 'TODO: e.g. RUN/mixture_database.dat'
+      source_path: 'TODO: e.g. repo:data/avbp_reference/mixture_database.dat'
   # Repeat for the remaining five Re54/Re94 cases.
 ```
 
@@ -86,17 +85,18 @@ An input may use `nu_ref` in `m^2/s` **instead of** `mu_ref`; never
 supply both. An existing authoritative `a_ref`, `mu_ref` or `nu_ref`
 within the M3.3 YAML is reused and does not require duplication.
 
-`source_path` is a regular file, relative to that case's archived directory
-or an absolute path. Its checksum is recorded. Neither comments nor a
-filesystem filename alone verify that the declared value was derived
-correctly; review the physical data source explicitly.
+`source_path` may be a file relative to that case's archived directory,
+an absolute file path, or a `repo:` path relative to the GraphAttention
+checkout. Use the last form for a generic source shared by all cases.
+Its checksum is recorded. Neither comments nor a filesystem filename
+alone verify numerical interpretation; review the physical data source.
 
 ## Phase 2 — Prepare immutable model case definitions
 
 When all six physical conditions are audited:
 
 ```bash
-sbatch --export=ALL,M47_REF_MODE=prepare,M47_PHYSICAL_INPUT=/scratch/coop/theret/HIT_DNS_COMP_physical_conditions.yaml \
+sbatch --export=ALL,M47_REF_MODE=prepare,M47_PHYSICAL_INPUT="$PWD/configs/m47_physical_conditions_re54_re94_air_sutherland_300K.yaml" \
   scripts/slurm/m47_reference_conditions.slurm
 ```
 
