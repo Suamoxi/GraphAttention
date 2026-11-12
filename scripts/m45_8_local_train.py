@@ -66,6 +66,16 @@ def run(args: argparse.Namespace) -> dict:
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA not available")
 
+    # Prevent accidental reuse of a resolved field in train and validation.
+    train_coarse_seeds = {
+        data_seed(args.dataset_seed, i) for i in range(args.train_fields)
+    }
+    validation_coarse_seeds = {
+        data_seed(args.validation_seed, i) for i in range(args.val_fields)
+    }
+    if train_coarse_seeds & validation_coarse_seeds:
+        raise ValueError("training/validation coarse RNG seeds overlap")
+
     device = torch.device(args.device)
     mesh = build_hit_two_scale_geometry(
         coarse_side=args.coarse_side, refinement=args.refinement,
