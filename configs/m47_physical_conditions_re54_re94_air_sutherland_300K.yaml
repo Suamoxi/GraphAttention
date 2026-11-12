@@ -1,0 +1,116 @@
+# M47 audited reference input — use only with the supplied six AIR setup configurations.
+# The mixture molecular viscosity is Sutherland-evaluated at T=300 K.
+# a_ref is the FROZEN M3.3 Mach reference convention, not an independently
+# verified AVBP thermodynamic sound speed (AIR molecular weight differs).
+# Before prepare: confirm six on-cluster mixture_database.dat SHA256 hashes
+# match the shared file SHA256 listed in provenance. Do NOT use older candidate YAML.
+version: m47_physics_conditions_v1
+cases:
+  Re54/Ma0.05:
+    a_ref:
+      value: 347.2189510957027
+      units: m/s
+      definition: M3_3_prescribed_one_component_RMS_Mach_reference_sound_speed
+      provenance: 'M3.3 reference convention: U_ref/Ma_target = sqrt(1.4*287.05*300
+        K) = 347.218951096 m/s; not a separately computed AVBP EOS sound speed. M3.3
+        reference SHA256 698c6514cc38005a66e6e532ad85b93cdb1fdb830ed996b83aa1d0f8b68dfcaf.'
+      source_path: /scratch/coop/theret/HIT_DNS_COMP_case_references/Re54_Ma0.05.yaml
+    mu_ref:
+      value: 1.8459791938944405e-05
+      units: kg/(m*s)
+      definition: AIR_mixture_Sutherland_molecular_dynamic_viscosity_at_M3_3_T_ref_300K
+      provenance: RUN/run.params mixture_name=AIR, real_gas=no, mixture_database=mixture_database.dat;
+        AIR mixture uses transport=simplified, viscosity_law=sutherland, mu_ref=1.716e-05
+        kg/(m*s) at 273.15 K, S=110.6 K. Evaluated at M3.3 T_ref=300 K using Sutherland
+        law. Expected mixture_database.dat SHA256 7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f.
+      source_path: RUN/mixture_database.dat
+  Re94/Ma0.05:
+    a_ref:
+      value: 347.2189510957027
+      units: m/s
+      definition: M3_3_prescribed_one_component_RMS_Mach_reference_sound_speed
+      provenance: 'M3.3 reference convention: U_ref/Ma_target = sqrt(1.4*287.05*300
+        K) = 347.218951096 m/s; not a separately computed AVBP EOS sound speed. M3.3
+        reference SHA256 99955aee6094284fbbe348feec052027a199da7eea55fa08854f403948bf0a8c.'
+      source_path: /scratch/coop/theret/HIT_DNS_COMP_case_references/Re94_Ma0.05.yaml
+    mu_ref:
+      value: 1.8459791938944405e-05
+      units: kg/(m*s)
+      definition: AIR_mixture_Sutherland_molecular_dynamic_viscosity_at_M3_3_T_ref_300K
+      provenance: RUN/run.params mixture_name=AIR, real_gas=no, mixture_database=mixture_database.dat;
+        AIR mixture uses transport=simplified, viscosity_law=sutherland, mu_ref=1.716e-05
+        kg/(m*s) at 273.15 K, S=110.6 K. Evaluated at M3.3 T_ref=300 K using Sutherland
+        law. Expected mixture_database.dat SHA256 7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f.
+      source_path: RUN/mixture_database.dat
+  Re54/Ma0.2:
+    a_ref:
+      value: 347.2189510957027
+      units: m/s
+      definition: M3_3_prescribed_one_component_RMS_Mach_reference_sound_speed
+      provenance: 'M3.3 reference convention: U_ref/Ma_target = sqrt(1.4*287.05*300
+        K) = 347.218951096 m/s; not a separately computed AVBP EOS sound speed. M3.3
+        reference SHA256 5378846f0fd22c6044dcb99f5afe0f97d5b4aca79828f9ff27ddc5429670e9d4.'
+      source_path: /scratch/coop/theret/HIT_DNS_COMP_case_references/Re54_Ma0.2.yaml
+    mu_ref:
+      value: 1.8459791938944405e-05
+      units: kg/(m*s)
+      definition: AIR_mixture_Sutherland_molecular_dynamic_viscosity_at_M3_3_T_ref_300K
+      provenance: RUN/run.params mixture_name=AIR, real_gas=no, mixture_database=mixture_database.dat;
+        AIR mixture uses transport=simplified, viscosity_law=sutherland, mu_ref=1.716e-05
+        kg/(m*s) at 273.15 K, S=110.6 K. Evaluated at M3.3 T_ref=300 K using Sutherland
+        law. Expected mixture_database.dat SHA256 7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f.
+      source_path: RUN/mixture_database.dat
+  Re94/Ma0.2:
+    a_ref:
+      value: 347.2189510957027
+      units: m/s
+      definition: M3_3_prescribed_one_component_RMS_Mach_reference_sound_speed
+      provenance: 'M3.3 reference convention: U_ref/Ma_target = sqrt(1.4*287.05*300
+        K) = 347.218951096 m/s; not a separately computed AVBP EOS sound speed. M3.3
+        reference SHA256 f0487dd9e10ac95b8e7231fb14c376430b1ad7d2b052ecbfdaade09d7a7feff2.'
+      source_path: /scratch/coop/theret/HIT_DNS_COMP_case_references/Re94_Ma0.2.yaml
+    mu_ref:
+      value: 1.8459791938944405e-05
+      units: kg/(m*s)
+      definition: AIR_mixture_Sutherland_molecular_dynamic_viscosity_at_M3_3_T_ref_300K
+      provenance: RUN/run.params mixture_name=AIR, real_gas=no, mixture_database=mixture_database.dat;
+        AIR mixture uses transport=simplified, viscosity_law=sutherland, mu_ref=1.716e-05
+        kg/(m*s) at 273.15 K, S=110.6 K. Evaluated at M3.3 T_ref=300 K using Sutherland
+        law. Expected mixture_database.dat SHA256 7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f.
+      source_path: RUN/mixture_database.dat
+  Re54/Ma0.3:
+    a_ref:
+      value: 347.2189510957027
+      units: m/s
+      definition: M3_3_prescribed_one_component_RMS_Mach_reference_sound_speed
+      provenance: 'M3.3 reference convention: U_ref/Ma_target = sqrt(1.4*287.05*300
+        K) = 347.218951096 m/s; not a separately computed AVBP EOS sound speed. M3.3
+        reference SHA256 f2ad2193f7270d385c047f4e8209f42540277ae44fb3b6ec6ade38bda0f6a975.'
+      source_path: /scratch/coop/theret/HIT_DNS_COMP_case_references/Re54_Ma0.3.yaml
+    mu_ref:
+      value: 1.8459791938944405e-05
+      units: kg/(m*s)
+      definition: AIR_mixture_Sutherland_molecular_dynamic_viscosity_at_M3_3_T_ref_300K
+      provenance: RUN/run.params mixture_name=AIR, real_gas=no, mixture_database=mixture_database.dat;
+        AIR mixture uses transport=simplified, viscosity_law=sutherland, mu_ref=1.716e-05
+        kg/(m*s) at 273.15 K, S=110.6 K. Evaluated at M3.3 T_ref=300 K using Sutherland
+        law. Expected mixture_database.dat SHA256 7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f.
+      source_path: RUN/mixture_database.dat
+  Re94/Ma0.3:
+    a_ref:
+      value: 347.2189510957027
+      units: m/s
+      definition: M3_3_prescribed_one_component_RMS_Mach_reference_sound_speed
+      provenance: 'M3.3 reference convention: U_ref/Ma_target = sqrt(1.4*287.05*300
+        K) = 347.218951096 m/s; not a separately computed AVBP EOS sound speed. M3.3
+        reference SHA256 fd94ca8c1ac5132e38206b81d933de8f2bd77b5c0e67355fac5a88fae7a24ae9.'
+      source_path: /scratch/coop/theret/HIT_DNS_COMP_case_references/Re94_Ma0.3.yaml
+    mu_ref:
+      value: 1.8459791938944405e-05
+      units: kg/(m*s)
+      definition: AIR_mixture_Sutherland_molecular_dynamic_viscosity_at_M3_3_T_ref_300K
+      provenance: RUN/run.params mixture_name=AIR, real_gas=no, mixture_database=mixture_database.dat;
+        AIR mixture uses transport=simplified, viscosity_law=sutherland, mu_ref=1.716e-05
+        kg/(m*s) at 273.15 K, S=110.6 K. Evaluated at M3.3 T_ref=300 K using Sutherland
+        law. Expected mixture_database.dat SHA256 7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f.
+      source_path: RUN/mixture_database.dat

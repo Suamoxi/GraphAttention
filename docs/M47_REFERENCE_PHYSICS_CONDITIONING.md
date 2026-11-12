@@ -230,3 +230,77 @@ ensemble statistics before claiming generalization.
 6. The 60-snapshot intervals are exploratory stationary candidates, not a
    mathematical proof of stationarity or temporal independence.
 7. No legacy original M3.3 YAML, DNS snapshot, or checkpoint is modified.
+
+## Audited legacy AIR mixture reference (2026-11-12)
+
+The separate physical-input configuration
+`configs/m47_physical_conditions_re54_re94_air_sutherland_300K.yaml`
+provides reference parameters for the six Re54/Re94 cases. This does
+**not** modify the original M3.3 references.
+
+The six archived `RUN/run.params` files select `mixture_name = AIR`,
+`real_gas = no`, and `mixture_database = mixture_database.dat`.
+In the uploaded common mixture database the active `AIR` block declares
+`transport = simplified`, `species_name = AIR`,
+`viscosity_law = sutherland`, `mu_ref = 1.716d-5` at
+`T_ref = 273.15d0`, `viscosity_law_coeff = 110.6d0`.
+The original species file has an `AIR` species viscosity of
+`1.80953d-5` at 300 K, but this is **not** the active AIR mixture's
+reference viscosity. Molecular dynamic viscosity evaluated using
+Sutherland's formula at the M3.3 `T_ref=300 K` is
+
+```text
+mu(300 K) = 1.716e-5 * (300/273.15)^1.5 * (273.15+110.6)/(300+110.6)
+          = 1.8459791938944405e-5 kg/(m*s)
+```
+
+The published common mixture database's SHA256 is
+`7fc60ebdd857e66143653b54da6221e6fd446e11908b949ed9d16d2c13f5fe9f`;
+the uploaded common species database has SHA256
+`4d41e4bad08f277276681fa73d19e7d55bf311b6e60ecd1190598e2866ac82fd`.
+**Before the preparation job**, confirm that the `RUN/mixture_database.dat`
+actually deployed in **each** of the six archived cases matches the
+common audited file, or repeat the audit for any differing AIR blocks.
+
+```bash
+ROOT=/archive2/cfd-phlusim/HIT_DNS_COMP
+for case in Re{54,94}/Ma{0.05,0.2,0.3}; do
+    sha256sum "$ROOT/$case/RUN/mixture_database.dat"
+done
+```
+
+With the frozen M3.3 `rho_ref=1.17 kg/m^3`, case-specific `U_ref`
+and box-side `L_ref` values, the resulting `Re_ref` is
+`623.68945447` for Re54 and `1640.08914250` for Re94, each at
+the three target Mach numbers. These are **box-length Reynolds numbers**
+and must not be conflated with the case labels or Taylor Reynolds number.
+
+The corresponding `a_ref=347.2189510957 m/s` intentionally preserves
+the M3.3 reference convention
+`a_ref=sqrt(1.4*287.05*300)`, so `Ma_ref=(0.05, 0.2, 0.3)`.
+The `AIR` molecular weight `0.02885066880 kg/mol` corresponds to
+`R_AIR ≈ 288.1896 J/(kg*K)` rather than 287.05. The **exact AVBP
+thermodynamic sound speed at 300 K is not established** solely by this
+reference convention; computing it independently requires the solver's
+effective heat-capacity ratio at 300 K. M47 therefore labels this a
+reference-scheme Mach parameter, not a verified a posteriori turbulent
+Mach number.
+
+After verifying the six deployed mixture source hashes, run:
+
+```bash
+cd /scratch/coop/theret/GraphAttention
+git pull --rebase origin main
+sbatch --export=ALL,M47_REF_MODE=prepare,M47_PHYSICAL_INPUT="$PWD/configs/m47_physical_conditions_re54_re94_air_sutherland_300K.yaml" \
+  scripts/slurm/m47_reference_conditions.slurm
+```
+
+If successful, launch the default one-step smoke test:
+
+```bash
+sbatch scripts/slurm/m47_conditioned_train.slurm
+```
+
+Do not use the earlier provisional `1.80953e-5`-based YAML or
+`Re_ref≈636/1673` values. Both were superseded by the active mixture
+Sutherland law.
