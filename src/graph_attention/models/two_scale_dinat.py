@@ -116,22 +116,25 @@ class TwoScaleDiNAT(nn.Module):
         self, *, mode: str, coarse_width: int = 64, fine_width: int = 64,
         num_heads: int = 4, fine_pre_layers: int = 2,
         fine_post_layers: int = 2, coarse_static_layers: int = 2,
-        coarse_dynamic_layers: int = 4,
+        coarse_dynamic_layers: int = 4, channels: int = 5,
     ) -> None:
         super().__init__()
         if mode not in {"static", "dynamic"}:
             raise ValueError("mode must be static or dynamic")
+        if channels < 1:
+            raise ValueError("channels must be positive")
+        self.channels = channels
         self.mode = mode
         self.fine_pre_layers = fine_pre_layers
         self.fine_post_layers = fine_post_layers
         self.coarse_static_layers = coarse_static_layers
         self.coarse_dynamic_layers = coarse_dynamic_layers if mode == "dynamic" else 0
         self.coarse_encoder = _feature_dinat(
-            5, coarse_width, hidden=coarse_width, heads=num_heads,
+            channels, coarse_width, hidden=coarse_width, heads=num_heads,
             layers=coarse_static_layers, condition_channels=1,
         )
         self.fine_encoder = _feature_dinat(
-            10, fine_width, hidden=fine_width, heads=num_heads,
+            2 * channels, fine_width, hidden=fine_width, heads=num_heads,
             layers=fine_pre_layers, condition_channels=2,
         )
         self.up = SparseCrossScaleAttention(fine_width, coarse_width, fine_width, num_heads)
@@ -142,7 +145,7 @@ class TwoScaleDiNAT(nn.Module):
                 layers=coarse_dynamic_layers, condition_channels=2,
             )
         self.fine_decoder = AlternatingDilatedGeometricDiT(
-            in_channels=fine_width, out_channels=5, hidden_dim=fine_width,
+            in_channels=fine_width, out_channels=channels, hidden_dim=fine_width,
             num_heads=num_heads, num_layers=fine_post_layers, spatial_dim=3,
             conditioning_channels=2, coordinate_normalization="none",
             use_absolute_coordinate_embedding=False,
@@ -185,10 +188,10 @@ class TwoScaleDiNAT(nn.Module):
         coarse_batch_index: torch.Tensor | None = None,
         cached_coarse: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        if state.ndim != 2 or state.shape[1] != 5 or baseline.shape != state.shape:
-            raise ValueError("fine FM state and baseline must both be [N_f, 5]")
-        if coarse_state.ndim != 2 or coarse_state.shape[1] != 5:
-            raise ValueError("coarse state must have shape [N_c, 5]")
+        if state.ndim != 2 or state.shape[1] != self.channels or baseline.shape != state.shape:
+            raise ValueError(f"fine FM state and baseline must both be [N_f, {self.channels}]")
+        if coarse_state.ndim != 2 or coarse_state.shape[1] != self.channels:
+            raise ValueError(f"coarse state must have shape [N_c, {self.channels}]")
         if time.ndim != 1 or time.numel() < 1:
             raise ValueError("time must be [number of physical graphs]")
         if state.dtype != coarse_state.dtype or state.dtype != time.dtype:
