@@ -13,7 +13,6 @@ a fixed linear map of an independent fine-grid standard Gaussian.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 
 import torch
 
@@ -194,8 +193,10 @@ def sample_local_residual(
     valid = envelope.masked_fill((k2 == 0) | nyquist, 0)
     expected_component_rms = ((2.0 / 3.0) * valid.square().mean()).sqrt().clamp_min(1e-8)
     correlated = _solenoidal_spectrum(xi, envelope, k, k2) / expected_component_rms
-    sigma_f = _interpolate(qb, coarse_sigma[:, None]).reshape(n, n, n, 1)
-    direction_f = _interpolate(qb, coarse_orientation).reshape(n, n, n, 3, 3)
+    # Parent-cell lifting keeps the conditioning support strictly within
+    # context_hops coarse graph hops. Trilinear lifting here would expand it.
+    sigma_f = qb.reconstruct(coarse_sigma[:, None]).reshape(n, n, n, 1)
+    direction_f = qb.reconstruct(coarse_orientation).reshape(n, n, n, 3, 3)
     transform = torch.eye(3) + config.anisotropy * direction_f
     candidate = torch.einsum("...ij,...j->...i", transform, correlated) * sigma_f
     residual = qb.nullspace(candidate.reshape(-1, 3))
