@@ -130,8 +130,8 @@ def conditional_features(qb: SyntheticQB, coarse: torch.Tensor,
                          config: LocalHITConfig) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Coarse strain indicator, local residual sigma and anisotropy tensor.
 
-    Features depend on the parent coarse cell and at most context_hops
-    neighbors beyond the finite-difference gradient stencil.
+    The total coarse receptive radius is exactly context_hops: 0 uses
+    parent velocity, 1 uses first-neighbor gradients, 2 adds one smoothing hop.
     """
     config.validate()
     n = qb.nc
@@ -146,9 +146,15 @@ def conditional_features(qb: SyntheticQB, coarse: torch.Tensor,
     strain = (2.0 * strain_tensor.square().sum(dim=(-1, -2))).sqrt()
     rotation = (2.0 * spin_tensor.square().sum(dim=(-1, -2))).sqrt()
     # Dimensionless local invariants: no statistics from other coarse fields.
-    s = _neighbor_smooth(strain * spacing / config.coarse_rms, config.context_hops)
-    w = _neighbor_smooth(rotation * spacing / config.coarse_rms, config.context_hops)
-    intensity = (0.75 * s + 0.25 * w).clamp(0, 5)
+    if config.context_hops == 0:
+        # Radius-zero ablation: only the parent coarse velocity is observable.
+        intensity = (u.square().sum(-1).sqrt() / config.coarse_rms).clamp(0, 5)
+    else:
+        # Derivatives require one hop; smooth at most (radius - 1) more hops.
+        radius = config.context_hops - 1
+        s = _neighbor_smooth(strain * spacing / config.coarse_rms, radius)
+        w = _neighbor_smooth(rotation * spacing / config.coarse_rms, radius)
+        intensity = (0.75 * s + 0.25 * w).clamp(0, 5)
     sigma = config.coarse_rms * config.residual_fraction * (
         0.35 + 1.2 * torch.sigmoid(2.0 * (intensity - 0.75))
     )
@@ -157,7 +163,10 @@ def conditional_features(qb: SyntheticQB, coarse: torch.Tensor,
         dim1=-2, dim2=-1
     ).sum(-1)[..., None, None] / 3.0
     norm = traceless.square().sum(dim=(-1, -2)).sqrt().clamp_min(1e-6)
-    orientation = _neighbor_smooth(traceless / norm[..., None, None], config.context_hops)
+    orientation = (
+        torch.zeros_like(traceless) if config.context_hops == 0 else
+        _neighbor_smooth(traceless / norm[..., None, None], config.context_hops - 1)
+    )
     return strain.reshape(-1), sigma.reshape(-1), orientation.reshape(-1, 9)
 
 
