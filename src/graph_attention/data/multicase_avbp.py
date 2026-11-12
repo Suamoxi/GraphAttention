@@ -136,6 +136,7 @@ class AVBPMultiCaseHITDataset(AVBPHDF5Dataset):
         reference_dir: str | Path | None = None,
         require_references: bool = True,
         expected_snapshots_per_case: int | None = 100,
+        selected_sample_ids: Sequence[str] | None = None,
     ) -> None:
         self.root = Path(root).expanduser().resolve(strict=True)
         if not self.root.is_dir():
@@ -163,6 +164,10 @@ class AVBPMultiCaseHITDataset(AVBPHDF5Dataset):
         self.case_by_sample_id: dict[str, str] = {}
         self.resolution_by_sample_id: dict[str, int] = {}
         self.indices_by_case: dict[str, tuple[int, ...]] = {}
+        allow_ids = None if selected_sample_ids is None else tuple(selected_sample_ids)
+        if allow_ids is not None and (not allow_ids or len(set(allow_ids)) != len(allow_ids)):
+            raise ValueError("selected_sample_ids must be nonempty and unique")
+        allowed = set(allow_ids) if allow_ids is not None else None
 
         for spec in self.cases:
             directory = self.root / spec.case_id
@@ -177,6 +182,14 @@ class AVBPMultiCaseHITDataset(AVBPHDF5Dataset):
                     f"{spec.case_id}: expected {expected_snapshots_per_case} snapshots, "
                     f"found {len(snapshots)}"
                 )
+            discovered_count = len(snapshots)
+            if allowed is not None:
+                snapshots = tuple(
+                    path for path in snapshots
+                    if f"{spec.case_id}:{path.stem}" in allowed
+                )
+                if not snapshots:
+                    raise ValueError(f"{spec.case_id}: selected snapshot set is empty")
             # Check first, middle and last HDF5 schemas. Loading only metadata
             # makes archive inventory inexpensive and catches common format drift.
             for index in sorted({0, len(snapshots)//2, len(snapshots)-1}):
@@ -215,6 +228,7 @@ class AVBPMultiCaseHITDataset(AVBPHDF5Dataset):
                 "side": spec.side,
                 **dimensions,
                 "count": len(snapshots),
+                "discovered_count": discovered_count,
                 "solution_folder": str(snapshots[0].parent),
                 "mesh": str(mesh),
                 "first_snapshot": str(snapshots[0]),
@@ -235,6 +249,13 @@ class AVBPMultiCaseHITDataset(AVBPHDF5Dataset):
                 ),
             })
 
+        if allowed is not None:
+            actual = {spec.sample_id for spec in samples}
+            if actual != allowed:
+                raise ValueError(
+                    f"selected snapshot set mismatch: missing={sorted(allowed-actual)}, "
+                    f"unexpected={sorted(actual-allowed)}"
+                )
         self.inventory = tuple(inventory)
         self.sample_ids = tuple(spec.sample_id for spec in samples)
         super().__init__(samples=samples, case_files=case_files, field_names=_STATE)

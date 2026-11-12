@@ -44,6 +44,10 @@ from graph_attention.training.m43_logging_resume import reconcile_resume_signatu
 from graph_attention.training.m43_tensorboard import (
     M43TensorBoardMonitor, completed_optimizer_steps,
 )
+from scripts.m47_reference_conditioning import CONDITION_NAMES
+from scripts.m47_qualified_setup import (
+    eligible_sample_ids, validate_dataset_paths, verify_generated_references,
+)
 from scripts.train_generative import (
     _atomic_torch_save,
     _load_standardizers,
@@ -464,6 +468,7 @@ def _manifest_signature(
     references: dict,
     *,
     mode: str, seed: int, embargo: int, accumulation: int,
+    signature_extras: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     content = {
         "mode": mode, "revision": revision(),
@@ -490,6 +495,8 @@ def _manifest_signature(
         "physical_nondimensionalization": True,
         "time_embedding_scale": 1000.0,
     }
+    if signature_extras is not None:
+        content["m47_physical_conditions"] = signature_extras
     serialized = json.dumps(content, sort_keys=True, separators=(",", ":"))
     return {
         "sha256": hashlib.sha256(serialized.encode()).hexdigest(),
@@ -500,18 +507,46 @@ def _manifest_signature(
 def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.mode not in {"inspect", "smoke", "train"}:
         raise ValueError("mode must be inspect, smoke or train")
+    condition_mode = getattr(args, "conditioning_mode", "none")
+    if condition_mode not in CONDITION_NAMES:
+        raise ValueError(f"unsupported M47 conditioning mode: {condition_mode!r}")
+    qualified_path = getattr(args, "qualified_manifest", None)
+    provenance = None
+    selected_ids = None
+    if qualified_path is not None:
+        if (getattr(args, "source_inventory", None) is None
+            or getattr(args, "selection_policy", None) is None
+            or getattr(args, "reference_audit", None) is None):
+            raise ValueError("M47 requires full inventory, selection policy and physical reference audit")
+        qualified_path = Path(qualified_path).expanduser().resolve(strict=True)
+        source_inventory = Path(args.source_inventory).expanduser().resolve(strict=True)
+        selection_policy = Path(args.selection_policy).expanduser().resolve(strict=True)
+        reference_audit = Path(args.reference_audit).expanduser().resolve(strict=True)
+        selected_ids, provenance = eligible_sample_ids(
+            qualified_path, source_inventory, selection_policy)
+    elif condition_mode != "none":
+        raise ValueError("physics conditioning requires a qualified stationary manifest")
     root = Path(args.root).expanduser()
     reference_dir = (
         None if args.reference_dir is None
         else Path(args.reference_dir).expanduser().resolve()
     )
+    if provenance is not None:
+        if reference_dir is None:
+            raise ValueError("M47 requires derived case references")
+        provenance.update(verify_generated_references(reference_dir, reference_audit))
+        provenance["condition_mode"] = condition_mode
+        provenance["conditioning_parameters"] = list(CONDITION_NAMES[condition_mode])
     dataset = AVBPMultiCaseHITDataset(
         root=root,
         cases=DEFAULT_M43_CASES,
         reference_dir=reference_dir,
         require_references=args.mode != "inspect",
         expected_snapshots_per_case=100,
+        selected_sample_ids=selected_ids,
     )
+    if qualified_path is not None:
+        validate_dataset_paths(dataset, qualified_path)
     destination = Path(args.run_dir).expanduser().resolve()
     if args.mode == "inspect":
         # Archive inspection needs no physical scaling or GPU and is safe
@@ -552,6 +587,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         dataset, split, refs, mode=args.mode,
         seed=args.seed, embargo=args.temporal_embargo,
         accumulation=args.accumulation,
+        signature_extras=provenance,
     )
     if destination.exists() and not args.resume:
         raise FileExistsError(
@@ -576,6 +612,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     else:
         destination.mkdir(parents=True, exist_ok=False)
         atomic_json(destination / "run_signature.json", signature)
+        if qualified_path is not None:
+            for src, name in (
+                (qualified_path, "qualified_manifest.json"),
+                (source_inventory, "full_source_inventory.json"),
+                (selection_policy, "stationarity_policy.json"),
+                (reference_audit, "physical_reference_audit.json"),
+            ):
+                shutil.copy2(src, destination / name)
         atomic_json(destination / "inventory.json", inspect_inventory(
             dataset, reference_dir=reference_dir,
         ))
@@ -605,6 +649,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     test_indices = tuple(index_by_id[sid] for sid in split.test_ids)
     task = FlowMatchingTask(
         state_fields=FIELDS,
+        conditioning_parameters=CONDITION_NAMES[condition_mode],
         physical_nondimensionalization=True,
         validation_seed=1234,
         time_embedding_scale=1000.0,
@@ -790,6 +835,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     summary = {
         "status": "smoke_passed" if args.mode == "smoke" else "train_complete",
         "mode": args.mode,
+        "conditioning_mode": condition_mode,
+        "conditioning_parameters": list(CONDITION_NAMES[condition_mode]),
+        "qualified_stationarity_manifest": bool(qualified_path),
         "host": socket.gethostname(),
         "code_revision": revision(),
         "signature_sha256": signature["sha256"],
@@ -850,6 +898,11 @@ def main() -> None:
     parser.add_argument("--root", type=Path,
                         default=Path("/archivenfs/phlusim/HIT_DNS_COMP"))
     parser.add_argument("--reference-dir", type=Path, default=None)
+    parser.add_argument("--qualified-manifest", type=Path, default=None)
+    parser.add_argument("--source-inventory", type=Path, default=None)
+    parser.add_argument("--selection-policy", type=Path, default=None)
+    parser.add_argument("--reference-audit", type=Path, default=None)
+    parser.add_argument("--conditioning-mode", choices=tuple(CONDITION_NAMES), default="none")
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-ratio", type=float, default=0.7)
