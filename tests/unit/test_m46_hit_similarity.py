@@ -130,7 +130,48 @@ def test_inventory_keeps_all_unique_snapshots_and_prefers_archive(tmp_path: Path
         for k in counters:
             _snapshot(basedir / "RUN" / "SOLUT" / f"solut_hit_{k:08d}.h5", xyz)
     found = audit.inventory(archive, pilot)
-    assert found["counts"] == {"cases": 3, "snapshots": 6, "duplicate_paths": 1}
+    assert found["counts"] == {"cases": 3, "snapshots": 6, "duplicate_paths": 1,\n                               "within_source_counter_collisions": 0}
     sample = next(s for s in found["samples"] if s["sample_id"] == "ReT060/Mt0.59_Xi0.3:solut_hit_00000002")
     assert sample["source"] == "reT_archive"
+    assert found["stationarity_filter"] is False
+
+def test_inventory_retains_distinct_same_counter_files_and_reports_collisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from graph_attention.data.multicase_avbp import HITCaseSpec
+
+    archive, pilot = tmp_path / "archive", tmp_path / "pilot"
+    monkeypatch.setattr(audit, "DEFAULT_M43_CASES", (HITCaseSpec("Re54/Ma0.05", 5),))
+    monkeypatch.setattr(audit, "PILOT_SIDES", {"ReT060": 5})
+    legacy = archive / "Re54" / "Ma0.05"
+    xyz = _mesh(legacy / "MESH" / "mesh.mesh.h5")
+    _snapshot(legacy / "SOLUT" / "solut_hit_00000001.h5", xyz)
+    modern = archive / "ReT060" / "Mt0.59_Xi0.3"
+    xyz = _mesh(modern / "MESH" / "mesh.mesh.h5")
+    _snapshot(modern / "RUN" / "SOLUT" / "solut_hit_00000002.h5", xyz)
+    _snapshot(modern / "RUN" / "SOLUT" / "solut_hit_2.h5", xyz)
+    (modern / "RUN" / "SOLUT" / "solut_hit_02.h5").symlink_to(
+        "solut_hit_00000002.h5"
+    )
+    pilot_case = pilot / "data" / "ReT060" / "Mt0.59_Xi0.3"
+    xyz = _mesh(pilot_case / "MESH" / "mesh.mesh.h5")
+    _snapshot(pilot_case / "RUN" / "SOLUT" / "solut_hit_02.h5", xyz)
+    _snapshot(pilot_case / "RUN" / "SOLUT" / "solut_hit_3.h5", xyz)
+
+    found = audit.inventory(archive, pilot)
+    assert found["counts"] == {
+        "cases": 2, "snapshots": 4, "duplicate_paths": 2,
+        "within_source_counter_collisions": 1,
+    }
+    assert len(found["within_source_counter_collisions"]) == 1
+    collision = found["within_source_counter_collisions"][0]
+    assert collision["counter"] == 2
+    assert len(collision["retained_paths"]) == 2
+    assert {item["source"] for item in found["samples"]} == {
+        "legacy_archive", "reT_archive", "reT_pilot",
+    }
+    assert {item["policy"] for item in found["duplicates"]} == {
+        "same_filesystem_object_alias",
+        "archive_preferred_by_case_and_numeric_counter_not_byte_identity",
+    }
     assert found["stationarity_filter"] is False

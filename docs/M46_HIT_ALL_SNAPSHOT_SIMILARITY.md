@@ -6,7 +6,8 @@ This is a **read-only analysis implementation**, not a model/conditioning change
 
 - Source inventory: six Re54/Re94 cases from `/archive2/cfd-phlusim/HIT_DNS_COMP` and all ReT060/ReT100 cases found in that archive and in `/scratch/ai/HIT_DNS_pilot/data/`.
 - All discovered snapshots enter the empirical dataset. **No stationarity or quality mask** is generated or applied.
-- Duplicate `(case_id, numeric snapshot counter)` entries are represented once, preferring the archive. This is a provenance convention, **not evidence of byte-identical arrays**. The discarded path is recorded.
+- **Within a source**, distinct HDF5 files with the same numeric suffix are **both retained**, with all such counter collisions listed in `within_source_counter_collisions`. Identical filesystem objects reached via two filenames (symlinks/hardlinks, same inode) are counted once, and their aliases are recorded.
+- **Between archive and pilot**, a matching `(case_id, numeric snapshot counter)` is selected from the archive, even if the zero-padding of the filenames differs. The suppressed pilot paths are recorded in `duplicates`. This is a provenance convention, **not evidence of byte-identical arrays**. No scientific or stationarity filter is applied.
 - Physical reference scales come exclusively from explicit M3.3 case YAML files. The tool **does not** infer velocity, density or Mach from `ReT...`, `Mt...`, `Xi...`, grid resolution, or a posteriori statistics.
 - `inventory` works with no case YAML. `analyze` fails with an explicit list of missing YAML files rather than inventing scales or silently dropping cases. The M46 pilot has missing source references for some newer cases; their input provenance must be supplied before full analysis can run.
 - The result is a *time-mixture empirical distribution*. Treating all snapshots as eligible **does not prove** that their marginal distribution is statistically stationary or that samples are temporally independent.
@@ -93,7 +94,7 @@ Full-grid scalar moments (mean, population standard deviation, skew, excess kurt
 
 ## Outputs and reproducibility
 
-- `inventory.json`: source paths, mesh dimensions, all selected snapshots and all deduplicated paths.
+- `inventory.json`: source paths, mesh dimensions, every selected snapshot, same-inode aliases, archive/pilot overlap decisions, and retained within-source counter collisions.
 - `per_snapshot/<case>/<snapshot>.npz`: cached exact field moments, TKE, optional spectra, sampled distribution values, reference checksum and source file metadata.
 - `case_field_statistics.csv`, `case_field_pdfs.csv`, `case_pairwise_wasserstein.csv`, `case_regime_parameters.csv`.
 - `snapshot_spectra.csv`: per-snapshot nondimensional kinetic-energy spectra when FFTs are enabled.
@@ -106,3 +107,18 @@ The outputs are for comparing candidate regimes and selecting explicit condition
 `tests/unit/test_m46_hit_similarity.py` covers streaming moment algebra, Parseval and Helmholtz limits for analytic sine modes, Cartesian coordinate reordering, one synthetic case with M3.3 references, and archive-over-pilot snapshot deduplication. Synthetic tests validate the implementation; they do not substitute for a Calypso full-volume performance/physics run. In particular, 320^3 CPU FFT peak RSS, archived-vs-pilot numerical identity, real reference completeness and actual AVBP results remain **target-unvalidated**.
 
 Thermodynamic temperature and pressure diagnostics are deferred: the common pilot inventory contains the five conservative fields and no authoritative equation-of-state reconstruction is introduced here.
+### M46 repeated-timestep filename handling (job 503080)
+
+The legacy M43 `_find_snapshots` helper intentionally fails when a case's
+files contain repeated numeric timestep counters. The M46 inventory must
+retain both distinct snapshots rather than suppress a potentially valid
+realization. It now uses its own numeric-filename discovery helper, retaining
+same-source numeric suffix collisions explicitly in the JSON manifest. Identical
+filesystem aliases are detected by device+inode and listed separately. Across
+archive and pilot, the existing archive-first counter policy remains in
+effect and cannot establish physical equality without independent checks.
+
+This fixes the exception observed on Grace for
+`ReT060/Mt0.23_Xi0.0`; that case's specific colliding filenames
+and their scientific equivalence remain unknown until the new inventory
+reports them. The six-case M43 dataset reader has not been modified.

@@ -20,7 +20,7 @@ import numpy as np
 from graph_attention.data.avbp import AVBP_FIELD_CATALOG
 from graph_attention.data.case_definition import load_case_definition
 from graph_attention.data.multicase_avbp import (
-    DEFAULT_M43_CASES, _find_snapshots, _inspect_mesh, _inspect_snapshot,
+    DEFAULT_M43_CASES, _inspect_mesh, _inspect_snapshot,
 )
 from graph_attention.data.nondimensionalization import ConvectiveNondimensionalizer
 
@@ -69,51 +69,125 @@ def _candidates(archive: Path, pilot: Path):
                     yield f"{reynolds}/{directory.name}", side, directory, label
 
 
+def _m46_snapshots(directory: Path) -> tuple[tuple[int, Path], ...]:
+    """Inventory every numbered HDF5 path; M43's strict unique-counter rule is not used.
+
+    Two distinct files in the same source may have the same numeric suffix.
+    Both are retained, with the collision listed in inventory.json.
+    """
+    groups = []
+    for location in (directory / "SOLUT", directory / "RUN" / "SOLUT"):
+        if location.is_dir():
+            entries = tuple(p.absolute() for p in location.glob("*.h5") if p.is_file())
+            if entries:
+                groups.append(entries)
+    if len(groups) != 1:
+        raise ValueError(
+            f"{directory}: expected one nonempty SOLUT directory; found {len(groups)}"
+        )
+    numbered = []
+    for path in groups[0]:
+        match = re.fullmatch(r"(.+?)(\\d+)", path.stem)
+        if match is None:
+            raise ValueError(f"{directory}: snapshot {path.name!r} has no numeric suffix")
+        numbered.append((int(match.group(2)), path))
+    return tuple(sorted(numbered, key=lambda pair: (pair[0], pair[1].name)))
+
+
 def inventory(archive: Path, pilot: Path) -> dict:
-    """Select archive before pilot for duplicate physical case/counter IDs."""
+    """Retain same-source counter collisions; prefer archive across sources.
+
+    Same-inode aliases are the same physical file and appear once. Distinct
+    files sharing a counter *within a source* all enter the empirical dataset.
+    Across archive/pilot sources, a matching (case_id, counter) uses archive
+    priority, with rejected paths recorded; no byte equality is implied.
+    """
     samples: dict[str, dict] = {}
     cases: dict[str, dict] = {}
     duplicates: list[dict] = []
+    seen_inodes: dict[tuple[str, str, int, int], dict] = {}
+    by_counter: dict[tuple[str, int], list[dict]] = {}
     for case_id, side, directory, source in _candidates(archive, pilot):
         if not directory.is_dir():
             raise NotADirectoryError(directory)
         mesh = directory / "MESH" / "mesh.mesh.h5"
         dimensions = _inspect_mesh(mesh, side)
-        paths = _find_snapshots(directory)
+        paths = _m46_snapshots(directory)
         for position in sorted({0, len(paths) // 2, len(paths) - 1}):
-            _inspect_snapshot(paths[position], dimensions["nodes"])
+            _inspect_snapshot(paths[position][1], dimensions["nodes"])
         case = cases.setdefault(case_id, {
             "case_id": case_id, "side": side, "sources": [], "snapshots": 0,
         })
         if case["side"] != side:
             raise ValueError(f"inconsistent mesh dimensions for {case_id}")
-        case["sources"].append({"name": source, "path": str(directory), "count": len(paths)})
-        for snapshot in paths:
+        case["sources"].append({
+            "name": source, "path": str(directory), "count": len(paths),
+        })
+        for counter, snapshot in paths:
             sample_id = f"{case_id}:{snapshot.stem}"
+            file_stat = snapshot.stat()
+            inode_key = (case_id, source, file_stat.st_dev, file_stat.st_ino)
+            if inode_key in seen_inodes:
+                duplicates.append({
+                    "sample_id": sample_id,
+                    "selected": seen_inodes[inode_key]["snapshot"],
+                    "discarded": str(snapshot),
+                    "policy": "same_filesystem_object_alias",
+                })
+                continue
+            # Archive cases are processed before their pilot counterparts.
+            counter_key = (case_id, counter)
+            selected = by_counter.get(counter_key, [])
+            if selected and any(item["source"] != source for item in selected):
+                duplicates.append({
+                    "sample_id": sample_id,
+                    "selected": selected[0]["snapshot"],
+                    "selected_paths": [item["snapshot"] for item in selected],
+                    "discarded": str(snapshot),
+                    "policy": "archive_preferred_by_case_and_numeric_counter_not_byte_identity",
+                })
+                continue
+            if sample_id in samples:
+                raise ValueError(
+                    f"{directory}: duplicate sample identifier {sample_id}; "
+                    "source naming must uniquely identify each distinct file"
+                )
             item = {
                 "sample_id": sample_id, "case_id": case_id, "source": source,
                 "snapshot": str(snapshot), "mesh": str(mesh.resolve(strict=True)),
-                "side": side, "counter": int(snapshot.stem.rsplit("_", 1)[-1]),
+                "side": side, "counter": counter,
             }
-            if sample_id in samples:
-                duplicates.append({
-                    "sample_id": sample_id,
-                    "selected": samples[sample_id]["snapshot"],
-                    "discarded": item["snapshot"],
-                    "policy": "archive_preferred_by_case_and_snapshot_counter_not_byte_identity",
-                })
-            else:
-                samples[sample_id] = item
-                case["snapshots"] += 1
-    ordered = sorted(samples.values(), key=lambda x: (x["case_id"], x["counter"]))
+            samples[sample_id] = item
+            seen_inodes[inode_key] = item
+            by_counter.setdefault(counter_key, []).append(item)
+            case["snapshots"] += 1
+    collisions = []
+    for (case_id, counter), entries in sorted(by_counter.items()):
+        if len(entries) > 1:
+            collisions.append({
+                "case_id": case_id, "source": entries[0]["source"],
+                "counter": counter,
+                "retained_paths": [item["snapshot"] for item in entries],
+            })
+    ordered = sorted(
+        samples.values(),
+        key=lambda item: (item["case_id"], item["counter"], item["snapshot"]),
+    )
     return {
-        "version": "m46_all_snapshots_v1", "stationarity_filter": False,
+        "version": "m46_all_snapshots_v2", "stationarity_filter": False,
         "source_roots": {"archive": str(archive), "pilot": str(pilot)},
-        "deduplication": "same case ID and numeric snapshot counter; archive wins",
+        "deduplication": (
+            "same-inode aliases excluded; within-source counter collisions retained; "
+            "archive preferred over pilot for matching case ID and numeric counter"
+        ),
         "cases": sorted(cases.values(), key=lambda c: c["case_id"]),
         "samples": ordered, "duplicates": duplicates,
-        "counts": {"cases": len(cases), "snapshots": len(ordered),
-                   "duplicate_paths": len(duplicates)},
+        "within_source_counter_collisions": collisions,
+        "counts": {
+            "cases": len(cases), "snapshots": len(ordered),
+            "duplicate_paths": len(duplicates),
+            "within_source_counter_collisions": len(collisions),
+        },
     }
 
 
