@@ -71,11 +71,14 @@ def test_targeted_support_equals_existing_global_qualification(coarse_side, dept
                 "coarse_to_fine", "fine_to_coarse"):
         a = _global_edges(candidate, key)
         b = _global_edges(reference, key)
-        na, nb = (nf**3, nf**3) if key.startswith("fine_") else (
-            (coarse_side**3, nf**3) if key == "coarse_to_fine" else
-            (nf**3, coarse_side**3) if key == "fine_to_coarse" else
-            (coarse_side**3, coarse_side**3)
-        )
+        if key == "coarse_to_fine":
+            na, nb = coarse_side**3, nf**3
+        elif key == "fine_to_coarse":
+            na, nb = nf**3, coarse_side**3
+        elif key.startswith("fine_"):
+            na, nb = nf**3, nf**3
+        else:
+            na, nb = coarse_side**3, coarse_side**3
         torch.testing.assert_close(_keys(a, na, nb), _keys(b, na, nb), atol=0, rtol=0)
     # Inspect cross-scale weights by global edge key, not by edge enumeration.
     for x in (candidate, reference):
