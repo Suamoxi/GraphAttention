@@ -47,14 +47,40 @@ def _import_from_file(module_name: str, path: Path):
 
 
 def _add_external_sources(root: Path) -> None:
+    """Use MS_SR's own code and a verified CEDAR source or installed package.
+
+    A deployed MS_SR directory may have no cedar/src checkout because
+    cedar-cfd is provided by the runtime Python environment. Validate the
+    imported package against MS_SR's pinned file hashes in either case.
+    """
+    import os
+
     code = root / "code"
-    cedar = root / "cedar" / "src"
-    for path in (code, cedar):
-        if not path.is_dir():
-            raise FileNotFoundError(f"required read-only MS_SR source missing: {path}")
-        value = str(path.resolve())
+    if not code.is_dir():
+        raise FileNotFoundError(f"required MS_SR source missing: {code}")
+    code_path = str(code.resolve())
+    if code_path not in sys.path:
+        sys.path.insert(0, code_path)
+
+    explicit = os.environ.get("M48_CEDAR_SRC")
+    cedar = Path(explicit) if explicit else root / "cedar" / "src"
+    if explicit and not cedar.is_dir():
+        raise FileNotFoundError(f"M48_CEDAR_SRC does not exist: {cedar}")
+    if cedar.is_dir():
+        value = str(cedar.resolve())
         if value not in sys.path:
             sys.path.insert(0, value)
+
+    try:
+        import cedar
+        from preprocess import check_cedar
+    except ImportError as exc:
+        raise ImportError(
+            "CEDAR is unavailable in the M48 Python runtime. Supply the "
+            "pinned source with M48_CEDAR_SRC, or use a Python environment "
+            "containing the pinned cedar-cfd package."
+        ) from exc
+    check_cedar()  # MS_SR's audited source-file SHA-256 hashes.
 
 
 def select_pilot_record(
