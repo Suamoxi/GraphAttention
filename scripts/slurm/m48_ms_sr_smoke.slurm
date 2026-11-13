@@ -15,7 +15,7 @@ set -euo pipefail
 REPO=/scratch/coop/theret/GraphAttention
 ROOT="${M48_MS_SR_ROOT:-/scratch/ai/MS_SR}"
 IMAGE=/softs/local_arm/singularity/images/pyg25.03.sif
-PYTHON=/scratch/coop/theret/avbpML_env/bin/python3
+PYTHON="${M48_PYTHON:-/scratch/coop/theret/avbpML_env/bin/python3}"
 OUT_ROOT="${M48_OUT_ROOT:-/scratch/coop/theret/GraphAttention_runs/m48_ms_sr_smoke}"
 OUT="$OUT_ROOT/job_${SLURM_JOB_ID}"
 FILTER="${M48_FILTER_ID:-w1p25_l1}"
@@ -70,7 +70,31 @@ fi
 require_file "$ROOT/dataset/manifest.json"
 require_file "$ROOT/code/campaign_data.py"
 require_file "$ROOT/code/models.py"
-require_dir "$ROOT/cedar/src"
+CEDAR_SRC="${M48_CEDAR_SRC:-}"
+if [ -n "$CEDAR_SRC" ]; then
+    require_dir "$CEDAR_SRC"
+elif [ -d "$ROOT/cedar/src" ]; then
+    CEDAR_SRC="$ROOT/cedar/src"
+fi
+if [ -n "$CEDAR_SRC" ]; then
+    export M48_CEDAR_SRC="$CEDAR_SRC"
+    export SINGULARITYENV_M48_CEDAR_SRC="$CEDAR_SRC"
+    echo "CEDAR source location: $CEDAR_SRC"
+else
+    echo "CEDAR source checkout not found; testing the installed cedar-cfd package."
+fi
+
+# Import the actual external MS_SR + pinned CEDAR package, not a
+# presumed checkout path. Singularity must receive this PYTHONPATH.
+export PYTHONPATH="$REPO/src:$REPO:$ROOT/code${CEDAR_SRC:+:$CEDAR_SRC}:${PYTHONPATH:-}"
+export SINGULARITYENV_PYTHONPATH="$PYTHONPATH"
+echo "=== Verify pinned CEDAR runtime (using MS_SR source hashes) ==="
+if ! singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
+  "$PYTHON" -c 'import cedar; from preprocess import check_cedar; check_cedar(); print("Verified CEDAR: " + str(cedar.__file__))'; then
+    echo "M48 PREFLIGHT FAILED: CEDAR is missing or does not match MS_SR's pinned files." >&2
+    echo "Provide M48_CEDAR_SRC=/path/to/cedar/src or M48_PYTHON=/path/to/compatible/python." >&2
+    exit 2
+fi
 echo "M48 preflight passed."
 
 echo "M48 real-MS_SR smoke; revision=$(git rev-parse HEAD); job=${SLURM_JOB_ID}"
@@ -78,8 +102,8 @@ echo "Data (read-only): $ROOT"
 echo "Filter=$FILTER case_prefix=$CASE depth=$DEPTH core_side=$CORE width=$WIDTH"
 nvidia-smi --query-gpu=name,memory.total --format=csv
 
-# Ensure project packages are importable even without an editable install.
-export PYTHONPATH="$REPO/src:$REPO:${PYTHONPATH:-}"
+# The required GraphAttention, MS_SR and optional CEDAR module paths
+# were exported to the container during preflight.
 
 echo "=== Syntax check ==="
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
