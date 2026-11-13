@@ -7,8 +7,8 @@ Modes:
   train   = full train-only scaler, case-stratified chronological split,
             checkpointed M37 mixed-resolution Flow Matching with resume
 
-This is UNCONDITIONAL Flow Matching. SR conditioning and SGS prediction
-are separate subsequent experiments.
+M47 optionally injects global Mach/Reynolds conditions through the existing
+adaLN-Zero path. Conditional SR and SGS prediction remain separate tasks.
 """
 from __future__ import annotations
 
@@ -838,6 +838,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "conditioning_mode": condition_mode,
         "conditioning_parameters": list(CONDITION_NAMES[condition_mode]),
         "qualified_stationarity_manifest": bool(qualified_path),
+        "m47_training_hyperparameters": (
+            {"seed": args.seed, "learning_rate": args.lr, "planned_epochs": args.max_epochs}
+            if provenance is not None else None
+        ),
         "host": socket.gethostname(),
         "code_revision": revision(),
         "signature_sha256": signature["sha256"],

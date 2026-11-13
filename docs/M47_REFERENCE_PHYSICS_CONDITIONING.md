@@ -308,3 +308,11 @@ sbatch scripts/slurm/m47_conditioned_train.slurm
 Do not use the earlier provisional `1.80953e-5`-based YAML or
 `Re_ref≈636/1673` values. Both were superseded by the active mixture
 Sutherland law.
+
+## Matched three-arm conditioning study
+
+The three-arm `none` / `mach` / `mach_re` Slurm array, signature-checked
+MSE comparison, and scientific interpretation limits are documented in
+[**M47_ABLATION_CAMPAIGN.md**](M47_ABLATION_CAMPAIGN.md). The initial experiment
+measures held-out Flow Matching velocity MSE, **not** generated spectral or
+one-point distribution fidelity.

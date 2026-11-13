@@ -9,6 +9,7 @@
 #SBATCH --error=/scratch/coop/theret/GraphAttention_runs/%x_%j.err
 
 # DEFAULT: one six-case smoke optimizer update, never a long training run.
+# Three-arm paired campaign: sbatch --array=0-2 scripts/slurm/m47_conditioned_train.slurm
 # For long training, explicitly set M47_MODE=train and M47_CONFIRM_LONG_TRAIN=YES.
 set -euo pipefail
 REPO=${M47_REPO:-/scratch/coop/theret/GraphAttention}
@@ -24,7 +25,22 @@ QUALIFIED=${M47_QUALIFIED_MANIFEST:-$M46_ROOT/qualified_manifest.json}
 INVENTORY=${M47_INVENTORY:-$M46_ROOT/inventory.json}
 POLICY=${M47_STATIONARITY_POLICY:-$REPO/configs/m46_stationary_selection_reviewed_legacy.json}
 MODE=${M47_MODE:-smoke}
-CONDITION=${M47_CONDITION:-mach_re}
+# In a Slurm array, task ID fixes the conditioning arm. Never let a stale
+# exported M47_CONDITION silently produce three copies of the same model.
+if [ -n "${SLURM_ARRAY_TASK_ID:-}" ]; then
+    if [ -n "${M47_CONDITION:-}" ]; then
+        echo "Unset M47_CONDITION when using --array=0-2" >&2
+        exit 2
+    fi
+    case "$SLURM_ARRAY_TASK_ID" in
+        0) CONDITION=none ;;
+        1) CONDITION=mach ;;
+        2) CONDITION=mach_re ;;
+        *) echo "M47 Slurm array indices must be 0, 1 or 2" >&2; exit 2 ;;
+    esac
+else
+    CONDITION=${M47_CONDITION:-mach_re}
+fi
 EPOCHS=${M47_EPOCHS:-2}
 RESUME=${M47_RESUME:-0}
 CONFIRM=${M47_CONFIRM_LONG_TRAIN:-NO}
