@@ -25,18 +25,53 @@ CORE="${M48_CORE_SIDE:-2}"
 WIDTH="${M48_WIDTH:-16}"
 HEADS="${M48_HEADS:-4}"
 
-cd "$REPO"
-test -x "$PYTHON"
-test -s "$IMAGE"
-test ! -e "$OUT"
-test -f "$ROOT/dataset/manifest.json" || {
-    echo "Missing MS_SR campaign manifest at $ROOT/dataset/manifest.json" >&2
-    echo "MS_SR may be on another filesystem; do NOT copy or synthesize data silently." >&2
-    exit 2
+# Slurm can append its energy receipt even when an early bare `test` fails.
+# Print every preflight dependency and leave an actionable diagnostic.
+trap 'rc=$?; echo "M48 FAILURE: exit=${rc}, line=${LINENO}, command=${BASH_COMMAND}" >&2' ERR
+echo "=== M48 preflight on $(hostname); job=${SLURM_JOB_ID:-unavailable} ==="
+echo "Repository: $REPO"
+echo "MS_SR root: $ROOT"
+echo "Singularity image: $IMAGE"
+echo "Python executable: $PYTHON"
+echo "Output: $OUT"
+
+require_file() {
+    if [ ! -f "$1" ]; then
+        echo "M48 PREFLIGHT FAILED: missing file $1" >&2
+        return 2
+    fi
 }
-test -f "$ROOT/code/campaign_data.py"
-test -f "$ROOT/code/models.py"
-test -d "$ROOT/cedar/src"
+require_dir() {
+    if [ ! -d "$1" ]; then
+        echo "M48 PREFLIGHT FAILED: missing directory $1" >&2
+        return 2
+    fi
+}
+require_executable() {
+    if [ ! -x "$1" ]; then
+        echo "M48 PREFLIGHT FAILED: missing/non-executable Python $1" >&2
+        return 2
+    fi
+}
+require_nonempty_file() {
+    if [ ! -s "$1" ]; then
+        echo "M48 PREFLIGHT FAILED: missing/empty file $1" >&2
+        return 2
+    fi
+}
+require_dir "$REPO"
+cd "$REPO"
+require_executable "$PYTHON"
+require_nonempty_file "$IMAGE"
+if [ -e "$OUT" ]; then
+    echo "M48 PREFLIGHT FAILED: output already exists: $OUT" >&2
+    exit 2
+fi
+require_file "$ROOT/dataset/manifest.json"
+require_file "$ROOT/code/campaign_data.py"
+require_file "$ROOT/code/models.py"
+require_dir "$ROOT/cedar/src"
+echo "M48 preflight passed."
 
 echo "M48 real-MS_SR smoke; revision=$(git rev-parse HEAD); job=${SLURM_JOB_ID}"
 echo "Data (read-only): $ROOT"
