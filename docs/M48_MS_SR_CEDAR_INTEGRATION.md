@@ -19,7 +19,7 @@ The MS_SR campaign is read-only:
 - Pinned CEDAR revision:
   `ae96eece81204b7eb55365eade4838ae1e337b38`.
 - MS_SR Python code: `/scratch/ai/MS_SR/code/`.
-- Pinned CEDAR package: `/scratch/ai/MS_SR/cedar/src/`.
+- Pinned CEDAR package: from a verified Python installation, or an optional\n  source checkout at `/scratch/ai/MS_SR/cedar/src/` if present.\n  The source checkout is **not** required when the pinned `cedar-cfd` is installed.
 - Source role: `teacher` only (not validation or `locked_in_regime`).
 - Filter: `w1p25_l1` (\(\omega,\lambda)=(1.25,1)\).
 - Pair: source-relative factors `(4,8)`, i.e. **q8 -> q4**.
@@ -36,9 +36,12 @@ introduced. It validates MS_SR role, case/snapshot identity, channel order,
 operator hashes, physical spacing and full field shape before evaluation.
 
 **Filesystem gate:** the existing GraphAttention Grace Slurm environment may
-not mount `/scratch/ai/MS_SR` or its CEDAR sources. The Slurm launcher
-checks this explicitly and refuses to proceed if absent. Never replace a
-missing real data source with a synthetic field without saying so.
+not mount `/scratch/ai/MS_SR`, or the GraphAttention Python environment may
+not have the MS_SR `cedar-cfd` package installed. The Slurm launcher requires
+the real MS_SR data and code, then imports CEDAR and checks MS_SR's pinned
+source-file hashes using `preprocess.check_cedar()`. It accepts an installed
+CEDAR package, the optional original `cedar/src` checkout, or an explicitly
+supplied `M48_CEDAR_SRC`. Never substitute a synthetic field.
 
 ## M48.1 — Read-only real pair
 
@@ -168,6 +171,19 @@ If MS_SR is mounted elsewhere, supply a verified location:
 sbatch --export=ALL,M48_MS_SR_ROOT=/path/to/the/verified/MS_SR \
   scripts/slurm/m48_ms_sr_smoke.slurm
 ```
+
+If CEDAR cannot be imported from the default GraphAttention Python runtime,
+point to a **verified pinned** source directory or compatible Python runtime:
+
+```bash
+sbatch --export=ALL,M48_CEDAR_SRC=/verified/path/to/cedar/src \
+  scripts/slurm/m48_ms_sr_smoke.slurm
+```
+
+`M48_PYTHON` may alternatively name a compatible environment containing both
+GraphAttention's required PyTorch dependencies and the pinned `cedar-cfd`.
+A CEDAR import alone is insufficient: the launch script verifies the exact
+MS_SR source-file hashes before executing tests or loading datasets.
 
 The launcher requires the exact MS_SR files, then runs Python syntax
 checks, `tests/unit/test_m48_ms_sr.py` on the allocated node and only
