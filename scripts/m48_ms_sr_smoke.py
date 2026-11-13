@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import fields, replace
+import hashlib
 import json
 from pathlib import Path
+import subprocess
 import time
 
 import torch
@@ -197,8 +199,20 @@ def run(args: argparse.Namespace) -> dict:
                   target=target, args=args, device=device)
         for mode in ("static", "dynamic")
     ]
+    ms_sr_root = args.ms_sr_root.resolve()
+    def source_digest(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True,
+    ).strip()
     report = {
         "schema": "graph_attention.m48_ms_sr_smoke.v1",
+        "provenance": {
+            "graph_attention_commit": revision,
+            "ms_sr_campaign_data_sha256": source_digest(ms_sr_root / "code" / "campaign_data.py"),
+            "ms_sr_torchcedar_sha256": source_digest(ms_sr_root / "code" / "models.py"),
+            "ms_sr_cedar_revision": "ae96eece81204b7eb55365eade4838ae1e337b38",
+        },
         "scope": "real MS_SR teacher snapshot, operator/geometry/backprop smoke ONLY",
         "checkpoint_training": "none; one optimizer update each mode",
         "scientific_evaluation": "none",
