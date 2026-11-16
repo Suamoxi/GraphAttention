@@ -95,6 +95,18 @@ if ! singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMA
     echo "Provide M48_CEDAR_SRC=/path/to/cedar/src or M48_PYTHON=/path/to/compatible/python." >&2
     exit 2
 fi
+echo "=== Verify read access to the MS_SR manifest INSIDE Singularity ==="
+if ! singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
+  "$PYTHON" -c 'from pathlib import Path; import sys, hashlib; p = Path(sys.argv[1]); data = p.read_bytes(); print("Readable manifest: " + str(p) + ", SHA256=" + hashlib.sha256(data).hexdigest())' \
+  "$ROOT/dataset/manifest.json"; then
+    echo "M48 PREFLIGHT FAILED: no read permission on MS_SR manifest under Singularity." >&2
+    echo "Check access on the dataset directories, manifest and HDF5 payloads." >&2
+    echo "Directory and file permissions:" >&2
+    namei -l "$ROOT/dataset/manifest.json" >&2 || true
+    stat -c '%A %U:%G %n' "$ROOT" "$ROOT/dataset" "$ROOT/dataset/manifest.json" >&2 || true
+    echo "Request access from the dataset owner; do not chmod shared data recursively." >&2
+    exit 2
+fi
 echo "M48 preflight passed."
 
 echo "M48 real-MS_SR smoke; revision=$(git rev-parse HEAD); job=${SLURM_JOB_ID}"
