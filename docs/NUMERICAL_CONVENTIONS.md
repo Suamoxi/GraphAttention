@@ -497,3 +497,48 @@ two-source engineering smoke**, which remains available for
 reproducibility. The 44-source frozen scales are required for
 M48.4b. The new training path is source-prepared and awaiting its
 Calypso qualification, not yet a measured convergence result.
+
+
+## M48.4c: configuration-C statistical GPU patch batching (2026-11-18)
+
+This extension leaves the M48.4b frozen 44-teacher per-component
+normalization, full-field CEDAR inverse and physics unchanged.
+For the q8->q4 task, independent source fields and their statistical
+weights are unchanged by GPU microbatching.
+
+New **explicit** training sampling parameters:
+
+    owned fine cube side = 12
+    patches per teacher source per epoch = 16
+    effective optimizer batch = 4 patches
+    packed GPU microbatch = 1, 2, or 4 patches
+
+Each patch independently draws a full-domain CEDAR-projected standard
+Gaussian noise `X0=(I-PC)epsilon`, independent FM time t and a periodic
+owned-core origin. There is no patchwise CEDAR projection or artificial
+periodic boundary. The task target is unchanged:
+`Xt=(1-t)X0+tX1`, `velocity_target=X1-X0`, `X1=(Uf-PUc)/sigma_R`.
+
+For each independent patch b, reduce MSE over its **owned fine nodes and
+all five conservative components** to `L_b`. The per-optimizer objective
+is `(L_1+L_2+L_3+L_4)/4`, independent of patch read-set/halo sizes.
+For GPU microbatch m, pack m disconnected fine/coarse attention graphs
+with distinct per-graph FM conditioning, and accumulate m-patch
+subgradients scaled by 1/4. Clip gradients and apply AdamW **once**
+after all four patches. This is a numerically meaningful change in
+gradient variance and optimizer update semantics, not in the
+expected spatial patch loss. GPU microbatch variations can produce
+small floating point differences.
+
+44 sources * 16 patches/source = 704 patches/epoch, 176
+optimizer updates/epoch. Eight full epochs would consume 5,632 patch
+samples and 1,408 optimizer updates per architecture. A bounded
+`--probe-grids` run is not a full epoch: it deliberately selects one
+authenticated teacher case on 48^3 and one on 80^3, and records a
+distinct checkpoint schedule/fingerprint. Do not compare its loss to
+a converged training run.
+
+See `docs/M48_4C_SAMPLING_GPU_BENCHMARK.md` for the geometry, exact
+packed-graph edges, numerical tests, memory/throughput measurements,
+and operational gate. Single-GPU performance is unvalidated until
+the Calypso benchmark jobs return.

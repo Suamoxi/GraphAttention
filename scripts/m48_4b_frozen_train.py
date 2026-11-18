@@ -26,6 +26,7 @@ from graph_attention.data.ms_sr_training import (
 )
 from graph_attention.models.two_scale_dinat import TwoScaleDiNAT
 from scripts.m48_ms_sr_train import _one_step, _prepare_pair
+from scripts.m48_4c_patch_batch import accumulated_batch_step, preflight_halos
 
 
 DEFAULT_NORMALIZATION = (
@@ -102,6 +103,34 @@ def _schedule_step(
     source_index = _epoch_order(len(records), seed, epoch)[source_position]
     return epoch, records[source_index], patch_number
 
+
+
+
+def _grid_representatives(records: list[dict]) -> list[dict]:
+    """First sealed teacher record per full fine-grid shape, no test data."""
+    by_shape = {}
+    for record in records:
+        shape = tuple(record["target_shape"])
+        by_shape.setdefault(shape, record)
+    if len(by_shape) != 2:
+        raise ValueError(
+            "M48.4c representative-grid probe requires exactly two teacher grid sizes"
+        )
+    return [by_shape[k] for k in sorted(by_shape)]
+
+
+def _update_schedule(
+    records: list[dict], index: int, args,
+) -> tuple[int, dict, int]:
+    """Existing epoch sampler, or explicitly labeled two-grid benchmark."""
+    if getattr(args, "probe_grids", False):
+        representatives = _grid_representatives(records)
+        cycle, source_index = divmod(index, len(representatives))
+        return cycle, representatives[source_index], 0
+    return _schedule_step(
+        records, index, args.patches_per_source // args.effective_batch,
+        args.seed,
+    )
 
 def _step_draw(seed: int, index: int, fine_side: int) -> tuple[float, tuple[int, int, int], int]:
     """Seed step from global index; independent of model mode and resume."""
@@ -186,6 +215,15 @@ def _summary(config: dict, history: list[dict], total: int) -> dict:
     groups: dict[str, list[float]] = {}
     for entry in history:
         groups.setdefault(entry["case"], []).append(entry["loss"])
+    owned_samples = sum(
+        int(item.get("owned_fine_nodes", 0)) for item in history
+    )
+    end_to_end_seconds = sum(
+        float(item["optimizer_step_seconds"]) for item in history
+    )
+    gpu_seconds = sum(
+        float(item.get("forward_backward_seconds", 0.0)) for item in history
+    )
     return {
         "schema": "graph_attention.m48_4b_train_summary.v1",
         "config_sha256": _canonical_hash(config),
@@ -193,6 +231,16 @@ def _summary(config: dict, history: list[dict], total: int) -> dict:
         "completed_steps": len(history),
         "total_planned_steps": total,
         "training_complete": len(history) == total,
+        "schedule": config.get("schedule", "balanced_teacher_epochs"),
+        "effective_batch": config.get("effective_batch", 1),
+        "gpu_microbatch_size": config.get("gpu_microbatch_size", 1),
+        "owned_node_samples": owned_samples,
+        "owned_nodes_per_end_to_end_second": (
+            owned_samples / end_to_end_seconds if end_to_end_seconds > 0 else None
+        ),
+        "owned_nodes_per_gpu_forward_backward_second": (
+            owned_samples / gpu_seconds if gpu_seconds > 0 else None
+        ),
         "loss_by_teacher_case": {
             case: {"steps": len(values), "mean": sum(values) / len(values)}
             for case, values in sorted(groups.items())
@@ -202,11 +250,25 @@ def _summary(config: dict, history: list[dict], total: int) -> dict:
             item["optimizer_step_seconds"] for item in history
         ),
         "history": history,
-        "evaluation": "teacher-only training; validation and global generation deferred",
+        "evaluation": (
+            "representative-grid teacher-only GPU probe; not an epoch"
+            if config.get("schedule") == "representative_teacher_grid_probe"
+            else "teacher-only training; validation and global generation deferred"
+        ),
     }
 
 
 def run(args: argparse.Namespace) -> dict:
+    # Preserve the exact M48.4b one-patch path for existing callers/tests.
+    args.effective_batch = getattr(args, "effective_batch", 1)
+    args.microbatch_size = getattr(args, "microbatch_size", 1)
+    args.probe_grids = getattr(args, "probe_grids", False)
+    if (args.effective_batch < 1
+            or args.microbatch_size < 1
+            or args.effective_batch % args.microbatch_size
+            or args.patches_per_source % args.effective_batch
+            or (args.probe_grids and args.effective_batch != 4)):
+        raise ValueError("invalid effective batch or GPU microbatch configuration")
     if (args.mode not in ("static", "dynamic")
             or args.epochs < 1 or args.patches_per_source < 1
             or args.core_side < 1 or args.width < 1 or args.heads < 1
@@ -248,6 +310,12 @@ def run(args: argparse.Namespace) -> dict:
         "seed": args.seed,
         "epochs": args.epochs,
         "patches_per_source": args.patches_per_source,
+        "effective_batch": args.effective_batch,
+        "gpu_microbatch_size": args.microbatch_size,
+        "schedule": (
+            "representative_teacher_grid_probe" if args.probe_grids
+            else "balanced_teacher_epochs"
+        ),
         "core_side": args.core_side,
         "width": args.width,
         "heads": args.heads,
@@ -261,7 +329,17 @@ def run(args: argparse.Namespace) -> dict:
         "flow": "global_CEDAR_projected_gaussian_linear_FM",
     }
     config_hash = _canonical_hash(config)
-    total_steps = len(records) * args.patches_per_source * args.epochs
+    total_steps = (
+        len(_grid_representatives(records)) * args.epochs if args.probe_grids
+        else len(records) * (args.patches_per_source // args.effective_batch) * args.epochs
+    )
+
+    # Verify exact dependency halos on each teacher grid before a
+    # configuration-C GPU run; these are attention supports, not CEDAR.
+    if args.effective_batch > 1 and not args.resume:
+        halo_report = preflight_halos(records, args, args.mode)
+    else:
+        halo_report = None
 
     if args.resume:
         if not args.output_dir.is_dir():
@@ -275,6 +353,10 @@ def run(args: argparse.Namespace) -> dict:
         args.output_dir.mkdir(parents=True, exist_ok=False)
         _write_json_atomic(args.output_dir / "config.json", config)
         _write_json_atomic(args.output_dir / "normalization.json", normalization)
+        if halo_report is not None:
+            _write_json_atomic(
+                args.output_dir / "halo_preflight.json", halo_report,
+            )
 
     torch.manual_seed(args.seed)
     if device.type == "cuda":
@@ -304,36 +386,51 @@ def run(args: argparse.Namespace) -> dict:
     previous_key = None
     prepared = None
     for step in range(completed, last):
-        epoch, record, patch_number = _schedule_step(
-            records, step, args.patches_per_source, args.seed,
+        epoch, record, patch_number = _update_schedule(
+            records, step, args,
         )
         key = (record["case"], str(record["snapshot_id"]))
         if key != previous_key:
             prepared = _prepare_pair(args, record, scales)
             previous_key = key
         pair, cedar, coarse, baseline, x1 = prepared
-        fm_time, origin, source_seed = _step_draw(args.seed, step, pair.fine.shape[-1])
+        draws = [
+            _step_draw(
+                args.seed, step * args.effective_batch + offset,
+                pair.fine.shape[-1],
+            )
+            for offset in range(args.effective_batch)
+        ]
         if device.type == "cuda":
             torch.cuda.synchronize(device)
             torch.cuda.reset_peak_memory_stats(device)
         start = time.perf_counter()
-        result = _one_step(
-            model, optimizer, args, pair=pair, cedar=cedar,
-            coarse=coarse, baseline=baseline, x1=x1,
-            source_seed=source_seed, core_origin=origin,
-            fm_time=fm_time, device=device,
-        )
+        if args.effective_batch == 1:
+            fm_time, origin, source_seed = draws[0]
+            result = _one_step(
+                model, optimizer, args, pair=pair, cedar=cedar,
+                coarse=coarse, baseline=baseline, x1=x1,
+                source_seed=source_seed, core_origin=origin,
+                fm_time=fm_time, device=device,
+            )
+        else:
+            result = accumulated_batch_step(
+                model, optimizer, args, prepared=prepared,
+                draws=draws, device=device,
+            )
         if device.type == "cuda":
             torch.cuda.synchronize(device)
         result["optimizer_step_seconds"] = time.perf_counter() - start
         if device.type == "cuda":
             result["cuda_peak_allocated_bytes"] = torch.cuda.max_memory_allocated(device)
+            result["cuda_peak_reserved_bytes"] = torch.cuda.max_memory_reserved(device)
         entry = {
             "step": step + 1, "epoch": epoch + 1,
             "case": record["case"],
             "snapshot_id": str(record["snapshot_id"]),
             "patch_number": patch_number,
-            "fm_time": fm_time, "core_origin": origin,
+            "fm_time": draws[0][0],
+            "core_origin": draws[0][1],
             **result,
         }
         history.append(entry)
@@ -370,6 +467,12 @@ def main() -> None:
     parser.add_argument("--mode", choices=("static", "dynamic"), required=True)
     parser.add_argument("--epochs", type=int, default=8)
     parser.add_argument("--patches-per-source", type=int, default=4)
+    parser.add_argument("--effective-batch", type=int, default=1,
+                        help="Number of statistically independent patches per optimizer update")
+    parser.add_argument("--microbatch-size", type=int, default=1,
+                        help="Number of disconnected patches processed together on GPU")
+    parser.add_argument("--probe-grids", action="store_true",
+                        help="Two-grid teacher-only benchmark, not an epoch")
     parser.add_argument("--core-side", type=int, default=4)
     parser.add_argument("--width", type=int, default=32)
     parser.add_argument("--heads", type=int, default=4)

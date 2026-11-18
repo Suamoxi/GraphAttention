@@ -212,6 +212,113 @@ def test_training_resume_matches_uninterrupted_steps(monkeypatch, tmp_path, mode
     assert not (tmp_path / "locked_in_regime").exists()
 
 
+
+
+@pytest.mark.parametrize("mode", ["static", "dynamic"])
+def test_configuration_c_probe_resumes_across_two_teacher_grid_sizes(
+    monkeypatch, tmp_path, mode,
+):
+    """A bounded 48^3/80^3 run is not mislabeled as a full teacher epoch."""
+    records = _records()
+    for i, record in enumerate(records):
+        side = 24 if i < 22 else 40
+        record.update(input_shape=[side] * 3, target_shape=[2 * side] * 3)
+    selection_sha = _digest([record_identity(r) for r in records])
+    (tmp_path / "frozen.json").write_text(json.dumps(_frozen(records)))
+    monkeypatch.setattr(
+        train, "select_role_records",
+        lambda *_args, **_kwargs: (records, selection_sha),
+    )
+    monkeypatch.setattr(train, "TwoScaleDiNAT", _Model)
+    monkeypatch.setattr(
+        train, "_prepare_pair",
+        lambda _args, record, _scales: (
+            SimpleNamespace(
+                fine=torch.zeros((1, 5, *record["target_shape"])),
+            ),
+            None, None, None, None,
+        ),
+    )
+    monkeypatch.setattr(
+        train, "preflight_halos",
+        lambda *_args, **_kwargs: {"schema": "synthetic.halo_preflight"},
+    )
+
+    def batch_step(model, optimizer, _args, *, prepared, draws, device):
+        assert len(draws) == 4
+        assert device.type == "cpu"
+        optimizer.zero_grad(set_to_none=True)
+        target = sum(t for t, _origin, _seed in draws) / 4
+        loss = (model.parameter - target).square()
+        loss.backward()
+        optimizer.step()
+        return {
+            "loss": float(loss.detach()),
+            "gradient_norm_preclip": 1.0,
+            "owned_fine_nodes": 4 * 12**3,
+            "effective_batch": 4,
+            "gpu_microbatch_size": _args.microbatch_size,
+            "forward_backward_seconds": 0.001,
+        }
+    monkeypatch.setattr(train, "accumulated_batch_step", batch_step)
+    monkeypatch.setattr(
+        train.subprocess, "check_output",
+        lambda command, **_kwargs:
+            "commit-for-test\n" if command[1] == "rev-parse" else "",
+    )
+
+    first = _options(tmp_path, mode, tmp_path / "resumed_config_c")
+    first.core_side = 12
+    first.patches_per_source = 16
+    first.effective_batch = 4
+    first.microbatch_size = 2
+    first.probe_grids = True
+    first.epochs = 1
+    first.max_steps = 1
+    first.checkpoint_every = 1
+    after_first = train.run(first)
+    assert after_first["completed_steps"] == 1
+    assert (first.output_dir / "halo_preflight.json").exists()
+
+    first.resume = True
+    after_resume = train.run(first)
+    assert after_resume["completed_steps"] == 2
+    assert after_resume["training_complete"]
+    assert after_resume["schedule"] == "representative_teacher_grid_probe"
+    assert [x["case"].split("/")[0] for x in after_resume["history"]] == [
+        "ReT060", "ReT100",
+    ]
+    assert after_resume["owned_node_samples"] == 2 * 4 * 12**3
+
+    reference = _options(tmp_path, mode, tmp_path / "full_config_c")
+    for key in ("core_side", "patches_per_source", "effective_batch",
+                "microbatch_size", "probe_grids", "epochs", "checkpoint_every"):
+        setattr(reference, key, getattr(first, key))
+    reference.max_steps = 2
+    uninterrupted = train.run(reference)
+    assert [x["loss"] for x in after_resume["history"]] == [
+        x["loss"] for x in uninterrupted["history"]
+    ]
+    a = torch.load(first.output_dir / "checkpoint_latest.pt", weights_only=False)
+    b = torch.load(reference.output_dir / "checkpoint_latest.pt", weights_only=False)
+    torch.testing.assert_close(
+        a["model_state"]["parameter"], b["model_state"]["parameter"],
+    )
+    first.microbatch_size = 4
+    with pytest.raises(ValueError, match="configuration"):
+        train.run(first)
+
+
+def test_configuration_c_rejects_incompatible_microbatch_before_io(tmp_path):
+    args = _options(tmp_path, "dynamic", tmp_path / "never-created")
+    args.patches_per_source = 16
+    args.effective_batch = 4
+    args.microbatch_size = 3
+    with pytest.raises(ValueError, match="effective batch"):
+        train.run(args)
+    assert not args.output_dir.exists()
+
+
 def test_atomic_json_summary_reports_teacher_only(tmp_path):
     records = _records()
     cfg = {"mode": "dynamic"}

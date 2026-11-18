@@ -1566,3 +1566,18 @@ retrain either model or modify its normalization.
 
 Validation, projected full-domain Heun sampling and CFD turbulence spectra
 are outside this step; no new science claim is made from training losses alone.
+
+
+## M48.4c — configuration-C exact halos and statistical packed GPU microbatches (2026-11-18)
+
+| Mechanism | Classification | Mathematics/reference | Implementation | Tests | Evidence |
+|---|---|---|---|---|---|
+| Size-12 periodic owned cube with exact stage-specific dependency closure | Existing M45/M48 geometry applied to a larger patch | M45 attention trilinear priors and M48.3 target-driven backward closure; no patch CEDAR | `two_scale_targeted.build_targeted_two_scale_patch`, `scripts/m48_4c_patch_batch.py:preflight_halos` | Existing `tests/unit/test_m48_ms_sr.py` exact full-graph output/gradient tests; new `tests/unit/test_m48_4c_patch_batch.py` seam and dual-grid tests | Exact small-grid algebra established; 12^3 Grace read-set/throughput pending |
+| Independent projected FM noise per owned patch | Unchanged physics applied to new patch sampler | `X0=(I-PC)eps` on complete fine lattice, `C X0=0`, `X1=R/sigma_R` | `scripts/m48_4c_patch_batch.py:make_patch` reuses same CEDAR interface and fixed 44-teacher scaler | `tests/unit/test_m48_4c_patch_batch.py` synthetic CEDAR and source independence | CPU synthetic numerical checks prepared; Grace real CEDAR probe pending |
+| Packed disjoint fine/coarse graph microbatches | Computational adaptation | Edge offsets and per-graph conditioning preserve separate-graph output/gradient; patch losses averaged with equal sample weight | `scripts/m48_4c_patch_batch.py:pack_patches,packed_loss,accumulated_batch_step` | `tests/unit/test_m48_4c_patch_batch.py` static/dynamic packed-vs-separate output/gradient, m=1,2,4 optimizer parity | Prepared, not cluster validated |
+| Matched two-grid teacher GPU benchmark and resumable full-training schedule | Training instrumentation | 16 patches per teacher snapshot/epoch, effective B=4, 44 balanced teacher sources; probe two 48^3/80^3 representatives has distinct fingerprint | `scripts/m48_4b_frozen_train.py`, `scripts/slurm/m48_4c_sampling_benchmark.slurm` | `tests/unit/test_m48_4b_frozen_train.py` cross-grid resume and schedule seal | Benchmark pending; no scientific model-quality claim |
+
+The M48.4c benchmark is single-GPU and compares GPU graph
+microbatches 1/2/4 with the **same effective four-patch optimizer
+objective**. No DDP or full-lattice Heun generation is introduced.
+See `docs/M48_4C_SAMPLING_GPU_BENCHMARK.md`.
