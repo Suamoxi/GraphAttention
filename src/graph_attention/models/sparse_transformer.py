@@ -286,6 +286,10 @@ class SparseMultiheadAttention(nn.Module):
                 sparse_adj=sparse_adj,
             )
         if self.sparse_attention_backend in {"torch_sparse", "torch_sparse_triton"}:
+            if self.sparse_attention_backend == "torch_sparse_triton":
+                from .triton_sparse_backward import require_triton
+
+                require_triton()
             topology = sparse_adj
             if topology is None:
                 topology = _build_torch_sparse_topology(
