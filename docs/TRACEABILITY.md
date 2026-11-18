@@ -1541,3 +1541,16 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
 | M3.3-scaled conservative moments on unique periodic grid | Project adaptation of M3.3 and streaming moments | \`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\`, \`docs/M3_3_NONDIMENSIONALIZATION.md\` | \`scripts/m46_hit_similarity.py:_mesh_index,_analyze_sample,Moments\` | Unit test for node renumbering, numerical moments and small analytic field | Synthetic validated; Calypso unvalidated |
 | Fourier kinetic energy and solenoidal/dilatational Helmholtz split | Established Fourier projection, project shell convention | \`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\` | \`scripts/m46_hit_similarity.py:_spectral\` | Analytic solenoidal/longitudinal sine fields, Parseval | Synthetic validated; 320^3 performance unvalidated |
 | Per-case normalized approximate Wasserstein-1 | Project statistical comparison estimator | \`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\` | \`scripts/m46_hit_similarity.py:_combine\` | Code inspection + synthetic suite; real comparator validation pending | 1024-quantile estimator, not full-field exact W1 |
+
+
+## M48.4b — teacher-only case-resolved CEDAR normalization audit (2026-11-18)
+
+| Concept | Classification | Scientific definition | Implementation | Tests | Evidence status |
+|---|---|---|---|---|---|
+| Same full-domain CEDAR residual for diagnostics | Project adaptation / diagnostic | `docs/M48_4_NORMALIZATION_AUDIT.md`: `R=Uf-PUc`, `CR=0`; no patch-local CEDAR | `graph_attention.data.ms_sr_adapter.load_ms_sr_pair`, `graph_attention.data.ms_sr_normalization_audit` | `tests/unit/test_m48_ms_sr.py`, `tests/unit/test_m48_ms_sr_normalization_audit.py` | Real global CEDAR identities qualified by M48.3 job 510080; 44-source audit not yet Calypso-validated |
+| Case, ReT-group and pooled normalization moments | Numerical diagnostic, no scaler change | Equal independent-teacher-snapshot mean, population variance and residual RMS, with no residual mean subtraction | `src/graph_attention/data/ms_sr_normalization_audit.py`, `scripts/m48_normalization_audit.py` | Synthetic unequal-grid and unequal-snapshot-count reference, pooled-vs-M48.4a agreement, role/provenance leakage tests | Implemented; real teacher-wide audit pending |
+| Case-to-pooled scale and mean offsets | Observational regime-comparison diagnostic | Per-channel coarse mean shift divided by pooled std; case coarse std / pooled std; case residual RMS / pooled RMS; measured residual mean / RMS | `scripts/m48_normalization_audit.py` and CSV/JSON outputs | Synthetic case comparison tests and role exclusion | No scientific acceptability threshold; conclusions await full 44-source output |
+
+The M48.4a two-source training gate completed on Calypso job 510111 with finite losses,
+nonzero gradients and conserved global-noise nullspace. This audit does not
+retrain either model or modify its normalization.
