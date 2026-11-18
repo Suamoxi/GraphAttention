@@ -37,6 +37,7 @@ def _fake_loader(_root: Path, **kwargs):
         coarse_value, residual_value, size = 10., 6., 4
     pair = SimpleNamespace(
         coarse=torch.full((1, 5, size, size, size), coarse_value, dtype=torch.float64),
+        fine=torch.zeros((1, 5, 2 * size, 2 * size, 2 * size), dtype=torch.float64),
         residual=torch.full(
             (1, 5, 2 * size, 2 * size, 2 * size), residual_value,
             dtype=torch.float64,
