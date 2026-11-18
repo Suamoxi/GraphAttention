@@ -330,7 +330,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
                 dilated_attention_edge_index,
                 num_nodes=inputs.shape[0],
             )
-        elif self.sparse_attention_backend == "torch_sparse":
+        elif self.sparse_attention_backend in {"torch_sparse", "torch_sparse_triton"}:
             local_sparse_adj = self._cached_torch_sparse_topology(
                 "local",
                 local_attention_edge_index,
