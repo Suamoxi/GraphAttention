@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
 import statistics
 import subprocess
@@ -260,7 +259,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         per_mode["backward_speedup"] = baseline / candidate if candidate else None
         results[op] = per_mode
     result = {
-        "protocol": "m48_triton_sparse_backward_pilot_v1",
+        "protocol": "triton_sparse_backward_pilot_v1",
         "status": "completed_not_accepted",
         "scientific_scope": "synthetic connectivity; kernel benchmark, no training",
         "code_revision": subprocess.run(
