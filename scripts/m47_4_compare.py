@@ -65,6 +65,8 @@ def validate_six_summaries(results: dict[tuple[str, int], dict[str, Any]]) -> No
             common = setup
         elif common != setup:
             raise ValueError("M47.4 sampling settings differ across modes/stages")
+        if set(s["physical_generation"]) != set(s["physical_generation_cases"]):
+            raise ValueError("physical generation cases do not match requested cases")
         current_keys = {}
         current_population = {}
         for case, report in s["physical_generation"].items():
@@ -182,13 +184,11 @@ def main() -> None:
     args = parser.parse_args()
     result = compare(args.root, steps=args.steps, samples=args.samples, seed=args.seed)
     output = args.output or args.root / "comparison_epoch05_epoch10.json"
-    if output.exists():
-        raise FileExistsError(f"refusing overwrite: {output}")
+    csv_path = output.with_suffix(".csv")
+    if output.exists() or csv_path.exists():
+        raise FileExistsError(f"refusing overwrite: {output} or {csv_path}")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
-    csv_path = output.with_suffix(".csv")
-    if csv_path.exists():
-        raise FileExistsError(f"refusing overwrite: {csv_path}")
     with csv_path.open("w", newline="") as f:
         columns = ["mode", "epochs", *(f"mse_t{t}" for t in TIMES),
                    "best_validation_epoch_in_training", "best_validation_mse_in_training"]
