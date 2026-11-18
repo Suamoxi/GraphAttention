@@ -137,7 +137,7 @@ def test_triton_geometric_attention_outputs_parameters_and_bias(nodes, long_row)
     if long_row:
         # Both backends use the same chunked forward. CUDA index_add_ may
         # accumulate edges in different orders, especially for high-degree rows.
-        # Measure same-backend run-to-run variation before adjusting tolerances.
+        # Measure within-backend variation to contextualize cross-backend parity.
         with torch.no_grad():
             repeats_baseline = [
                 baseline(x1.detach(), edge_displacement=d1.detach(), **opts)
@@ -163,7 +163,13 @@ def test_triton_geometric_attention_outputs_parameters_and_bias(nodes, long_row)
             f"cross_backend_max_abs={cross_backend_error:.6e}",
             flush=True,
         )
-    torch.testing.assert_close(out2, out1, rtol=1e-5, atol=1e-5)
+    # GH200 repeatability (job 510265): baseline, candidate and cross-backend
+    # differences all reached 1.068413e-5 on this high-degree graph.
+    # Both backends share the original CUDA index_add_ forward.
+    # Keep the direct-kernel and backward gradient tolerances unchanged.
+    torch.testing.assert_close(
+        out2, out1, rtol=1e-5, atol=2e-5 if long_row else 1e-5,
+    )
     upstream = torch.randn_like(out1)
     (out1 * upstream).sum().backward()
     (out2 * upstream).sum().backward()
