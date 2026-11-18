@@ -53,7 +53,11 @@ From a clean main checkout:
 cd /scratch/coop/theret/GraphAttention
 git pull --rebase origin main
 git status --short
-sbatch --array=0-3 scripts/slurm/sparse_backward_triton_benchmark.slurm
+# First validate compilation and parity on the smallest graph
+sbatch --array=0 scripts/slurm/sparse_backward_triton_benchmark.slurm
+
+# Only if the first job succeeds, run the other topologies/resolutions
+sbatch --array=1-3 scripts/slurm/sparse_backward_triton_benchmark.slurm
 ~~~
 
 Array indices 0-3 are 65-cube one-hop, 65-cube exact-two-hop, 129-cube
