@@ -43,7 +43,8 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -c \
     'import torch,triton;print("torch",torch.__version__,"triton",triton.__version__,"cuda",torch.cuda.is_available())'
 # Parity and integration tests must pass before timing is accepted.
-singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q \
+# Keep parity diagnostics visible even when tests pass.
+singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q -s \
     tests/unit/test_triton_sparse_backward.py \
     tests/unit/test_dinat_dit.py
 ARGS=()
