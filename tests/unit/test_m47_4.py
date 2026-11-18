@@ -184,3 +184,59 @@ def test_m47_4_six_run_comparator_rejects_partial_or_wrong_signature():
     rows[("mach", 5)]["training_signature_sha256"] = "wrong"
     with pytest.raises(ValueError, match="inconsistent scientific contract"):
         validate_six_summaries(rows)
+
+
+
+def test_m47_4_host_singularity_alias_normalization():
+    host = Path("/gpfs-calypso/scratch/coop/theret/GraphAttention_runs/m47_conditioned/mach/train_s42")
+    container = Path("/scratch/coop/theret/GraphAttention_runs/m47_conditioned/mach/train_s42")
+    normalize = m47_4_stage._mount_independent_source_path
+    assert normalize(host) == normalize(container) == container
+    # Not a generic basename match and never rewrite similar prefixes.
+    other = Path("/gpfs-calypso/scratch_alt/coop/theret/mach/train_s42")
+    assert normalize(other) == other
+
+
+def test_m47_4_resolve_original_source_only_via_known_alias(monkeypatch):
+    host = Path("/gpfs-calypso/scratch/coop/theret/original/train_s42")
+    container = Path("/scratch/coop/theret/original/train_s42")
+    monkeypatch.setattr(Path, "is_dir", lambda p: p == container)
+    assert (m47_4_stage.accessible_original_source({"source_path": str(host)})
+            == container)
+    with pytest.raises(FileNotFoundError):
+        m47_4_stage.accessible_original_source({
+            "source_path": "/gpfs-calypso/unrelated/original/train_s42"
+        })
+    with pytest.raises(ValueError, match="absolute"):
+        m47_4_stage.accessible_original_source({"source_path": "relative/path"})
+
+
+def test_m47_4_mount_alias_keeps_signature_and_hash_checks(monkeypatch):
+    recorded = {
+        "protocol": "M47.4/pinned-original-source/v1",
+        "mode": "mach",
+        "source_path": "/gpfs-calypso/scratch/coop/theret/original/train_s42",
+        "original_run_signature_sha256": "verified_signature",
+        "original_hashes": {"last.pt": "unchanged_hash"},
+    }
+    actual = dict(
+        recorded,
+        source_path="/scratch/coop/theret/original/train_s42",
+    )
+    monkeypatch.setattr(
+        m47_4_stage, "source_record", lambda source, mode: dict(actual),
+    )
+    m47_4_stage.verify_original(
+        Path(actual["source_path"]), recorded, "mach",
+    )
+    actual["original_hashes"] = {"last.pt": "modified_hash"}
+    with pytest.raises(ValueError, match="changed"):
+        m47_4_stage.verify_original(
+            Path(actual["source_path"]), recorded, "mach",
+        )
+    actual["original_hashes"] = recorded["original_hashes"]
+    actual["source_path"] = "/scratch/coop/theret/other/train_s42"
+    with pytest.raises(ValueError, match="source path differs"):
+        m47_4_stage.verify_original(
+            Path(actual["source_path"]), recorded, "mach",
+        )
