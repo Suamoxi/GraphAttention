@@ -23,11 +23,27 @@ def _gpu() -> torch.device:
     return torch.device("cuda")
 
 
+def _assert_parity(name: str, actual: torch.Tensor, expected: torch.Tensor, *, rtol: float, atol: float) -> None:
+    """Print reproducible error magnitudes before enforcing numerical parity."""
+    difference = (actual.detach() - expected.detach()).abs()
+    max_absolute = difference.max().item() if difference.numel() else 0.0
+    # Near-zero reference values make unregularized relative errors misleading.
+    relative = difference / expected.detach().abs().clamp_min(1e-6)
+    max_relative = relative.max().item() if relative.numel() else 0.0
+    print(
+        f"[TRITON PARITY] {name}: max_abs={max_absolute:.6e}, "
+        f"max_rel(ref_floor=1e-6)={max_relative:.6e}",
+        flush=True,
+    )
+    torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol)
+
+
 def _edges(nodes: int, *, long_row: bool) -> torch.Tensor:
     if long_row:
-        # One target has degree 49 (> the 32-edge Triton tile).
+        # Both target- and source-oriented CSR have degree 49 (> 32-edge tile).
         edges = [(j, 0) for j in range(1, 50)]
-        edges += [(0, 2), (3, 4), (4, 3), (7, 1), (2, 2)]
+        edges += [(0, j) for j in range(1, 50)]
+        edges += [(3, 4), (4, 3), (7, 1), (2, 2)]
     else:
         # Directed, unsorted, self-loop, zero-indegree and zero-outdegree nodes.
         edges = [
@@ -51,18 +67,23 @@ def test_triton_sddmm_backward_matches_chunked_irregular(nodes, long_row, head_d
     qkv = torch.randn(nodes, 3, heads, head_dim, device=device)
     q1 = qkv[:, 0].detach().requires_grad_(True)
     k1 = qkv[:, 1].detach().requires_grad_(True)
-    q2 = q1.detach().clone().requires_grad_(True)
-    k2 = k1.detach().clone().requires_grad_(True)
+    # Cloning a sliced [N, H, D] view makes it contiguous. Clone the packed
+    # [N, 3, H, D] storage first so both backends exercise the same Q/K strides.
+    qkv2 = qkv.detach().clone()
+    q2 = qkv2[:, 0].detach().requires_grad_(True)
+    k2 = qkv2[:, 1].detach().requires_grad_(True)
+    assert not q2.is_contiguous() and not k2.is_contiguous()
+    assert q2.stride() == q1.stride() and k2.stride() == k1.stride()
     expected = _TorchSparseSDDMM.apply(
         q1, k1, topo.crow_indices, topo.row_indices, topo.col_indices, 0.15,
     )
     actual = TritonSparseSDDMM.apply(q2, k2, topo, 0.15)
-    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+    _assert_parity("sddmm forward", actual, expected, rtol=1e-5, atol=1e-6)
     upstream = torch.randn_like(expected)
     (expected * upstream).sum().backward()
     (actual * upstream).sum().backward()
-    torch.testing.assert_close(q2.grad, q1.grad, rtol=3e-4, atol=3e-5)
-    torch.testing.assert_close(k2.grad, k1.grad, rtol=3e-4, atol=3e-5)
+    _assert_parity("sddmm dQ", q2.grad, q1.grad, rtol=3e-4, atol=3e-5)
+    _assert_parity("sddmm dK", k2.grad, k1.grad, rtol=3e-4, atol=3e-5)
 
 
 @pytest.mark.parametrize("nodes,long_row", [(12, False), (53, True)])
@@ -72,19 +93,24 @@ def test_triton_spmm_backward_matches_chunked_irregular(nodes, long_row, head_di
     torch.manual_seed(102)
     edges = _edges(nodes, long_row=long_row).to(device)
     topo = _build_torch_sparse_topology(edges, num_nodes=nodes)
-    values = torch.randn(nodes, 4, head_dim, device=device)
-    w1 = torch.randn(edges.shape[1], 4, device=device, requires_grad=True)
-    v1 = values.detach().requires_grad_(True)
-    w2 = w1.detach().clone().requires_grad_(True)
-    v2 = v1.detach().clone().requires_grad_(True)
+    # Exercise noncontiguous weight/value strides, including the transposed
+    # CSR reduction of dV, rather than only the contiguous benchmark layout.
+    weight_storage = torch.randn(edges.shape[1], 4, 2, device=device)
+    value_storage = torch.randn(nodes, 2, 4, head_dim, device=device)
+    w1 = weight_storage[:, :, 0].detach().requires_grad_(True)
+    v1 = value_storage[:, 0].detach().requires_grad_(True)
+    w2 = weight_storage.detach().clone()[:, :, 0].detach().requires_grad_(True)
+    v2 = value_storage.detach().clone()[:, 0].detach().requires_grad_(True)
+    assert not w2.is_contiguous() and not v2.is_contiguous()
+    assert w2.stride() == w1.stride() and v2.stride() == v1.stride()
     reference = _TorchSparseSpMM.apply(w1, v1, topo.row_indices, topo.col_indices)
     candidate = TritonSparseSpMM.apply(w2, v2, topo)
-    torch.testing.assert_close(candidate, reference, rtol=1e-5, atol=1e-6)
+    _assert_parity("spmm forward", candidate, reference, rtol=1e-5, atol=1e-6)
     upstream = torch.randn_like(reference)
     (reference * upstream).sum().backward()
     (candidate * upstream).sum().backward()
-    torch.testing.assert_close(w2.grad, w1.grad, rtol=3e-4, atol=3e-5)
-    torch.testing.assert_close(v2.grad, v1.grad, rtol=3e-4, atol=3e-5)
+    _assert_parity("spmm dP", w2.grad, w1.grad, rtol=3e-4, atol=3e-5)
+    _assert_parity("spmm dV", v2.grad, v1.grad, rtol=3e-4, atol=3e-5)
 
 
 @pytest.mark.parametrize("nodes,long_row", [(12, False), (53, True)])
@@ -143,22 +169,36 @@ def test_triton_full_dinat_with_activation_checkpointing():
         [[0, 2, 4, 6, 8, 10], [3, 5, 7, 9, 11, 0]],
         dtype=torch.long, device=device,
     )
+    coords1 = torch.randn(12, 3, device=device, requires_grad=True)
+    coords2 = coords1.detach().clone().requires_grad_(True)
+    conditioning1 = torch.tensor([[0.2]], device=device, requires_grad=True)
+    conditioning2 = conditioning1.detach().clone().requires_grad_(True)
     kwargs = dict(
-        edge_index=local, coords=torch.randn(12, 3, device=device),
-        attention_edge_indices={"dilated": dilated},
-        conditioning=torch.tensor([[0.2]], device=device),
+        edge_index=local, attention_edge_indices={"dilated": dilated},
     )
     x1 = torch.randn(12, 5, device=device, requires_grad=True)
     x2 = x1.detach().clone().requires_grad_(True)
     reference.train()
     candidate.train()
-    out1 = reference(x1, **kwargs)
-    out2 = candidate(x2, **kwargs)
+    out1 = reference(x1, coords=coords1, conditioning=conditioning1, **kwargs)
+    out2 = candidate(x2, coords=coords2, conditioning=conditioning2, **kwargs)
     torch.testing.assert_close(out2, out1, rtol=1e-5, atol=1e-5)
     upstream = torch.randn_like(out1)
     (out1 * upstream).sum().backward()
     (out2 * upstream).sum().backward()
     torch.testing.assert_close(x2.grad, x1.grad, rtol=5e-4, atol=5e-5)
+    torch.testing.assert_close(coords2.grad, coords1.grad, rtol=5e-4, atol=5e-5)
+    torch.testing.assert_close(conditioning2.grad, conditioning1.grad, rtol=5e-4, atol=5e-5)
+    candidate_parameters = dict(candidate.named_parameters())
+    for name, p1 in reference.named_parameters():
+        p2 = candidate_parameters[name]
+        if p1.grad is None or p2.grad is None:
+            assert p1.grad is None and p2.grad is None, name
+        else:
+            torch.testing.assert_close(
+                p2.grad, p1.grad, rtol=5e-4, atol=5e-5,
+                msg=lambda m, name=name: f"checkpoint parameter {name}: {m}",
+            )
 
 
 def test_triton_backend_refuses_missing_cuda_or_triton():
