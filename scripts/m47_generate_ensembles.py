@@ -36,6 +36,7 @@ CASE_NAMES = tuple(case.case_id for case in DEFAULT_M43_CASES)
 
 def load_contract(
     *, run_dir: Path, ref_dir: Path, mode: str, root: Path,
+    expected_epochs: int = 2,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Strict model/dataset/scaler provenance before expensive GPU sampling."""
     if mode not in CONDITION_NAMES:
@@ -66,8 +67,17 @@ def load_contract(
             raise ValueError(f"{key} differs from the checkpoint source signature")
     if len(split.get("excluded_ids", [])) != 48 or split.get("temporal_embargo") != 2:
         raise ValueError("unexpected M47.1 embargo protocol")
-    if len(summary.get("history", [])) != 2 or summary.get("best_epoch") != 1:
-        raise ValueError("M47.2 is restricted to the validated two-epoch seed-42 pilot")
+    if expected_epochs == 2:
+        if len(summary.get("history", [])) != 2 or summary.get("best_epoch") != 1:
+            raise ValueError("M47.2 is restricted to the validated two-epoch seed-42 pilot")
+    elif expected_epochs in (5, 10):
+        # M47.4 is evaluated only through an explicit, externally audited run.
+        if (len(summary.get("history", [])) != expected_epochs
+            or summary["history"][-1].get("epoch") != expected_epochs - 1
+            or not 0 <= int(summary.get("best_epoch", -1)) < expected_epochs):
+            raise ValueError("M47.4 checkpoint history does not match the fixed epoch stage")
+    else:
+        raise ValueError("only the frozen M47.1 pilot and M47.4 epoch 5/10 are supported")
     evidence = verify_generated_references(ref_dir, run_dir / "physical_reference_audit.json")
     if evidence["m47_reference_audit_sha256"] != physics.get("m47_reference_audit_sha256"):
         raise ValueError("physical reference audit does not match frozen run signature")
