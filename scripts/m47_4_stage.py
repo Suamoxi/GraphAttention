@@ -22,6 +22,37 @@ ORIGINAL_SIGNATURES = {
 TRACKED = ("last.pt", "best.pt", "standardizers.pt",
            "run_signature.json", "split.json")
 PROVENANCE = "m47_4_source_provenance.json"
+_HOST_SCRATCH = Path("/gpfs-calypso/scratch")
+_CONTAINER_SCRATCH = Path("/scratch")
+
+
+def _mount_independent_source_path(path: Path) -> Path:
+    """Identify the same Calypso scratch files across host and Singularity mounts."""
+    try:
+        relative = path.relative_to(_HOST_SCRATCH)
+    except ValueError:
+        return path
+    return _CONTAINER_SCRATCH / relative
+
+
+def accessible_original_source(provenance: dict[str, Any]) -> Path:
+    """Resolve only the known host-to-container scratch mount alias.
+
+    The provenance remains immutable. Never silently search for a source under
+    a different root or accept a replacement dataset.
+    """
+    stored = Path(provenance["source_path"])
+    if not stored.is_absolute():
+        raise ValueError("M47.4 source provenance path must be absolute")
+    if stored.is_dir():
+        return stored
+    candidate = _mount_independent_source_path(stored)
+    if candidate != stored and candidate.is_dir():
+        return candidate
+    raise FileNotFoundError(
+        f"original M47.1 source unavailable at {stored} "
+        f"or its exact Singularity mount alias {candidate}"
+    )
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -87,6 +118,15 @@ def source_record(source: Path, mode: str) -> dict[str, Any]:
 
 def verify_original(source: Path, provenance: dict[str, Any], mode: str) -> None:
     actual = source_record(source, mode)
+    recorded_path = Path(provenance["source_path"])
+    actual_path = Path(actual["source_path"])
+    if (_mount_independent_source_path(actual_path)
+            != _mount_independent_source_path(recorded_path)):
+        raise ValueError("M47.1 original source path differs from recorded provenance")
+    # Preserve the original host path string in the immutable audit record.
+    # Only the strictly recognized /gpfs-calypso/scratch -> /scratch alias
+    # may differ; all source file hashes and physical signatures must match.
+    actual["source_path"] = provenance["source_path"]
     if actual != provenance:
         raise ValueError("M47.1 original source changed after M47.4 staging")
 
