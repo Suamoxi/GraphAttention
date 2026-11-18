@@ -14,6 +14,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import torch
 
 from graph_attention.data.ms_sr_adapter import CEDAR_REVISION, FIELDS, MANIFEST_SHA256
 from graph_attention.data.ms_sr_normalization_audit import audit_teacher_normalization

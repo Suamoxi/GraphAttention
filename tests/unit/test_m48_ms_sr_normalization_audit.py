@@ -1,6 +1,8 @@
 """Synthetic M48 normalization audit properties, with no external CFD files."""
 from __future__ import annotations
 
+import argparse
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +11,7 @@ import torch
 
 from graph_attention.data import ms_sr_normalization_audit as audit
 from graph_attention.data import ms_sr_training as train
+from scripts import m48_normalization_audit as audit_script
 from scripts.m48_normalization_audit import _case_rows, _snapshot_rows
 
 
@@ -159,3 +162,49 @@ def test_subtracting_a_nonzero_constant_can_break_a_nullspace_constraint():
                                torch.zeros(2, dtype=torch.float64))
     assert not torch.allclose(C @ (residual - residual.mean()),
                               torch.zeros(2, dtype=torch.float64))
+
+
+def test_audit_entrypoint_writes_json_and_csv(monkeypatch, tmp_path):
+    """Exercise the real report-writing path without CFD I/O or a GPU."""
+    records = [
+        _record("ReT060/Mt0.23_Xi0.0", 5),
+        _record("ReT060/Mt0.23_Xi0.0", 20),
+        _record("ReT100/Mt0.30_Xi0.0", 8),
+    ]
+    selection_sha = train._digest([train.record_identity(r) for r in records])
+    monkeypatch.setattr(
+        audit_script, "select_role_records",
+        lambda *_args, **_kwargs: (records, selection_sha),
+    )
+    monkeypatch.setattr(audit, "load_ms_sr_pair", _fake_loader)
+    monkeypatch.setattr(
+        audit_script.subprocess, "check_output",
+        lambda command, **_kwargs: (
+            "test-commit\n" if command[1] == "rev-parse" else ""
+        ),
+    )
+    ms_sr_root = tmp_path / "MS_SR"
+    code = ms_sr_root / "code"
+    code.mkdir(parents=True)
+    (code / "campaign_data.py").write_text("# synthetic\n")
+    (code / "models.py").write_text("# synthetic\n")
+    output_dir = tmp_path / "results"
+    args = argparse.Namespace(
+        ms_sr_root=ms_sr_root,
+        output_dir=output_dir,
+        manifest_sha256="test-manifest",
+        filter_id="w1p25_l1",
+        case_prefix="",
+        max_sources=0,
+        expected_sources=3,
+    )
+    report = audit_script.run(args)
+    assert report["source_count"] == 3
+    assert report["provenance"]["torch_version"] == torch.__version__
+    assert report["provenance"]["graph_attention_commit"] == "test-commit"
+    saved = json.loads((output_dir / "normalization_audit.json").read_text())
+    assert saved["pooled"] == report["pooled"]
+    assert len((output_dir / "case_comparison.csv").read_text().splitlines()) == 26
+    assert len((output_dir / "snapshot_moments.csv").read_text().splitlines()) == 16
+    with pytest.raises(FileExistsError, match="existing"):
+        audit_script.run(args)
