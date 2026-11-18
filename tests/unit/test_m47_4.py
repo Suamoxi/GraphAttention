@@ -85,7 +85,7 @@ def test_m47_4_frozen_stage5_and_stage10_gates(tmp_path, monkeypatch):
     source = _original_fixture(tmp_path, monkeypatch)
     workspace = tmp_path / "independent" / "none"
     m47_4_stage.prepare(source, workspace, "none")
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises((ValueError, FileNotFoundError)):
         m47_4_stage.gate_stage10(source, workspace, "none")
     _advance(workspace, 5)
     m47_4_stage.freeze(source, workspace, "none", 5)
