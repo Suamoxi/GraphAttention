@@ -34,6 +34,12 @@ test -z "$(git status --porcelain)" || { echo "Dirty checkout" >&2; exit 2; }
 test -x "$PYTHON"
 OUTPUT="$ROOT/${SIDE}cube_${TOPOLOGY}_${SLURM_JOB_ID}"
 test ! -e "$OUTPUT" || { echo "Output exists: $OUTPUT" >&2; exit 2; }
+# Print exact artifact paths before any GPU tests, including failure cases.
+LOG_ROOT=/scratch/coop/theret/GraphAttention_runs
+echo "ARTIFACT_STDOUT=$LOG_ROOT/csr_bwd_triton_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.out"
+echo "ARTIFACT_STDERR=$LOG_ROOT/csr_bwd_triton_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.err"
+echo "ARTIFACT_RESULT=$OUTPUT/results.json"
+echo "ARTIFACT_PROFILE_DIR=$OUTPUT (only when CSR_TRITON_PROFILE=YES)"
 BIND=(-B /home:/home -B /scratch:/scratch)
 for mount in /archivenfs /archive2; do
     if [ -d "$mount" ]; then BIND+=(-B "$mount:$mount"); fi
