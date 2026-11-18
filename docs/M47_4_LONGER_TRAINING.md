@@ -123,6 +123,26 @@ Full generated volumes are not stored by default. The CPU-only comparison
 refuses any missing arm, mismatched validation cohort, mismatched Gaussian key,
 different physical sampling settings, or divergent 5-to-10 epoch histories.
 
+## Calypso host vs Singularity scratch mount
+
+M47.4 staging runs under host Python and records the immutable M47.1 source
+path after Path.resolve(), for example:
+
+- Host: /gpfs-calypso/scratch/coop/theret/GraphAttention_runs/m47_conditioned/mach/train_s42
+- Singularity: /scratch/coop/theret/GraphAttention_runs/m47_conditioned/mach/train_s42
+
+Inside the Singularity evaluator the host-prefixed path may not exist.
+The evaluator maps **only** the exact /gpfs-calypso/scratch -> /scratch
+mount alias and verifies that the remapped directory contains the same
+original source files (SHA256 hashes, training signature, split and revision).
+It does not rewrite the original provenance JSON or accept a different
+source root. Do not edit the provenance or recreate the epoch checkpoints.
+
+If evaluation previously failed before creating its output directory, pull
+the fix and resubmit the same evaluation Slurm array. This alias fix is
+independent of occasional Singularity CUDA compatibility-path read-only
+warnings, which are not the provenance exception.
+
 ## Interpretation and limitations
 
 - A smaller FM velocity MSE is not proof of physical generation fidelity.
