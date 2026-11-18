@@ -25,7 +25,7 @@ for path in "$REPO" "$IMAGE" "$PYTHON"; do
 done
 cd "$REPO"
 test -z "$(git status --porcelain)" || { echo "Dirty checkout" >&2; exit 2; }
-echo "Revision=$(git rev-parse HEAD) GPU=$CUDA_VISIBLE_DEVICES"
+echo "Revision=$(git rev-parse HEAD) GPU=${CUDA_VISIBLE_DEVICES:-unknown}"
 BIND=(-B /home:/home -B /scratch:/scratch)
 for mount in /archivenfs /archive2; do
     if [ -d "$mount" ]; then BIND+=(-B "$mount:$mount"); fi
