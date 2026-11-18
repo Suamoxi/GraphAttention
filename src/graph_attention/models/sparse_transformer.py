@@ -285,7 +285,7 @@ class SparseMultiheadAttention(nn.Module):
                 score_bias=score_bias,
                 sparse_adj=sparse_adj,
             )
-        if self.sparse_attention_backend == "torch_sparse":
+        if self.sparse_attention_backend in {"torch_sparse", "torch_sparse_triton"}:
             topology = sparse_adj
             if topology is None:
                 topology = _build_torch_sparse_topology(
@@ -368,14 +368,19 @@ class SparseMultiheadAttention(nn.Module):
                 "the experimental torch_sparse attention backend currently requires float32"
             )
 
-        scores = _TorchSparseSDDMM.apply(
-            query,
-            key,
-            topology.crow_indices,
-            topology.row_indices,
-            topology.col_indices,
-            self.scale,
-        )
+        if self.sparse_attention_backend == "torch_sparse_triton":
+            from .triton_sparse_backward import TritonSparseSDDMM
+
+            scores = TritonSparseSDDMM.apply(query, key, topology, self.scale)
+        else:
+            scores = _TorchSparseSDDMM.apply(
+                query,
+                key,
+                topology.crow_indices,
+                topology.row_indices,
+                topology.col_indices,
+                self.scale,
+            )
         if score_bias is not None:
             scores = scores + score_bias[topology.edge_order].to(dtype=scores.dtype)
 
@@ -408,12 +413,17 @@ class SparseMultiheadAttention(nn.Module):
             training=self.training,
         )
 
-        aggregated = _TorchSparseSpMM.apply(
-            weights.to(dtype=value.dtype),
-            value,
-            topology.row_indices,
-            topology.col_indices,
-        )
+        if self.sparse_attention_backend == "torch_sparse_triton":
+            from .triton_sparse_backward import TritonSparseSpMM
+
+            aggregated = TritonSparseSpMM.apply(weights.to(dtype=value.dtype), value, topology)
+        else:
+            aggregated = _TorchSparseSpMM.apply(
+                weights.to(dtype=value.dtype),
+                value,
+                topology.row_indices,
+                topology.col_indices,
+            )
         return self.out_proj(
             aggregated.reshape(topology.num_nodes, self.hidden_dim)
         )
@@ -629,9 +639,9 @@ def _require_dgl_sparse():
 
 def _validate_sparse_attention_backend(value: str) -> str:
     backend = str(value)
-    if backend not in {"scatter", "torch_sparse", "dgl"}:
+    if backend not in {"scatter", "torch_sparse", "torch_sparse_triton", "dgl"}:
         raise ValueError(
-            "sparse_attention_backend must be 'scatter', 'torch_sparse', or 'dgl'"
+            "sparse_attention_backend must be 'scatter', 'torch_sparse', 'torch_sparse_triton', or 'dgl'"
         )
     return backend
 
