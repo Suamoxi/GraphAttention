@@ -107,6 +107,30 @@ def compare(root: Path, *, steps: int = 50, samples: int = 4,
         if len(five) != 5 or len(ten) != 10 or ten[:5] != five:
             raise ValueError(f"{mode}: epoch-10 training history does not extend epoch 5")
 
+    # Optional direct teacher-forced two-epoch M47.3 baseline, evaluated with
+    # the same validation snapshot IDs, times, seed and Gaussian path keys.
+    baseline_dir = root.parent / "m47_fm_diagnostics"
+    baseline_paths = {
+        mode: baseline_dir / mode / f"v1_e2_val5_h50_seed{seed}" / "summary.json"
+        for mode in MODES
+    }
+    available = {mode: path.is_file() for mode, path in baseline_paths.items()}
+    if any(available.values()) and not all(available.values()):
+        raise ValueError("partial M47.3 baseline; require all three arms")
+    baseline = {}
+    if all(available.values()):
+        for mode, path in baseline_paths.items():
+            b = read(path)
+            if (b.get("status") != "complete" or b.get("mode") != mode
+                or b.get("training_signature_sha256") != ORIGINAL_SIGNATURES[mode]
+                or b.get("common_gaussian_seed") != seed
+                or b.get("times") != list(TIMES)
+                or b.get("validation_samples_per_case") != dict.fromkeys(CASES, 5)):
+                raise ValueError(f"{mode}: M47.3 baseline has mismatched validation contract")
+            baseline[mode] = {
+                str(t): aggregate_mse(b["per_case_time"], t) for t in TIMES
+            }
+
     rows = []
     for mode in MODES:
         for stage in STAGES:
@@ -147,6 +171,12 @@ def compare(root: Path, *, steps: int = 50, samples: int = 4,
             }
             rows.append(row)
     for mode in MODES:
+        if mode in baseline:
+            for row in (r for r in rows if r["mode"] == mode):
+                row["mse_change_from_epoch2"] = {
+                    str(t): row["mse_by_flow_time"][str(t)] - baseline[mode][str(t)]
+                    for t in TIMES
+                }
         a = next(r for r in rows if r["mode"] == mode and r["epochs"] == 5)
         b = next(r for r in rows if r["mode"] == mode and r["epochs"] == 10)
         b["mse_change_from_epoch5"] = {
@@ -169,6 +199,7 @@ def compare(root: Path, *, steps: int = 50, samples: int = 4,
             "The pinned legacy trainer evaluates held-out test after each stage; "
             "do not use those metrics to select M47.4 checkpoints.",
         ],
+        "epoch2_m47_3_validation_baseline": baseline or None,
         "results": rows,
     }
 
