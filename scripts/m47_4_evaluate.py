@@ -20,7 +20,9 @@ from graph_attention.tasks import FlowMatchingTask
 from graph_attention.tasks.flow_matching import _deterministic_sampling_source, _flow_problem
 from graph_attention.training.data_pipeline import GraphTaskCollator, task_batch_to_device
 from graph_attention.training.model_factory import instantiate_controlled_model
-from scripts.m47_4_stage import PROVENANCE, read_json, source_record
+from scripts.m47_4_stage import (
+    PROVENANCE, accessible_original_source, read_json, verify_original,
+)
 from scripts.m47_fm_diagnostics import aggregate_velocity, roundtrip_audit, velocity_metrics
 from scripts.m47_generate_ensembles import CASE_NAMES, analyze_case, load_contract
 from scripts.m47_generation_metrics import CHANNELS
@@ -33,9 +35,8 @@ def validate_provenance(run_dir: Path, mode: str, epochs: int) -> dict[str, Any]
     if epochs not in (5, 10) or run_dir.name != f"epoch{epochs:02d}":
         raise ValueError("only immutable M47.4 epoch05/epoch10 snapshots are allowed")
     provenance = read_json(run_dir.parent / PROVENANCE)
-    source = Path(provenance["source_path"])
-    if source_record(source, mode) != provenance:
-        raise ValueError("original M47.1 checkpoint provenance differs")
+    source = accessible_original_source(provenance)
+    verify_original(source, provenance, mode)
     # This function is also independently unit-testable without CUDA.
     return provenance
 
