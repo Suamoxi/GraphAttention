@@ -86,6 +86,7 @@ def _add_external_sources(root: Path) -> None:
 def select_pilot_record(
     publication: dict, *, role: str = "teacher", filter_id: str = "w1p25_l1",
     fine_factor: int = 4, coarse_factor: int = 8, case_prefix: str = "ReT060/",
+    snapshot_case: str | None = None, snapshot_id: str | int | None = None,
 ) -> dict:
     """Select one source *before* opening data; never substitute a test record."""
     if publication.get("schema") != "ms-sr.campaign.v1":
@@ -101,6 +102,8 @@ def select_pilot_record(
         and int(r["fine_factor"]) == fine_factor
         and int(r["coarse_factor"]) == coarse_factor
         and r["case"].startswith(case_prefix)
+        and (snapshot_case is None or r["case"] == snapshot_case)
+        and (snapshot_id is None or str(r["snapshot_id"]) == str(snapshot_id))
     ]
     if not records:
         raise ValueError("no eligible MS_SR pair matches the requested role, case, filter and factors")
@@ -188,6 +191,7 @@ def load_ms_sr_pair(
     ms_sr_root: Path, *, role: str = "teacher", filter_id: str = "w1p25_l1",
     fine_factor: int = 4, coarse_factor: int = 8,
     case_prefix: str = "ReT060/",
+    snapshot_case: str | None = None, snapshot_id: str | int | None = None,
     expected_manifest_sha256: str = MANIFEST_SHA256,
 ) -> tuple[MSRPair, object, dict]:
     """Select one published pair and qualify it with MS_SR's TorchCEDAR.
@@ -207,7 +211,8 @@ def load_ms_sr_pair(
     record = select_pilot_record(
         publication, role=role, filter_id=filter_id,
         fine_factor=fine_factor, coarse_factor=coarse_factor,
-        case_prefix=case_prefix,
+        case_prefix=case_prefix, snapshot_case=snapshot_case,
+        snapshot_id=snapshot_id,
     )
     length, r = _isotropic_box(record)
     _add_external_sources(root)
