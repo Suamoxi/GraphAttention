@@ -126,3 +126,61 @@ def test_m47_4_checkpoint_metadata_requires_full_optimizer_rng_and_stage():
             {k: v for k, v in valid.items() if k != "optimizer_state_dict"},
             signature_sha="signature", epochs=5,
         )
+
+
+def _fake_evaluation_results():
+    from scripts.m47_4_compare import CASES, CHANNELS, MODES, STAGES, TIMES
+    rows = {}
+    for mode in MODES:
+        for epochs in STAGES:
+            per_case = {
+                case: {
+                    str(t): {"samples": 5, "channels": {
+                        ch: {"mse": 0.5} for ch in CHANNELS
+                    }} for t in TIMES
+                } for case in CASES
+            }
+            physical = {
+                "Re54/Ma0.2": {
+                    "generated_count": 4, "reference_count": 5,
+                    "generated_sampling_keys": ["k0", "k1", "k2", "k3"],
+                    "reference_sample_ids": ["v0", "v1", "v2", "v3", "v4"],
+                    "unique_grid_shape": [64, 64, 64],
+                    "source_grid_shape": [65, 65, 65],
+                }
+            }
+            rows[(mode, epochs)] = {
+                "status": "complete", "mode": mode,
+                "epochs_completed": epochs,
+                "training_signature_sha256": m47_4_stage.ORIGINAL_SIGNATURES[mode],
+                "validation_per_case": 5, "test_snapshot_state_used": False,
+                "flow_times": list(TIMES), "shared_sampling_seed": 20261116,
+                "physical_generation_steps": 50,
+                "physical_generation_samples_per_case": 4,
+                "physical_generation_cases": ["Re54/Ma0.2"],
+                "physical_generation": physical,
+                "validation_velocity_mse_at_fixed_times": per_case,
+            }
+    return rows
+
+
+def test_m47_4_six_run_comparator_requires_matched_latents_and_splits():
+    from scripts.m47_4_compare import validate_six_summaries
+    rows = _fake_evaluation_results()
+    validate_six_summaries(rows)
+    rows[("mach_re", 10)]["physical_generation"]["Re54/Ma0.2"][
+        "generated_sampling_keys"][-1] = "unmatched"
+    with pytest.raises(ValueError, match="latent keys"):
+        validate_six_summaries(rows)
+
+
+def test_m47_4_six_run_comparator_rejects_partial_or_wrong_signature():
+    from scripts.m47_4_compare import validate_six_summaries
+    rows = _fake_evaluation_results()
+    rows.pop(("none", 5))
+    with pytest.raises(ValueError, match="exactly three arms"):
+        validate_six_summaries(rows)
+    rows = _fake_evaluation_results()
+    rows[("mach", 5)]["training_signature_sha256"] = "wrong"
+    with pytest.raises(ValueError, match="inconsistent scientific contract"):
+        validate_six_summaries(rows)
