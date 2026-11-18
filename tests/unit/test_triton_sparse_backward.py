@@ -134,6 +134,35 @@ def test_triton_geometric_attention_outputs_parameters_and_bias(nodes, long_row)
     opts = {"edge_index": edges, "batch_index": None}
     out1 = baseline(x1, edge_displacement=d1, **opts)
     out2 = candidate(x2, edge_displacement=d2, **opts)
+    if long_row:
+        # Both backends use the same chunked forward. CUDA index_add_ may
+        # accumulate edges in different orders, especially for high-degree rows.
+        # Measure same-backend run-to-run variation before adjusting tolerances.
+        with torch.no_grad():
+            repeats_baseline = [
+                baseline(x1.detach(), edge_displacement=d1.detach(), **opts)
+                for _ in range(5)
+            ]
+            repeats_candidate = [
+                candidate(x2.detach(), edge_displacement=d2.detach(), **opts)
+                for _ in range(5)
+            ]
+        baseline_jitter = max(
+            (value - out1.detach()).abs().max().item()
+            for value in repeats_baseline
+        )
+        candidate_jitter = max(
+            (value - out2.detach()).abs().max().item()
+            for value in repeats_candidate
+        )
+        cross_backend_error = (out2.detach() - out1.detach()).abs().max().item()
+        print(
+            f"[TRITON FORWARD REPEATABILITY] "
+            f"baseline_max_abs={baseline_jitter:.6e} "
+            f"candidate_max_abs={candidate_jitter:.6e} "
+            f"cross_backend_max_abs={cross_backend_error:.6e}",
+            flush=True,
+        )
     torch.testing.assert_close(out2, out1, rtol=1e-5, atol=1e-5)
     upstream = torch.randn_like(out1)
     (out1 * upstream).sum().backward()
