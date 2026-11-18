@@ -1,0 +1,46 @@
+{
+  "schema": "graph_attention.m48_teacher_normalization.v1",
+  "role": "teacher",
+  "weighting": "equal_independent_teacher_snapshot",
+  "fields": [
+    "rho",
+    "rhou",
+    "rhov",
+    "rhow",
+    "rhoE"
+  ],
+  "manifest_sha256": "993f791f88d801e44e5feb0cee927c4c48eaa459bd6171e9e364b002bb01fdca",
+  "selection_sha256": "32119fababe014f19d3d1fcfa0e06e4e6527f1e8a66d24cf2f84650e00155ca8",
+  "audit_sha256": "defcf3ea5ea19644ab2f9b0bd507575ade316f7dc5582fce5fb10eb1e6daf1f4",
+  "audit_job": "510184",
+  "audit_source": "m48_normalization_audit/job_510184/normalization_audit.json",
+  "source_count": 44,
+  "case_count": 22,
+  "case_prefix": "",
+  "filter_id": "w1p25_l1",
+  "fine_factor": 4,
+  "coarse_factor": 8,
+  "coarse_mean": [
+    1.1566685830436794,
+    -1.181017487538634,
+    -3.8266518398995886,
+    -2.111530247034476,
+    276040.0204871589
+  ],
+  "coarse_std": [
+    0.29059249874516585,
+    138.4811341779916,
+    138.2737115346554,
+    139.99696885403304,
+    104628.84272943973
+  ],
+  "residual_rms": [
+    0.032872240222765275,
+    20.912682816067942,
+    21.08809496595842,
+    21.205531005879678,
+    11345.626151062495
+  ],
+  "physical_nondimensionalization": "none; original MS_SR conservative fields",
+  "residual_centering": "none; only per-channel RMS scaling"
+}

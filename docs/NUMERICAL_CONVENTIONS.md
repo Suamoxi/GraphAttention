@@ -452,3 +452,48 @@ Training and generation use separate scripts. Generation reloads the exact persi
 - Cached snapshots are invalidated by changes in options, reference checksum or source
   file size/mtime. Archive/pilot collisions are resolved by ID/counter with archived
   data preferred; identity is a provenance assumption rather than a hash proof.
+
+
+## M48.4b: Frozen teacher-only CEDAR residual scaling (2026-11-18)
+
+For the fixed MS_SR \`w1p25_l1\` q8 -> q4 task, the
+\`configs/m48/teacher_44_w1p25_l1_q4_q8.json\` file freezes
+the **all-44-teacher** scalar moments from audit job 510184.
+The 22 cases contribute two teacher snapshots each. The intended weight
+is one per independent snapshot, not one per node. The selection hash
+authenticates the ordered list of teacher source and operator identities;
+no validation/test fields enter any fit.
+
+For each conservative field component k:
+
+\`\`\`text
+coarse_input_k = (Uc_k - mean_teacher(Uc_k)) / std_teacher(Uc_k)
+lifted_input_k = (P Uc_k - mean_teacher(Uc_k)) / std_teacher(Uc_k)
+FM_target_k    = (Uf_k - P Uc_k) / RMS_teacher(Uf_k - P Uc_k)
+X0_k           = (I - P C) eps_k
+Xt_k           = (1 - t) X0_k + t FM_target_k
+v_target_k     = FM_target_k - X0_k
+\`\`\`
+
+The fixed componentwise **residual RMS** is strictly positive and
+does not subtract a mean, preserving the global nullspace
+\`C R = 0\` for an operator that acts identically on each component.
+All physical restriction, lifting and source-noise projection are
+on complete periodic fields. The training loss reduces MSE over owned
+fine nodes in each patch, and training schedules each teacher snapshot
+equally in each epoch, independent of 48^3 vs 80^3 fine-node count.
+
+The same frozen normalization, seeds, FM-time schedule, patch origins,
+optimizer and nominal model width/layer depths are used for static and
+dynamic TwoScaleDiNAT. Their parameter counts and dependency halos are
+not equal; they run as separate jobs so allocated CUDA memory can be
+compared without a second resident model. This is a
+**matched-configuration** comparison, not a parameter-matched ablation.
+No new physical nondimensionalization is applied in this baseline,
+and the archive's case names are not trusted as measured Re/Ma values.
+
+This changes the numerical preprocessing **relative to the M48.4a
+two-source engineering smoke**, which remains available for
+reproducibility. The 44-source frozen scales are required for
+M48.4b. The new training path is source-prepared and awaiting its
+Calypso qualification, not yet a measured convergence result.

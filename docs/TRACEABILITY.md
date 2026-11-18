@@ -1554,3 +1554,15 @@ See `docs/M41_1_HALO_PARTITIONED_DINAT.md` for full data and
 The M48.4a two-source training gate completed on Calypso job 510111 with finite losses,
 nonzero gradients and conserved global-noise nullspace. This audit does not
 retrain either model or modify its normalization.
+
+
+## M48.4b — frozen all-teacher scaling and matched static/dynamic training (2026-11-18)
+
+| Concept | Classification | Scientific definition | Implementation | Tests | Evidence status |
+|---|---|---|---|---|---|
+| Frozen 44-source CEDAR scaling | Numerically meaningful preprocessing | \`docs/M48_4B_FROZEN_TRAIN.md\`, \`docs/NUMERICAL_CONVENTIONS.md\` M48.4b; one equal weight per teacher snapshot, pooled component mean/std and residual RMS, no residual centering | \`configs/m48/teacher_44_w1p25_l1_q4_q8.json\`, \`scripts/m48_4b_frozen_train.py\`; original \`ms_sr_training.checked_normalization\` | \`tests/unit/test_m48_4b_frozen_train.py\` (source hash/role and statistic gates) | Teacher 44-source audit observed job 510184; new scaler-loader training code awaits Calypso |
+| Matched static/dynamic training | Project architecture ablation, not capacity-matched | Same teacher source order, patch/core, FM time, global CEDAR-projected noise seed, loss, optimizer; separate model modes have unequal parameter and receptive-field budgets | \`scripts/m48_4b_frozen_train.py\`, \`scripts/slurm/m48_4b_frozen_train.slurm\` and reuse of \`scripts/m48_ms_sr_train._one_step\` | Frozen normalization, schedule, deterministic draws, checkpoint resume and two-mode synthetic tests | Implementation prepared; no real 44-source optimizer trajectory or quality conclusion yet |
+| Source-owned sampled patch loss and checkpoint resume | Training methodology / software correctness | One equal patch count per source each epoch; per-owned-node MSE; step-seeded global noise; atomic model/optimizer/RNG checkpoint and strict experiment signature | \`scripts/m48_4b_frozen_train.py\` | \`tests/unit/test_m48_4b_frozen_train.py\` | Synthetic properties prepared; GPU resource and timing target qualification pending |
+
+Validation, projected full-domain Heun sampling and CFD turbulence spectra
+are outside this step; no new science claim is made from training losses alone.
