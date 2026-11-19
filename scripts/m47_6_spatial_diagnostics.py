@@ -18,7 +18,6 @@ import torch
 from graph_attention.data.multicase_avbp import AVBPMultiCaseHITDataset, DEFAULT_M43_CASES
 from graph_attention.evaluation.spectra_3d import infer_cartesian_grid_3d
 from graph_attention.tasks import FlowMatchingTask
-from graph_attention.tasks.flow_matching import _deterministic_sampling_source, _model_velocity
 from graph_attention.training.data_pipeline import GraphTaskCollator, task_batch_to_device
 from graph_attention.training.model_factory import instantiate_controlled_model
 from scripts.m47_4_evaluate import validate_checkpoint_metadata, validate_provenance
@@ -131,61 +130,83 @@ def heun_trajectory(
     task: FlowMatchingTask, model: torch.nn.Module, batch: Any,
     *, steps: int, seed: int, key: str, grid: Any, k_bins: int,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
-    """Replicate the frozen sampler exactly and inspect intermediate states.
+    """Capture states from the canonical sampler without duplicating Heun.
 
-    Intermediate states are not physical conservative fields; diagnostics
-    use STANDARDIZED MOMENTUM, without density division or thermodynamics.
+    A root-module forward pre-hook records the state at the FIRST velocity
+    evaluation (k1) in every selected Heun step. This cannot perturb the
+    forward calculation: the hook returns None and never edits its arguments.
+    Capture is removed even if sampling fails.
+
+    Calling the sampler twice and requiring torch.allclose between runs is
+    not a valid strict parity gate on CUDA sparse-attention reductions,
+    which may be nondeterministic. Observing the actual canonical trajectory
+    avoids that independent-execution comparison entirely.
     """
-    if steps % 5:
-        raise ValueError("trajectory requires step count divisible by five")
+    if steps < 5 or steps % 5:
+        raise ValueError("trajectory requires steps >= 5 divisible by five")
     if batch.num_graphs != 1:
         raise ValueError("trajectory requires one graph")
-    state = _deterministic_sampling_source(batch, seed, (key,))
-    observations = []
 
-    def inspect(index: int) -> None:
-        row = standardized_momentum_diagnostics(
-            state.detach().cpu().numpy(), grid, k_bins=k_bins,
-        )
-        row.update({"step": index, "flow_time": index / steps})
-        observations.append(row)
+    calls = 0
+    observations: list[dict[str, Any]] = []
+    stride = steps // 5
 
-    inspect(0)
-    dt = 1.0 / steps
-    for step in range(steps):
-        times = torch.full(
-            (batch.num_graphs,), step / steps,
-            device=state.device, dtype=state.dtype,
-        )
-        k1 = _model_velocity(
-            model, batch, state, times,
-            time_embedding_scale=task.time_embedding_scale,
-        )
-        pred = state + dt * k1
-        next_times = torch.full(
-            (batch.num_graphs,), (step + 1) / steps,
-            device=state.device, dtype=state.dtype,
-        )
-        k2 = _model_velocity(
-            model, batch, pred, next_times,
-            time_embedding_scale=task.time_embedding_scale,
-        )
-        state = state + 0.5 * dt * (k1 + k2)
-        if (step + 1) % (steps // 5) == 0:
-            inspect(step + 1)
-    if not torch.isfinite(state).all():
-        raise ValueError("trajectory produced nonfinite standardized state")
-    canonical = task.sample_standardized(
-        model, batch, steps=steps, method="flow_ode", solver="heun",
-        sampling_eps=0.0, final_denoise=False,
-        sampling_seed=seed, sampling_keys=(key,),
+    def observe_velocity_call(
+        _module: torch.nn.Module,
+        positional: tuple[Any, ...],
+        _keyword: dict[str, Any],
+    ) -> None:
+        nonlocal calls
+        # Canonical Heun evaluates k1 then k2 for each step. Observe k1
+        # exclusively; the k2 predictor is not a trajectory state.
+        if calls % 2 == 0:
+            step = calls // 2
+            if step < steps and step % stride == 0:
+                if not positional or not isinstance(positional[0], torch.Tensor):
+                    raise ValueError("expected canonical model(state, ...)")
+                source_state = positional[0]
+                row = standardized_momentum_diagnostics(
+                    source_state.detach().cpu().numpy(), grid, k_bins=k_bins,
+                )
+                row.update({"step": step, "flow_time": step / steps})
+                observations.append(row)
+        calls += 1
+
+    handle = model.register_forward_pre_hook(
+        observe_velocity_call, with_kwargs=True,
     )
-    diff = torch.max(torch.abs(state - canonical)).item()
-    if not torch.allclose(state, canonical, atol=1e-6, rtol=1e-6):
-        raise ValueError(f"M47.6 trajectory disagrees with original sampler: {diff}")
+    try:
+        state = task.sample_standardized(
+            model, batch, steps=steps, method="flow_ode", solver="heun",
+            sampling_eps=0.0, final_denoise=False,
+            sampling_seed=seed, sampling_keys=(key,),
+        )
+    finally:
+        handle.remove()
+
+    if calls != 2 * steps:
+        raise ValueError(
+            f"expected {2 * steps} canonical Heun model calls, got {calls}"
+        )
+    if len(observations) != 5:
+        raise ValueError(
+            f"expected five observed intermediate stages, got {len(observations)}"
+        )
+    if not torch.isfinite(state).all():
+        raise ValueError("canonical trajectory produced nonfinite state")
+    final = standardized_momentum_diagnostics(
+        state.detach().cpu().numpy(), grid, k_bins=k_bins,
+    )
+    final.update({"step": steps, "flow_time": 1.0})
+    observations.append(final)
     return state, {
-        "sampling_key": key, "seed": seed, "steps": steps,
-        "canonical_max_absolute_difference": float(diff),
+        "sampling_key": key,
+        "seed": seed,
+        "steps": steps,
+        "sampler": "FlowMatchingTask.sample_standardized (unchanged)",
+        "observation_method": "read-only root forward pre-hook on canonical k1",
+        "observed_model_calls": calls,
+        "independent_trajectory_parity_test": "not_applicable_single_canonical_run",
         "observations": observations,
         "interpretation": (
             "Intermediate states are standardized Gaussian-to-data states, "
