@@ -116,6 +116,8 @@ def execute_patch_update(
     started = time.perf_counter()
     transfer_seconds = 0.0
     forward_backward_seconds = 0.0
+    forward_seconds = 0.0
+    backward_seconds = 0.0
     predictions = []
     patch_loss_values = []
     groups = ([p] for p in patches) if mode == "sequential_single" else (patches,)
@@ -127,10 +129,17 @@ def execute_patch_update(
         transfer_seconds += time.perf_counter() - mark
         mark = time.perf_counter()
         pred_owned, per_patch = owned_losses(model, batch)
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        forward_elapsed = time.perf_counter() - mark
+        mark = time.perf_counter()
         (per_patch.sum() / len(patches)).backward()
         if device.type == "cuda":
             torch.cuda.synchronize(device)
-        forward_backward_seconds += time.perf_counter() - mark
+        backward_elapsed = time.perf_counter() - mark
+        forward_seconds += forward_elapsed
+        backward_seconds += backward_elapsed
+        forward_backward_seconds += forward_elapsed + backward_elapsed
         patch_loss_values.extend(float(x) for x in per_patch.detach().cpu())
         if capture_audit:
             predictions.append(pred_owned.detach().cpu())
@@ -168,6 +177,8 @@ def execute_patch_update(
         "fine_read_nodes": sum(p["state"].shape[0] for p in patches),
         "coarse_read_nodes": sum(p["coarse_state"].shape[0] for p in patches),
         "transfer_seconds": transfer_seconds,
+        "forward_seconds": forward_seconds,
+        "backward_seconds": backward_seconds,
         "forward_backward_seconds": forward_backward_seconds,
         "optimizer_seconds": optimizer_seconds,
         "update_seconds": elapsed_seconds,
