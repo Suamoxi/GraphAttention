@@ -56,7 +56,13 @@ def _graph_parts(device):
     def ring(n, jump):
         src = torch.arange(n, device=device)
         dst = (src + jump) % n
-        return torch.stack((torch.cat((src, dst)), torch.cat((dst, src))), dim=0)
+        edges = torch.stack(
+            (torch.cat((src, dst)), torch.cat((dst, src))), dim=0,
+        )
+        # On an even ring, opposite-node exact-two-hop neighbours overlap
+        # when traversed in both directions (n=4, jump=2).
+        # CSR attention requires each directed source-target pair once.
+        return torch.unique(edges, dim=1)
 
     local_a, local_b = ring(4, 1), ring(5, 1)
     dilated_a, dilated_b = ring(4, 2), ring(5, 2)
