@@ -213,9 +213,28 @@ def run(*, root: Path, scenario: str, out: Path, steps: int, seed: int,
             }
             if not (matching and max_loss <= 1e-4 and audit["status"] == "pass"):
                 accepted = False
-        a = summary["modes"]["packed_index"]["measurements"]["median_seconds"]["step_seconds"]
-        b = summary["modes"]["packed_segmented"]["measurements"]["median_seconds"]["step_seconds"]
+        baseline = summary["modes"]["packed_index"]
+        segmented = summary["modes"]["packed_segmented"]
+        a = baseline["measurements"]["median_seconds"]["step_seconds"]
+        b = segmented["measurements"]["median_seconds"]["step_seconds"]
+        packed_audit = audit_parity(
+            Path(baseline["audit"]), Path(segmented["audit"]),
+        )
+        packed_loss_delta = max(
+            abs(x - y) for x, y in zip(
+                baseline["measurements"]["losses"],
+                segmented["measurements"]["losses"],
+                strict=True,
+            )
+        )
+        result["segmented_vs_packed_index"] = {
+            "full_gradient_and_adamw_audit": packed_audit,
+            "max_absolute_loss_difference": packed_loss_delta,
+            "speedup": a / b,
+        }
         result["packed_index_to_segmented_speedup"] = a / b
+        if packed_audit["status"] != "pass" or packed_loss_delta > 1e-4:
+            accepted = False
     summary["comparison"] = result
     summary["status"] = "completed_not_accepted" if accepted else "failed_or_review_required"
     atomic_json(out / "summary.json", summary)
