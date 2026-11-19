@@ -2,7 +2,7 @@
 
 ## Goal and status
 
-**Implemented as an opt-in experimental backend; not yet tested on a CUDA GPU.**
+**Opt-in experimental backend; GH200 numerical and synthetic attention benchmark gates completed, but full-model training remains unmeasured.**
 This investigation is separate from the frozen M47.1/M47.4 scientific training
 continuations. It does not modify their checkpoints, numerical behavior,
 input distributions or training recipes.
@@ -20,6 +20,8 @@ Files:
 - tests/unit/test_triton_sparse_backward.py
 - scripts/benchmark_triton_sparse_backward.py
 - scripts/slurm/sparse_backward_triton_benchmark.slurm
+- scripts/benchmark_triton_full_training.py (paired real-HDF5 10-layer probe)
+- scripts/slurm/sparse_backward_triton_full_training.slurm
 
 ## Mathematical contract
 
@@ -65,7 +67,8 @@ one-hop and 129-cube exact-two-hop. Head count=4, head dimension=32, FP32.
 
 The job checks that Triton/CUDA are available inside the deployed Python
 environment, runs tests/unit/test_triton_sparse_backward.py and existing
-DiNAT-DiT tests, then performs three separated comparisons:
+DiNAT-DiT tests with deterministic CUDA reductions, then performs three
+comparisons with unrestricted CUDA timing:
 
 - isolated SDDMM backward,
 - isolated SpMM backward,
@@ -104,10 +107,60 @@ and 65/129-cube tests complete without OOM. The required speedup is
 a reduction in median backward and full-attention-step time, not only a
 faster isolated kernel.
 
-If successful, next benchmark the complete ten-block DiNAT-DiT model on
-the original M47 physical graphs, with matched training batches and all
-activation checkpointing enabled. M47.4 remains pinned to the original
-scientific trainer throughout.
+## Measured GH200 pilot (November 2026)
 
-This backend is experimental: no measured speedup or GPU numerical
-equivalence is claimed until Calypso output has been inspected.
+Synchronized unprofiled medians of three repetitions, synthetic Cartesian
+graphs, FP32, four heads by 32 dimensions. All attention forwards unchanged.
+
+| Graph | Nodes | Directed edges | Geometric-attention backward, original -> Triton (ms) | Backward speedup | Combined forward/backward speedup |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 65^3 one-hop | 274625 | 1622400 | 18.081 -> 8.751 | 2.07x | 1.60x |
+| 65^3 two-hop | 274625 | 4791930 | 49.771 -> 14.530 | 3.43x | 2.19x |
+| 129^3 one-hop | 2146689 | 12780288 | 141.908 -> 65.848 | 2.16x | 1.62x |
+| 129^3 two-hop | 2146689 | 38042874 | 391.253 -> 112.498 | 3.48x | 2.18x |
+
+The final 129^3 two-hop GH200 run was Slurm job 511292 at revision
+38abd607. Its deterministic numerical tests reported 27 passed and 1
+skipped (DGL dependency unavailable). Maximum allocated geometric-attention
+GPU memory: 16.205 GiB for each backend; maximum reserved: 20.611 GiB.
+These results do not establish full-model training speedup or scalability for
+all arbitrary-degree unstructured graphs. The JSON protocol intentionally
+reports "completed_not_accepted" pending full-model evaluation.
+
+## Next gate: real-HDF5 ten-layer M37 optimizer steps
+
+The next probe reuses the existing M43-B1 real HDF5, GraphTaskCollator, and
+Flow Matching code. It pairs the original torch_sparse backend against the
+opt-in torch_sparse_triton backward with 10 layers, 128 hidden channels,
+4 heads, AdamW, and non-reentrant activation checkpointing. Two fresh CUDA
+subprocesses use matched HDF5 inputs, graph construction and RNG seeds;
+the first optimizer step in each is a warmup, then three timed steps follow.
+
+M43-B1 uses per-snapshot state standardization and box-normalized coordinates
+for feasibility. This is NOT the original M47 physical normalization or
+a scientific validation run. No checkpoints or trained model weights are
+saved and no frozen M47.4 training scripts are changed.
+
+Start from a clean checkout:
+
+~~~bash
+cd /scratch/coop/theret/GraphAttention
+git pull --ff-only origin main
+sbatch scripts/slurm/sparse_backward_triton_full_training.slurm
+~~~
+
+Default real case: Re54/Ma0.3 at 65^3, in
+/archivenfs/phlusim/HIT_DNS_COMP. Output root:
+/scratch/coop/theret/GraphAttention_runs/triton_full_training_v1/job_<jobid>/
+
+Required analysis artifacts:
+
+- /scratch/coop/theret/GraphAttention_runs/csr_full_train_<jobid>.out
+- /scratch/coop/theret/GraphAttention_runs/csr_full_train_<jobid>.err
+- <output>/preflight.json and <output>/summary.json
+- <output>/torch_sparse/report.json and <output>/torch_sparse/process.log
+- <output>/torch_sparse_triton/report.json and <output>/torch_sparse_triton/process.log
+
+The Slurm script prints full ARTIFACT_* paths before GPU execution.
+Use its output for analysis before attempting a 129^3 real graph.
+
