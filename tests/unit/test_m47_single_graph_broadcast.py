@@ -5,17 +5,22 @@ import copy
 from types import SimpleNamespace
 
 import torch
+import pytest
 
 from graph_attention.models.dinat_dit import AlternatingDilatedGeometricDiT
 from graph_attention.models.dit_common import _broadcast_graph_features
 from scripts.m43_b1_training_step import _model_forward
 
 
-def test_graph_feature_expand_matches_packed_index_and_graph_gradient():
+@pytest.mark.parametrize("device_name", ("cpu", "cuda"))
+def test_graph_feature_expand_matches_packed_index_and_graph_gradient(device_name):
+    if device_name == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable")
+    device = torch.device(device_name)
     torch.manual_seed(109)
-    x = torch.randn(1, 17, dtype=torch.float32, requires_grad=True)
+    x = torch.randn(1, 17, dtype=torch.float32, device=device, requires_grad=True)
     y = x.detach().clone().requires_grad_(True)
-    batch_index = torch.zeros(43, dtype=torch.long)
+    batch_index = torch.zeros(43, dtype=torch.long, device=device)
     expanded = _broadcast_graph_features(x, batch_index=None, num_nodes=43)
     packed = _broadcast_graph_features(y, batch_index=batch_index, num_nodes=43)
     torch.testing.assert_close(expanded, packed, rtol=0.0, atol=0.0)
@@ -49,7 +54,11 @@ def test_single_graph_mode_reaches_native_nonpacked_model_path():
     assert model.batch_index is None
 
 
-def test_checkpointed_dinat_forward_input_condition_and_weight_grad_parity():
+@pytest.mark.parametrize("device_name", ("cpu", "cuda"))
+def test_checkpointed_dinat_forward_input_condition_and_weight_grad_parity(device_name):
+    if device_name == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable")
+    device = torch.device(device_name)
     torch.manual_seed(27)
     reference = AlternatingDilatedGeometricDiT(
         in_channels=3, out_channels=3, hidden_dim=16, num_heads=2,
@@ -58,7 +67,7 @@ def test_checkpointed_dinat_forward_input_condition_and_weight_grad_parity():
         sparse_attention_backend="torch_sparse",
         activation_checkpointing=True,
         dropout=0.0,
-    ).train()
+    ).to(device).train()
     with torch.no_grad():
         reference.final_layer.projection.weight.normal_(std=0.04)
         for block in reference.blocks:
@@ -69,18 +78,18 @@ def test_checkpointed_dinat_forward_input_condition_and_weight_grad_parity():
     coords = torch.tensor([
         [0.0, 0.0], [0.5, 0.0], [1.1, 0.2],
         [1.2, 0.9], [0.1, 1.0],
-    ])
+    ], device=device)
     local = torch.tensor([
         [0, 1, 2, 3, 4, 0, 2, 4],
         [1, 2, 3, 4, 0, 2, 4, 1],
-    ], dtype=torch.long)
+    ], dtype=torch.long, device=device)
     two_hop = torch.tensor([
         [0, 1, 2, 3, 4, 0, 1],
         [2, 3, 4, 0, 1, 3, 4],
-    ], dtype=torch.long)
-    original_inputs = torch.randn(5, 3, requires_grad=True)
+    ], dtype=torch.long, device=device)
+    original_inputs = torch.randn(5, 3, device=device, requires_grad=True)
     expanded_inputs = original_inputs.detach().clone().requires_grad_(True)
-    original_condition = torch.randn(1, 1, requires_grad=True)
+    original_condition = torch.randn(1, 1, device=device, requires_grad=True)
     expanded_condition = original_condition.detach().clone().requires_grad_(True)
     common = {
         "edge_index": local,
@@ -89,7 +98,7 @@ def test_checkpointed_dinat_forward_input_condition_and_weight_grad_parity():
     }
 
     out_packed = reference(
-        original_inputs, batch_index=torch.zeros(5, dtype=torch.long),
+        original_inputs, batch_index=torch.zeros(5, dtype=torch.long, device=device),
         conditioning=original_condition, **common,
     )
     out_single = candidate(
