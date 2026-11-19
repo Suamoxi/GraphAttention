@@ -2,6 +2,9 @@
 from types import SimpleNamespace
 
 import numpy as np
+import torch
+
+from scripts.m47_6_spatial_diagnostics import heun_trajectory
 import pytest
 
 from scripts.m47_6_spatial_metrics import (
@@ -75,3 +78,71 @@ def test_standardized_intermediate_allows_nonphysical_density():
     assert np.max(np.abs(mid["E_standardized_momentum_per_rad_per_m"])) < 1e-12
     with pytest.raises(ValueError,match="strictly positive density"):
         physical_velocity(q,grid,1.0)
+
+class _CanonicalToyFlowTask:
+    """Small deterministic two-evaluation Heun sampler for hook regression."""
+
+    def sample_standardized(
+        self, model, batch, *, steps, method, solver, sampling_eps,
+        final_denoise, sampling_seed, sampling_keys,
+    ):
+        assert (method, solver, sampling_eps, final_denoise) == (
+            "flow_ode", "heun", 0.0, False,
+        )
+        assert sampling_keys == ("matched-latent",)
+        state = torch.randn(
+            batch.inputs.shape,
+            generator=torch.Generator().manual_seed(sampling_seed),
+        )
+        dt = 1.0 / steps
+        for _ in range(steps):
+            k1 = model(state, conditioning=None)
+            k2 = model(state + dt * k1, conditioning=None)
+            state = state + 0.5 * dt * (k1 + k2)
+        return state
+
+
+class _ToyVelocityModel(torch.nn.Module):
+    def forward(self, state, *, conditioning):
+        return -0.08 * state + 0.02
+
+
+def test_trajectory_observes_canonical_heun_without_resampling():
+    grid = _grid(8)
+    batch = SimpleNamespace(num_graphs=1, inputs=torch.zeros((9**3, 5)))
+    model = _ToyVelocityModel()
+    task = _CanonicalToyFlowTask()
+    state, report = heun_trajectory(
+        task, model, batch, steps=50, seed=23,
+        key="matched-latent", grid=grid, k_bins=4,
+    )
+    canonical = task.sample_standardized(
+        model, batch, steps=50, method="flow_ode", solver="heun",
+        sampling_eps=0.0, final_denoise=False,
+        sampling_seed=23, sampling_keys=("matched-latent",),
+    )
+    assert torch.equal(state, canonical)
+    assert report["observed_model_calls"] == 100
+    assert report["sampler"].startswith("FlowMatchingTask")
+    assert [entry["step"] for entry in report["observations"]] == [0, 10, 20, 30, 40, 50]
+    assert [entry["flow_time"] for entry in report["observations"]] == pytest.approx(
+        [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    )
+    assert len(model._forward_pre_hooks) == 0
+
+
+def test_trajectory_removes_hook_after_sampler_exception():
+    class FailingTask:
+        def sample_standardized(self, model, batch, **kwargs):
+            model(batch.inputs, conditioning=None)
+            raise RuntimeError("expected injected failure")
+
+    grid = _grid(8)
+    model = _ToyVelocityModel()
+    batch = SimpleNamespace(num_graphs=1, inputs=torch.zeros((9**3, 5)))
+    with pytest.raises(RuntimeError, match="injected failure"):
+        heun_trajectory(
+            FailingTask(), model, batch, steps=50, seed=23,
+            key="matched-latent", grid=grid, k_bins=4,
+        )
+    assert len(model._forward_pre_hooks) == 0
