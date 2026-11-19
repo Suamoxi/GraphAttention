@@ -560,3 +560,27 @@ audit.pt to reproduce exact parameter-level discrepancies.
 Do not extrapolate a two-graph test into arbitrary variable-degree
 unstructured-mesh scaling or change scientific training defaults
 without checking task-1 results and physical normalization choices.
+
+### 511548 sequential-CUDA diagnostic (preflight, not an experimental result)
+
+Slurm 511548 at e567477 stopped during the small-graph preflight:
+9 passed, 2 failed, 1 skipped. Both original CSR and Triton CSR
+packed/segmented forward parity was exact. The separately executed
+CUDA sequential reference differed in forward by at most 5.29345e-5
+and in loss by 3.45707e-6. Several first-step AdamW update differences
+were accurately explained by the first-step gradient formula (residual
+below 3e-8), and the remaining strict preflight failure was a
+sequential CUDA parameter-gradient discrepancy for
+final_layer.projection.weight. The job DID NOT reach real-HDF5 timings.
+
+The experimental preflight was revised to keep strict packed-vs-
+segmented CPU/CUDA gradient/update gates but to DIAGNOSE per-parameter
+sequential CUDA gradient discrepancies rather than suppress a real
+multi-graph experiment based on a tiny CUDA execution-shape test.
+It logs max-absolute/rms deltas and counts mismatches using the exact
+real-HDF5 audit tolerances. The complete REAL data-path test still
+compares every gradient and every post-AdamW parameter to the
+sequential reference, and marks the experiment failed_or_review_required
+if numerical gates are violated. An additional direct packed-index-vs-
+segmented full-parameter audit is always recorded separately on success.
+No scientific trainer/default optimizer changes were made.
