@@ -1,7 +1,9 @@
 # M47.6 - Spatial-physics and Flow Matching trajectory diagnostics
 
-**Status:** Implemented in main. Local NumPy synthetic tests passed. Full
-repository tests and GPU sampling still require Calypso execution.
+**Status:** M47.6 v2 implements canonical-sampler hooks after all three v1
+jobs failed strict comparison between independently executed sparse CUDA
+trajectories. The original 24 v1 preflight unit tests passed on Calypso.
+The new hook tests and complete GPU run remain unverified.
 
 M47.5 showed that the conditioned models learn regime-dependent total-energy
 means, but all models have dilatational FFT fractions near one-third,
@@ -58,8 +60,12 @@ On one fixed Gaussian latent in Re54/Ma0.2, instrument the existing
 are noisy standardized model variables: report standardized momentum
 spectra and interior lag-one correlation, not physical velocity.
 
-Verify final-state numerical parity with the original canonical sampler
-using atol=rtol=1e-6. A failure aborts the experiment.
+Capture trajectory states via a read-only root-module forward pre-hook on
+the **original canonical sampler**. This avoids a second Heun integration
+and the invalid bitwise parity requirement for separate CUDA runs. Check
+that exactly 100 model forwards were observed (two per Heun step).
+The new hook tests verify that states are captured at the correct steps
+and that the hook is removed after successful or failed sampling.
 
 ### 4. Heun step convergence
 
@@ -98,7 +104,8 @@ Optional environment overrides:
 - M47_6_SEED, M47_4_OUT_ROOT, M47_CONDITION_REFS,
   M47_ARCHIVE_ROOT, M47_REPO, M47_IMAGE, M47_PYTHON.
 
-The job runs these four CPU test suites in Singularity before GPU sampling:
+The job runs these four CPU test suites in Singularity before GPU sampling
+(including two new canonical-hook unit tests):
 
 - tests/unit/test_m47_6_spatial_metrics.py
 - tests/unit/test_m47_5_regime_diagnostics.py
@@ -109,15 +116,16 @@ Local NumPy-only tests passed for exactly solenoidal and dilatational
 analytic fields, a boundary-only defect, and nonphysical intermediate
 standardized states. They do not establish full GPU correctness.
 
-Existing output folders cannot be overwritten. Use a new M47_6_OUT_ROOT
-to rerun a failed or completed experiment.
+The revised Slurm default writes to m47_6_spatial_physics_v2, preserving
+all partial v1 results. Existing output folders cannot be overwritten.
+Use a new M47_6_OUT_ROOT for any subsequent rerun.
 
 ## Mandatory artifacts for analysis
 
 For each none, mach and mach_re run, upload all six JSON files:
 
 ~~~text
-/scratch/coop/theret/GraphAttention_runs/m47_6_spatial_physics/
+/scratch/coop/theret/GraphAttention_runs/m47_6_spatial_physics_v2/
   <mode>/epoch10_h50_h100_n4_seed20261116/
     summary.json
     case_Re54_Ma0.05_divcurl.json
