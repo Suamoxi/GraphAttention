@@ -1,0 +1,191 @@
+"""Ablation gates: packed segmented conditioning vs native index and accumulation."""
+from __future__ import annotations
+
+import copy
+
+import pytest
+import torch
+
+from graph_attention.models.dinat_dit import AlternatingDilatedGeometricDiT
+from graph_attention.models.dit_common import _broadcast_graph_features
+
+
+@pytest.mark.parametrize("sizes", ((3, 7), (1, 2, 5), (9,)))
+@pytest.mark.parametrize("device_name", ("cpu", "cuda"))
+def test_segmented_broadcast_value_and_conditioning_gradient_parity(sizes, device_name):
+    if device_name == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable")
+    device = torch.device(device_name)
+    torch.manual_seed(67)
+    a = torch.randn(len(sizes), 13, device=device, requires_grad=True)
+    b = a.detach().clone().requires_grad_(True)
+    index = torch.repeat_interleave(
+        torch.arange(len(sizes), device=device), torch.tensor(sizes, device=device),
+    )
+    expected = _broadcast_graph_features(a, batch_index=index, num_nodes=sum(sizes))
+    actual = _broadcast_graph_features(
+        b, batch_index=index, num_nodes=sum(sizes), graph_sizes=sizes,
+    )
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+    upstream = torch.randn_like(actual)
+    (expected * upstream).sum().backward()
+    (actual * upstream).sum().backward()
+    torch.testing.assert_close(b.grad, a.grad, atol=2e-5, rtol=2e-5)
+
+
+def test_segmented_broadcast_rejects_invalid_segment_lengths():
+    x = torch.ones(2, 4)
+    index = torch.tensor([0, 0, 1, 1, 1])
+    for sizes in ((2, 2), (2, 0, 3), (2.0, 3), (5,)):
+        with pytest.raises(ValueError, match="graph_sizes"):
+            _broadcast_graph_features(
+                x, batch_index=index, num_nodes=5, graph_sizes=sizes,
+            )
+
+
+def _graph_parts(device):
+    # Unequal graph sizes and deliberately distinct coordinate frames.
+    coords_a = torch.tensor([
+        [0., 0.], [1., 0.], [1., 1.], [0., 1.],
+    ], device=device)
+    coords_b = torch.tensor([
+        [10., -3.], [11., -3.], [11., -2.],
+        [10., -2.], [10.5, -1.],
+    ], device=device)
+
+    def ring(n, jump):
+        src = torch.arange(n, device=device)
+        dst = (src + jump) % n
+        return torch.stack((torch.cat((src, dst)), torch.cat((dst, src))), dim=0)
+
+    local_a, local_b = ring(4, 1), ring(5, 1)
+    dilated_a, dilated_b = ring(4, 2), ring(5, 2)
+    local = torch.cat((local_a, local_b + 4), dim=1)
+    dilated = torch.cat((dilated_a, dilated_b + 4), dim=1)
+    return (coords_a, coords_b), (local_a, local_b, local), (
+        dilated_a, dilated_b, dilated
+    )
+
+
+@pytest.mark.parametrize("device_name", ("cpu", "cuda"))
+@pytest.mark.parametrize("backend", ("torch_sparse", "torch_sparse_triton"))
+def test_checkpointed_m37_equal_graph_loss_forward_grads_and_adamw_update(
+    device_name, backend,
+):
+    if device_name == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA unavailable")
+    if backend == "torch_sparse_triton" and device_name == "cpu":
+        pytest.skip("Triton CSR requires CUDA")
+    device = torch.device(device_name)
+    torch.manual_seed(115)
+    reference = AlternatingDilatedGeometricDiT(
+        in_channels=3, out_channels=3, hidden_dim=16,
+        num_heads=2, num_layers=2, spatial_dim=2,
+        mlp_ratio=2, conditioning_channels=2,
+        condition_embed_dim=8,
+        sparse_attention_backend=backend,
+        activation_checkpointing=True, dropout=0.0,
+    ).to(device).train()
+    # Prevent adaLN-Zero from hiding intermediate gradient differences.
+    with torch.no_grad():
+        reference.final_layer.projection.weight.normal_(std=0.05)
+        for block in reference.blocks:
+            block.adaLN_modulation[-1].weight.normal_(std=0.05)
+            block.adaLN_modulation[-1].bias.normal_(std=0.05)
+
+    sizes = (4, 5)
+    coords, local, dilated = _graph_parts(device)
+    batch_index = torch.repeat_interleave(
+        torch.arange(2, device=device), torch.tensor(sizes, device=device),
+    )
+    x = torch.randn(9, 3, device=device)
+    cond = torch.randn(2, 2, device=device)
+    target = torch.randn(9, 3, device=device)
+    reference_params = dict(reference.named_parameters())
+
+    def evaluate(mode):
+        model = copy.deepcopy(reference)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+        in_x = x.detach().clone().requires_grad_(True)
+        in_cond = cond.detach().clone().requires_grad_(True)
+        optimizer.zero_grad(set_to_none=True)
+        if mode == "sequential":
+            preds = []
+            losses = []
+            start = 0
+            for i, count in enumerate(sizes):
+                stop = start + count
+                output = model(
+                    in_x[start:stop],
+                    edge_index=local[i], coords=coords[i],
+                    batch_index=None, conditioning=in_cond[i:i+1],
+                    attention_edge_indices={"dilated": dilated[i]},
+                )
+                losses.append((output - target[start:stop]).square().mean())
+                preds.append(output.detach())
+                (losses[-1] / len(sizes)).backward()
+                start = stop
+            output = torch.cat(preds)
+            loss = sum(value.detach() for value in losses) / len(sizes)
+        else:
+            output = model(
+                in_x, edge_index=local[2],
+                coords=torch.cat(coords), batch_index=batch_index,
+                conditioning=in_cond, attention_edge_indices={"dilated": dilated[2]},
+                graph_sizes=sizes if mode == "segmented" else None,
+            )
+            # The scientific task weights physical graphs equally, not nodes.
+            loss = (
+                (output[:sizes[0]] - target[:sizes[0]]).square().mean()
+                + (output[sizes[0]:] - target[sizes[0]:]).square().mean()
+            ) / len(sizes)
+            loss.backward()
+        grads = {
+            name: p.grad.detach().clone() if p.grad is not None else None
+            for name, p in model.named_parameters()
+        }
+        xgrad = in_x.grad.detach().clone()
+        cgrad = in_cond.grad.detach().clone()
+        optimizer.step()
+        deltas = {
+            name: (p - reference_params[name]).detach().clone()
+            for name, p in model.named_parameters()
+        }
+        return output.detach(), loss.detach(), grads, xgrad, cgrad, deltas
+
+    original = evaluate("packed")
+    for mode in ("segmented", "sequential"):
+        actual = evaluate(mode)
+        for x0, x1 in zip(original[:2], actual[:2]):
+            torch.testing.assert_close(x1, x0, atol=3e-5, rtol=3e-5)
+        for x0, x1 in zip(original[3:5], actual[3:5]):
+            torch.testing.assert_close(x1, x0, atol=1e-4, rtol=1e-3)
+        for key in original[2]:
+            assert (original[2][key] is None) == (actual[2][key] is None)
+            if original[2][key] is not None:
+                torch.testing.assert_close(
+                    actual[2][key], original[2][key],
+                    atol=1e-4, rtol=1e-3, msg=f"{mode} gradient {key}",
+                )
+            torch.testing.assert_close(
+                actual[5][key], original[5][key],
+                atol=1e-5, rtol=1e-4, msg=f"{mode} update {key}",
+            )
+
+
+def test_m37_segmented_forward_rejects_mismatched_packed_lengths():
+    model = AlternatingDilatedGeometricDiT(
+        in_channels=3, out_channels=3, hidden_dim=8,
+        num_heads=2, num_layers=2, spatial_dim=2,
+        conditioning_channels=1, condition_embed_dim=8,
+        sparse_attention_backend="torch_sparse",
+    )
+    coords, local, dilated = _graph_parts(torch.device("cpu"))
+    kwargs = dict(
+        edge_index=local[2], coords=torch.cat(coords),
+        batch_index=torch.tensor([0]*4 + [1]*5),
+        conditioning=torch.ones(2, 1),
+        attention_edge_indices={"dilated": dilated[2]},
+    )
+    with pytest.raises(ValueError, match="graph_sizes"):
+        model(torch.ones(9, 3), graph_sizes=(5, 4), **kwargs)
