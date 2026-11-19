@@ -35,9 +35,10 @@ def physical_velocity(state: np.ndarray, grid: Any, u_ref: float) -> np.ndarray:
         raise ValueError("expected five conservative channels per source node")
     if not (np.isfinite(q).all() and np.isfinite(u_ref) and u_ref > 0):
         raise ValueError("nonfinite field or invalid velocity scale")
-    if np.any(q[:, 0] <= 0):
+    unique = scatter_unique(q, grid)
+    if np.any(unique[..., 0] <= 0):
         raise ValueError("strictly positive density required for velocity")
-    return scatter_unique(u_ref * q[:, 1:4] / q[:, 0:1], grid)
+    return u_ref * unique[..., 1:4] / unique[..., 0:1]
 
 
 def interior_divcurl(
