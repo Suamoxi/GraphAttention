@@ -110,6 +110,57 @@ def verify_packed_graph(geometry, fine_batch, coarse_batch) -> None:
             raise RuntimeError(f"{name}: cross-sample edge")
 
 
+def summarize_teacher_grids(records: list[dict]) -> dict[int, dict]:
+    """Validate every teacher's geometry; choose one period *per GPU grid*.
+
+    Distinct CFD cases with the same node count may have different physical
+    box lengths. This GPU-only benchmark reuses a representative exact graph
+    topology, never packs patches from those different physical cases.
+    """
+    grids: dict[int, dict] = {}
+    for record in records:
+        nf, nc = tuple(record["target_shape"]), tuple(record["input_shape"])
+        if not (len(nf) == len(nc) == 3 and len(set(nf)) == len(set(nc)) == 1
+                and nf[0] == 2 * nc[0] and nf[0] in (48, 80)):
+            raise RuntimeError("unexpected q8->q4 teacher grid dimensions")
+        if len(record["fine_spacing"]) != 3 or len(record["coarse_spacing"]) != 3:
+            raise RuntimeError("teacher source has invalid 3D spacing metadata")
+        length = float(record["fine_spacing"][0]) * nf[0]
+        lengths = [float(x) * z for x, z in zip(record["fine_spacing"], nf)]
+        lengths += [float(x) * z for x, z in zip(record["coarse_spacing"], nc)]
+        if not math.isfinite(length) or length <= 0 or not all(
+            math.isfinite(x) and math.isclose(x, length, rel_tol=1e-7, abs_tol=1e-12)
+            for x in lengths
+        ):
+            raise RuntimeError("teacher source has inconsistent physical periodic lengths")
+        grid = grids.setdefault(nf[0], {
+            "fine_side": nf[0], "coarse_side": nc[0],
+            "periodic_length": length,
+            "representative_teacher_case": record["case"],
+            "representative_snapshot_id": str(record["snapshot_id"]),
+            "periodic_length_min": length, "periodic_length_max": length,
+            "teacher_snapshots": 0, "case_periodic_lengths": {},
+        })
+        if grid["coarse_side"] != nc[0]:
+            raise RuntimeError("inconsistent refinement within teacher grid family")
+        grid["teacher_snapshots"] += 1
+        grid["periodic_length_min"] = min(grid["periodic_length_min"], length)
+        grid["periodic_length_max"] = max(grid["periodic_length_max"], length)
+        grid["case_periodic_lengths"].setdefault(record["case"], []).append(length)
+    if sorted(grids) != [48, 80]:
+        raise RuntimeError("expected exactly the two M48 audited teacher grid families")
+    for grid in grids.values():
+        grid["teacher_case_count"] = len(grid["case_periodic_lengths"])
+        unique_lengths = []
+        for case_lengths in grid["case_periodic_lengths"].values():
+            for length in case_lengths:
+                if not any(math.isclose(length, x, rel_tol=1e-7, abs_tol=1e-12)
+                           for x in unique_lengths):
+                    unique_lengths.append(length)
+        grid["distinct_periodic_lengths"] = sorted(unique_lengths)
+    return grids
+
+
 def authentic_teacher_grids(ms_sr_root: Path, normalization_file: Path) -> tuple[dict, dict]:
     """Read authenticated teacher *metadata*, never source or test fields."""
     from graph_attention.data.ms_sr_training import select_role_records
@@ -129,28 +180,7 @@ def authentic_teacher_grids(ms_sr_root: Path, normalization_file: Path) -> tuple
         raise RuntimeError("not all 44 authenticated teacher records are selected")
     if seal != frozen["selection_sha256"]:
         raise RuntimeError("frozen normalization teacher selection hash mismatch")
-    grids = {}
-    for record in records:
-        nf, nc = tuple(record["target_shape"]), tuple(record["input_shape"])
-        if not (len(nf) == len(nc) == 3 and len(set(nf)) == len(set(nc)) == 1
-                and nf[0] == 2 * nc[0] and nf[0] in (48, 80)):
-            raise RuntimeError("unexpected q8->q4 teacher grid dimensions")
-        length = float(record["fine_spacing"][0]) * nf[0]
-        lengths = [float(x) * z for x, z in zip(record["fine_spacing"], nf)]
-        lengths += [float(x) * z for x, z in zip(record["coarse_spacing"], nc)]
-        if not math.isfinite(length) or length <= 0 or not all(
-            math.isclose(x, length, rel_tol=1e-7, abs_tol=1e-12) for x in lengths
-        ):
-            raise RuntimeError("teacher source has inconsistent physical periodic lengths")
-        existing = grids.get(nf[0])
-        if existing and not math.isclose(existing["periodic_length"], length, rel_tol=1e-7):
-            raise RuntimeError("different periodic lengths at same teacher resolution")
-        if not existing:
-            grids[nf[0]] = {"fine_side": nf[0], "coarse_side": nc[0],
-                            "periodic_length": length,
-                            "representative_teacher_case": record["case"]}
-    if sorted(grids) != [48, 80]:
-        raise RuntimeError("expected exactly the two M48 audited teacher grid families")
+    grids = summarize_teacher_grids(records)
     return grids, {"manifest_sha256": actual_manifest, "selection_sha256": seal,
                    "normalization_sha256": sha256_file(normalization_file),
                    "teacher_snapshots": 44, "teacher_cases": 22,
@@ -574,6 +604,8 @@ def run_sweep(args) -> dict:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--metadata-only", action="store_true",
+                        help="Verify teacher geometry without requesting CUDA or writing output")
     parser.add_argument("--mode", required=True, choices=("static", "dynamic"))
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--ms-sr-root", type=Path, default=Path("/scratch/ai/MS_SR"))
@@ -600,6 +632,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--core-side", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--microbatch", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+    if args.metadata_only:
+        if args.worker:
+            parser.error("--worker and --metadata-only are mutually exclusive")
+        grids, provenance = authentic_teacher_grids(args.ms_sr_root, args.normalization_file)
+        print(json.dumps({"schema": "graph_attention.m48_4e_teacher_geometry.v1",
+                          "status": "PASS", "grids": grids, "provenance": provenance},
+                         indent=2), flush=True)
+        return
     if args.worker:
         if (args.geometry_cache is None or args.worker_output is None
                 or args.fine_side is None or args.core_side is None or args.microbatch is None):

@@ -149,6 +149,109 @@ def test_authentication_rejects_mismatched_teacher_selection(tmp_path, monkeypat
         bench.authentic_teacher_grids(tmp_path, frozen)
 
 
+def _valid_teacher_records_with_variable_lengths():
+    records = []
+    for side, group in ((48, "ReT060"), (80, "ReT100")):
+        for case_index in range(11):
+            # Same grid topology; physically different periodic box lengths.
+            length = (1 + 0.1 * case_index) * (0.001 if side == 48 else 0.002)
+            for snapshot in (5, 6):
+                records.append({
+                    "case": f"{group}/Mt{case_index:02d}_Xi0.0",
+                    "snapshot_id": snapshot,
+                    "target_shape": [side] * 3,
+                    "input_shape": [side // 2] * 3,
+                    "fine_spacing": [length / side] * 3,
+                    "coarse_spacing": [length / (side // 2)] * 3,
+                })
+    return records
+
+
+def test_valid_teacher_metadata_accepts_distinct_periods_for_equal_resolution():
+    grids = bench.summarize_teacher_grids(_valid_teacher_records_with_variable_lengths())
+    assert sorted(grids) == [48, 80]
+    for side in (48, 80):
+        grid = grids[side]
+        assert grid["teacher_snapshots"] == 22
+        assert grid["teacher_case_count"] == 11
+        assert len(grid["distinct_periodic_lengths"]) == 11
+        assert grid["periodic_length_min"] < grid["periodic_length_max"]
+        assert grid["periodic_length"] == grid["periodic_length_min"]
+        assert grid["representative_teacher_case"].startswith("ReT")
+        assert len(grid["case_periodic_lengths"]) == 11
+        assert all(len(lengths) == 2 for lengths in grid["case_periodic_lengths"].values())
+
+
+def test_representative_length_is_authenticated_case_not_grid_minimum():
+    records = _valid_teacher_records_with_variable_lengths()
+    # Deliberately put a longer ReT060 case first: the benchmark should
+    # retain its actual period, not silently reinterpret it as grid minimum.
+    index = next(i for i, rec in enumerate(records)
+                 if rec["case"] == "ReT060/Mt10_Xi0.0")
+    record = records.pop(index)
+    records.insert(0, record)
+    grids = bench.summarize_teacher_grids(records)
+    assert grids[48]["periodic_length"] > grids[48]["periodic_length_min"]
+    assert grids[48]["representative_teacher_case"] == record["case"]
+    assert grids[48]["teacher_snapshots"] == 22
+
+
+@pytest.mark.parametrize("tamper", ("fine_axis", "coarse_axis", "negative", "nonfinite", "shape"))
+def test_each_teacher_still_requires_consistent_physical_geometry(tamper):
+    records = _valid_teacher_records_with_variable_lengths()
+    record = records[-1]
+    if tamper == "fine_axis":
+        record["fine_spacing"][1] *= 1.1
+    elif tamper == "coarse_axis":
+        record["coarse_spacing"][2] *= 1.1
+    elif tamper == "negative":
+        record["fine_spacing"] = [-1.] * 3
+    elif tamper == "nonfinite":
+        record["coarse_spacing"][0] = float("nan")
+    else:
+        record["input_shape"][0] += 1
+    with pytest.raises(RuntimeError, match="(periodic lengths|grid dimensions)"):
+        bench.summarize_teacher_grids(records)
+
+
+def test_authenticated_metadata_accepts_variable_periods_and_checks_seal(
+    tmp_path, monkeypatch,
+):
+    manifest = tmp_path / "dataset" / "manifest.json"
+    manifest.parent.mkdir()
+    manifest.write_bytes(b"sealed variable-length teacher fixture")
+    sha = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    frozen = tmp_path / "frozen.json"
+    frozen.write_text(json.dumps({"manifest_sha256": sha, "source_count": 44,
+                                  "selection_sha256": "teacher-seal"}))
+    source = ModuleType("graph_attention.data.ms_sr_training")
+    adapter = ModuleType("graph_attention.data.ms_sr_adapter")
+    adapter.MANIFEST_SHA256 = sha
+    source.select_role_records = lambda *a, **kw: (
+        _valid_teacher_records_with_variable_lengths(), "teacher-seal")
+    for key in ("graph_attention", "graph_attention.data"):
+        if key not in sys.modules:
+            monkeypatch.setitem(sys.modules, key, ModuleType(key))
+    monkeypatch.setitem(sys.modules, "graph_attention.data.ms_sr_training", source)
+    monkeypatch.setitem(sys.modules, "graph_attention.data.ms_sr_adapter", adapter)
+    grids, receipt = bench.authentic_teacher_grids(tmp_path, frozen)
+    assert {side: g["teacher_snapshots"] for side, g in grids.items()} == {48: 22, 80: 22}
+    assert receipt["teacher_snapshots"] == 44
+    assert receipt["teacher_field_payloads_read"] is False
+    assert receipt["selection_sha256"] == "teacher-seal"
+
+
+def test_metadata_only_cli_needs_no_cuda_or_output_directory(monkeypatch, capsys):
+    monkeypatch.setattr(bench, "authentic_teacher_grids", lambda *_args: (
+        {48: {"fine_side": 48, "periodic_length": 0.001}},
+        {"teacher_snapshots": 44, "teacher_field_payloads_read": False}))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    bench.main(["--mode", "static", "--metadata-only"])
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "PASS"
+    assert receipt["grids"]["48"]["periodic_length"] == 0.001
+
+
 def test_real_m48_packer_equivalence_when_repo_available():
     pytest.importorskip("graph_attention.geometry.two_scale_targeted")
     from graph_attention.geometry.two_scale_targeted import build_targeted_two_scale_patch

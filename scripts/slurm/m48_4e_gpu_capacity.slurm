@@ -61,6 +61,12 @@ singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -m pytest -q \
     tests/unit/test_m48_4e_gpu_capacity.py tests/unit/test_m48_ms_sr.py
 
+echo "=== Fail-closed 44-teacher metadata preflight (no CUDA trial) ==="
+singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
+    "$PYTHON" -m scripts.m48_4e_gpu_capacity \
+    --ms-sr-root "$ROOT" --normalization-file "$NORMALIZATION" \
+    --mode "$MODE" --metadata-only
+
 echo "=== Isolated GPU capacity sweep ==="
 singularity exec --nv -B /home -B /scratch -B /archivenfs:/archivenfs "$IMAGE" \
     "$PYTHON" -u -m scripts.m48_4e_gpu_capacity \

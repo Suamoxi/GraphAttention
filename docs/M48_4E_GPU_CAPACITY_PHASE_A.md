@@ -1,6 +1,6 @@
 # M48.4e Phase A — GPU-only exact-halo TwoScaleDiNAT capacity benchmark
 
-**Status: code and CPU regressions qualified; Calypso GPU benchmark pending.**
+**Status: GPU benchmark pending; 511469/511470 were blocked by an overly restrictive metadata assumption, now corrected pending rerun.**
 Do not infer the GPU-optimal batch size until a Grace run has been inspected.
 This is a capacity benchmark, not a training experiment, a new dataset, or a
 scientific model-quality evaluation.
@@ -132,3 +132,45 @@ patch, realistic spatial origin sampling, CPU producer/prefetch queue, full
 pipeline throughput, and a controlled optimizer batch-size/learning-rate
 study. **Do not** treat the Phase-A fastest GPU graph batch as automatically
 optimal for physical convergence or generative-field statistics.
+
+## M48.4e correction after jobs 511469 and 511470
+
+Both jobs passed their original CPU tests but failed in
+`authentic_teacher_grids()` before the GPU sweep: teacher cases with the same
+node grid have **different physical periodic lengths**. The previous benchmark
+incorrectly required one universal physical length for each grid side.
+
+The corrected metadata gate now validates every source's *own* fine/coarse
+spacing and physical box, while allowing different physical domain lengths in
+one 48^3 or 80^3 family. It preserves the first authenticated teacher record
+as the **representative geometry for GPU-only timing**, and records min/max
+lengths, all case-specific lengths and distinct length values in
+`authenticated_grid_geometry` in `summary.json`. No across-case physical
+training batches are created; the benchmark continues to pack replicas of
+one physical geometry. The representative period is not asserted to be a
+universal physical scale. Physical-size/coordinate generalization remains a
+separate scientific question.
+
+The launcher runs the metadata-only preflight *before* any CUDA worker.
+To run it separately from the sweep (with a compatible Python environment and
+`PYTHONPATH` including `GraphAttention/src`, the repo root and `MS_SR/code`):
+
+```bash
+python -m scripts.m48_4e_gpu_capacity --mode static --metadata-only \
+  --ms-sr-root /scratch/ai/MS_SR \
+  --normalization-file configs/m48/teacher_44_w1p25_l1_q4_q8.json
+```
+
+A small first GPU qualification after metadata and unit tests (use a
+fresh SLURM job ID for each mode):
+
+```bash
+export M48_DEPTH=2 M48_CORE_SIDES=12 M48_GPU_BATCHES=1,2
+export M48_WARMUP=1 M48_MEASURE=2
+M48_MODE=static sbatch --export=ALL scripts/slurm/m48_4e_gpu_capacity.slurm
+M48_MODE=dynamic sbatch --export=ALL scripts/slurm/m48_4e_gpu_capacity.slurm
+```
+
+For a subsequent depth-aware study, run depth 4 (or 6/8) as a separate job,
+**after** the small pilot qualifies the CUDA path. Do not infer deep-network
+capacity from depth-2 throughput or from only these two sample grid geometries.
