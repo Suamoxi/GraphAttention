@@ -32,7 +32,7 @@ from scripts.m47_6_spatial_metrics import (
 from scripts.train_generative import _load_standardizers
 from scripts.train_m43_b_multires import FIELDS, build_recipe
 
-PROTOCOL = "m47_6_spatial_physics_flow_trajectory_v1"
+PROTOCOL = "m47_6_spatial_physics_flow_trajectory_v2"
 TRIMS = (0, 2, 4, 8)
 TRAJECTORY_TIMES = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
 
@@ -398,6 +398,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             "Hann-window FFT projection is boundary sensitivity only, NOT physical dilatational energy.",
             "Local finite-difference divergence/curl excludes wrap stencils for trims >=2.",
             "Intermediate trajectory observations are standardized momentum, not physical states.",
+            "Recorded using read-only forward hooks on the canonical sampler; no second integration is compared.",
             "No model weights, graph connectivity, training or data normalization changed.",
         ],
     }
