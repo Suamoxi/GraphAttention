@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import gc
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -212,6 +213,20 @@ def one_case_probe(
                 batch_host.attention_edge_indices["dilated"].shape[1]
             ),
             "input_channels": list(batch_host.input_channels),
+            # Exact CPU byte fingerprints confirm both paired jobs use the
+            # same real connectivity, coordinates, and input snapshot.
+            "one_hop_sha256": hashlib.sha256(
+                batch_host.edge_index.contiguous().numpy().tobytes()
+            ).hexdigest(),
+            "two_hop_sha256": hashlib.sha256(
+                batch_host.attention_edge_indices["dilated"].contiguous().numpy().tobytes()
+            ).hexdigest(),
+            "coords_sha256": hashlib.sha256(
+                batch_host.coords.contiguous().numpy().tobytes()
+            ).hexdigest(),
+            "state_sha256": hashlib.sha256(
+                batch_host.inputs.contiguous().numpy().tobytes()
+            ).hexdigest(),
         }
         del sample, collator
         gc.collect()
@@ -243,6 +258,10 @@ def one_case_probe(
         report["wall_seconds"][stage] = time.perf_counter() - t0
         report["model_parameters"] = int(sum(p.numel() for p in model.parameters()))
         report["initialization"] = init
+        state_digest = hashlib.sha256()
+        for parameter in model.parameters():
+            state_digest.update(parameter.detach().cpu().contiguous().numpy().tobytes())
+        report["initial_weights_sha256"] = state_digest.hexdigest()
         del probe
         write_report(output, report)
 
