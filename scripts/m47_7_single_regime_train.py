@@ -123,8 +123,7 @@ def run(args: argparse.Namespace) -> dict:
         raise ValueError("controlled training stages are 10 or 30 epochs")
     if args.seed != 42 or args.lr != 1e-4:
         raise ValueError("M47.7B freezes model seed=42 and learning rate=1e-4")
-    if args.resume and args.max_epochs != 30:
-        raise ValueError("only epoch10 -> epoch30 continuation is supported")
+    # Resuming an interrupted stage10 or stage30 must be possible on Slurm.
     if args.resume != args.output_dir.exists():
         raise ValueError("fresh run needs new output; resume requires existing output")
 
@@ -211,8 +210,12 @@ def run(args: argparse.Namespace) -> dict:
         start_epoch = int(saved["epoch"]) + 1
         history = list(saved["history"])
         best = float(saved["best_validation_velocity_mse"])
-        if start_epoch != 10 or not (args.output_dir / "epoch10.pt").is_file():
-            raise ValueError("M47.7B resume requires completed epoch10, no extra epochs")
+        if not 0 < start_epoch < args.max_epochs:
+            raise ValueError("resume checkpoint is not an unfinished requested stage")
+        if args.max_epochs == 30 and (
+            start_epoch < 10 or not (args.output_dir / "epoch10.pt").is_file()
+        ):
+            raise ValueError("epoch30 stage requires a completed epoch10 snapshot")
     torch.cuda.reset_peak_memory_stats(device)
 
     for epoch in range(start_epoch, args.max_epochs):
