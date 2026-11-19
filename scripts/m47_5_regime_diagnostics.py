@@ -513,7 +513,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         "caveats": [
             "Re54 is a case family; actual Ma_ref and log_Re_ref are read from audited YAML.",
             "Conditioning interventions retain anchor geometry/scales; they are not physical generalization tests.",
-            "Three Mach cases are in the original training population; this is interpolation of observed regimes, not unseen-regime generalization.",
+            "All three Re54 Mach regimes were included during training; this is in-distribution evaluation, not generalization to unseen regimes.",
             "FFT diagnostics discard stored maximum-coordinate planes; duplicate endpoint discontinuities are reported separately.",
             "The original model did not receive periodic SOLUTBOUND edges during training.",
             "No training, physical scales, checkpoint tensors or graph connectivity were changed.",
