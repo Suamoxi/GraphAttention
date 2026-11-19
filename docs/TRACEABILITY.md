@@ -1609,3 +1609,18 @@ No training was started. Documented in
 
 No model, CEDAR projection, physical training data, or normalization was changed.
 Full method and launch contract: `docs/M48_4E_A1_DEPTH_HALO_GEOMETRY.md`.
+
+
+## M48.4e A2 — Matched full-field versus exact-halo complete tiling (2026-11-19)
+
+| Scope | Implementation | Status / gate |
+|---|---|---|
+| Exact global two-scale graph | scripts/m48_4e_a2_full_vs_tiled.py full_geometry reuses the production builder with all fine nodes owned (zero closure) | Full periodic graph support/cardinality checks |
+| Complete periodic owned tiling | tile_origins and verify_ownership | Only exact divisors; every fine global ID owned exactly once |
+| Identical model/inputs/loss/optimizer | make_global_inputs and gpu_step | One global FM time and deterministic synthetic field; same depth/weights; global loss; one gradient clipping and AdamW |
+| Prediction and gradient parity | compare_verification | First pre-update output+gradient gate required before comparing speed; numerical mismatch is PARITY_FAILED |
+| Memory and throughput | Isolated workers, scripts/slurm/m48_4e_a2_full_vs_tiled.slurm | GPU wall/CUDA times, allocated/reserved memory, CPU graph build and H2D separately |
+| Frozen teacher provenance | authentic_teacher_grids | Metadata-only 44 teacher selection; no DNS fields or CEDAR |
+| Regression tests | tests/unit/test_m48_4e_a2_full_vs_tiled.py | 6 local controls passed, 2 full-repo numerical CPU tests skipped locally, GPU Calypso evidence pending |
+
+Measured computational comparison under a shared synthetic global FM process; not a convergence result or production independent-patch FM data-loader benchmark. See docs/M48_4E_A2_FULL_VS_TILED.md.

@@ -600,3 +600,29 @@ Report explicit fine/coarse node and edge counts, read-to-owned ratio,
 read fractions and layer-weighted **structural work proxies**. Idealized
 full-coverage ratios do not constitute measured GPU execution speed or
 training convergence. See `docs/M48_4E_A1_DEPTH_HALO_GEOMETRY.md`.
+
+
+## M48.4e A2 — Equal-loss-coverage full vs exact-halo tiled GPU execution (2026-11-19)
+
+A2 compares identical static/dynamic TwoScaleDiNAT initialization, synthetic
+float32 global fine state, baseline, coarse condition, target and FM time.
+For N=n^3 global fine nodes and an exact nonoverlapping owned partition:
+
+    L_full = mean_{N nodes, five channels} (v - target)^2
+    L_tiled = sum_tiles (owned_tile_nodes / N) *
+              mean_{owned_tile_nodes, five channels} (v - target)^2
+
+Pre-clipping predictions and parameter gradients must match within documented
+FP32 tolerances. Each strategy then clips the accumulated global gradient once
+and executes a single AdamW update. The production per-patch independent FM
+process and full-domain CEDAR projection are NOT simulated.
+
+The full graph reuses the M48 targeted geometry builder with all fine IDs owned
+and zero closure layers, giving complete fine/coarse/cross supports regardless
+of model depth; depth is set in TwoScaleDiNAT unchanged. The tiled strategy
+uses the original depth-aware exact halo closures and global periodic IDs.
+Synchronized GPU forward/backward/optimizer timing excludes CPU graph build,
+H2D setup, HDF5 and CEDAR; those setup costs are reported separately.
+Measured full speed advantage is t_tiled / t_full, so values >1 favor full.
+OOM and headroom failures remain unqualified, not extrapolated.
+See docs/M48_4E_A2_FULL_VS_TILED.md.
