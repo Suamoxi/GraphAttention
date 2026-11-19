@@ -24,6 +24,61 @@ from scripts.m48_4e_gpu_capacity import (
 )
 
 SCHEMA = "graph_attention.m48_4e_a2_full_vs_tiled.v1"
+ACTIVE_INIT = "nonzero_dit_attention_v1"
+VERIFICATION_STEPS = 2
+
+
+class HostGraphBudgetExceeded(RuntimeError):
+    """Bounded exclusion, not an unexpected worker crash."""
+
+
+def activate_attention_paths(model) -> None:
+    """Make every DiT attention block and final decoder output active.
+
+    The production model is unchanged. Its DiT output head and adaLN gates
+    are zero-initialized, which makes pre-training output parity vacuous.
+    This deterministic *benchmark-only* activation enables full graph
+    dependence without altering the underlying attention implementation.
+    """
+    stages = [model.fine_encoder, model.coarse_encoder, model.fine_decoder]
+    if model.mode == "dynamic":
+        stages.append(model.coarse_dynamic)
+    with torch.no_grad():
+        for stage in stages:
+            for block in stage.blocks:
+                torch.nn.init.normal_(block.adaLN_modulation[-1].weight, std=0.02)
+                torch.nn.init.normal_(block.adaLN_modulation[-1].bias, std=0.02)
+        torch.nn.init.normal_(model.fine_decoder.final_layer.projection.weight, std=0.02)
+        torch.nn.init.zeros_(model.fine_decoder.final_layer.projection.bias)
+
+
+def required_gradient_groups(mode: str) -> tuple[str, ...]:
+    groups = ["fine_encoder.attention", "coarse_encoder.attention",
+              "fine_decoder.attention", "up"]
+    if mode == "dynamic":
+        groups.extend(["coarse_dynamic.attention", "down"])
+    return tuple(groups)
+
+
+def gradient_group_norms(parameters: list[tuple[str, int]],
+                         flat_gradient: torch.Tensor, mode: str) -> dict[str, float]:
+    """Derive active path norms directly from saved parameter-order gradients."""
+    squared = {group: 0.0 for group in required_gradient_groups(mode)}
+    offset = 0
+    for name, count in parameters:
+        gradient = flat_gradient[offset:offset + count]
+        if gradient.numel() != count:
+            raise ValueError("gradient parameter layout mismatch")
+        offset += count
+        group = name.split(".", 1)[0]
+        if ".attention." in name:
+            group += ".attention"
+        if group in squared:
+            squared[group] += float(gradient.to(torch.float64).square().sum())
+    if offset != flat_gradient.numel():
+        raise ValueError("gradient parameter count mismatch")
+    return {name: math.sqrt(total) for name, total in squared.items()}
+
 
 
 def tile_origins(side: int, core: int, max_tiles: int) -> list[tuple[int, int, int]]:
@@ -74,19 +129,60 @@ def full_geometry(side: int, period: float):
 
 
 def make_geometries(side: int, core: int, depth: int, mode: str,
-                    period: float, max_tiles: int, strategy: str):
+                    period: float, max_tiles: int, strategy: str,
+                    *, max_host_graph_bytes: int | None = None):
     from scripts.m48_4e_gpu_capacity import build_geometry
     started = time.perf_counter()
     if strategy == "full":
         geometries = [full_geometry(side, period)]
     elif strategy == "tiled":
-        origins = tile_origins(side, core, max_tiles)
-        geometries = [build_geometry(side, core, depth, mode, period,
-                                     origin=origin)[0] for origin in origins]
+        geometries = []
+        cumulative = 0
+        for origin in tile_origins(side, core, max_tiles):
+            geom, _ = build_geometry(side, core, depth, mode, period, origin=origin)
+            cumulative += graph_tensor_bytes(geom)
+            if max_host_graph_bytes is not None and cumulative > max_host_graph_bytes:
+                raise HostGraphBudgetExceeded(
+                    f"tile geometry exceeds host cap after {len(geometries) + 1} tiles: "
+                    f"{cumulative} > {max_host_graph_bytes} bytes")
+            geometries.append(geom)
         verify_ownership(side, geometries)
     else:
         raise ValueError("strategy must be full or tiled")
+    if (max_host_graph_bytes is not None
+            and sum(graph_tensor_bytes(g) for g in geometries) > max_host_graph_bytes):
+        raise HostGraphBudgetExceeded("full geometry exceeds host cap")
     return geometries, time.perf_counter() - started
+
+
+def validate_48_parity_gate(path: Path | None, *, mode: str, depths: list[int],
+                            width: int, heads: int, provenance: dict,
+                            current_commit: str) -> dict:
+    """Refuse 80^3 comparisons until matching 48^3 active parity passed."""
+    if path is None or not path.is_file():
+        raise ValueError("80^3 requires --parity-gate-summary from a passed active 48^3 run")
+    report = json.loads(path.read_text())
+    requested = report.get("requested", {})
+    checks = report.get("comparisons", [])
+    expected = {(48, d) for d in depths}
+    qualified = {(row.get("fine_side"), row.get("depth")) for row in checks
+                 if row.get("status") == "PASS"
+                 and row.get("parity", {}).get("passed")
+                 and len(row.get("parity", {}).get("steps", [])) == VERIFICATION_STEPS
+                 and all(step.get("active_attention_gradients") and step.get("passed")
+                         for step in row["parity"]["steps"])}
+    valid = (report.get("schema") == SCHEMA and report.get("status") == "PASS"
+             and report.get("active_initialization") == ACTIVE_INIT
+             and report.get("required_verification_steps") == VERIFICATION_STEPS
+             and report.get("source_commit") == current_commit
+             and report.get("provenance") == provenance
+             and requested.get("mode") == mode
+             and requested.get("width") == width and requested.get("heads") == heads
+             and expected <= qualified)
+    if not valid:
+        raise ValueError("48^3 active prediction/gradient parity gate is missing or mismatched")
+    return {"status": "PASS", "source_path": str(path),
+            "source_commit": current_commit, "qualified_depths": sorted(depths)}
 
 
 def compare_arrays(reference: torch.Tensor, candidate: torch.Tensor,
@@ -105,17 +201,56 @@ def compare_arrays(reference: torch.Tensor, candidate: torch.Tensor,
 
 
 def compare_verification(ref_path: Path, tile_path: Path) -> dict:
-    """Numerical equivalence is a required qualification gate."""
+    """Fail-closed active-network parity, including after one AdamW update."""
     full = torch.load(ref_path, map_location="cpu", weights_only=True)
     tiled = torch.load(tile_path, map_location="cpu", weights_only=True)
-    if full["parameters"] != tiled["parameters"] or full["seed"] != tiled["seed"]:
-        raise RuntimeError("different model parameter layouts or synthetic seeds")
-    p = compare_arrays(full["prediction"], tiled["prediction"],
-                       rtol=5e-4, atol=5e-4)
-    g = compare_arrays(full["gradient"], tiled["gradient"],
-                       rtol=1e-2, atol=1e-4)
-    return {"passed": bool(p["passed"] and g["passed"]),
-            "prediction": p, "gradient": g}
+    if (full.get("initialization") != ACTIVE_INIT
+            or tiled.get("initialization") != ACTIVE_INIT):
+        return {"passed": False, "error": "zero-head or legacy parity not qualified"}
+    if (full.get("seed") != tiled.get("seed")
+            or full.get("mode") != tiled.get("mode")
+            or len(full.get("steps", [])) != VERIFICATION_STEPS
+            or len(tiled.get("steps", [])) != VERIFICATION_STEPS):
+        raise RuntimeError("different synthetic seeds, modes or verification step counts")
+    required = required_gradient_groups(full["mode"])
+    checked = []
+    for index, (a, b) in enumerate(zip(full["steps"], tiled["steps"])):
+        if a["parameters"] != b["parameters"]:
+            raise RuntimeError("different model parameter layouts")
+        pred = compare_arrays(a["prediction"], b["prediction"],
+                              rtol=5e-4, atol=5e-4)
+        grad = compare_arrays(a["gradient"], b["gradient"],
+                              rtol=1e-2, atol=1e-4)
+        # Absolute-only allclose can silently accept tiny inactive gradients.
+        active_norms = []
+        for step in (a, b):
+            measured = gradient_group_norms(
+                step["parameters"], step["gradient"], full["mode"])
+            rms = float(step["prediction"].square().mean().sqrt())
+            spatial_std = float(step["prediction"].std(dim=0).mean())
+            active_norms.append((measured, rms, spatial_std))
+        active = all(
+            rms > 1e-5 and spatial_std > 1e-5
+            and math.isfinite(rms) and math.isfinite(spatial_std)
+            and all(math.isfinite(groups[group]) and groups[group] > 1e-12
+                    for group in required)
+            for groups, rms, spatial_std in active_norms)
+        # Check both global and individual attention-path relative errors.
+        grad_rel = grad.get("relative_l2", math.inf)
+        gradients_well_matched = bool(grad["passed"] and grad_rel < 2e-3)
+        passed = bool(active and pred["passed"] and pred.get("relative_l2", math.inf) < 1e-3
+                      and gradients_well_matched)
+        checked.append({"step": index, "passed": passed,
+                        "active_attention_gradients": active,
+                        "prediction": pred, "gradient": grad,
+                        "full_gradient_group_norms": active_norms[0][0],
+                        "tiled_gradient_group_norms": active_norms[1][0],
+                        "full_prediction_rms": active_norms[0][1],
+                        "tiled_prediction_rms": active_norms[1][1]})
+    return {"passed": all(step["passed"] for step in checked),
+            "initialization": ACTIVE_INIT, "steps": checked,
+            "prediction": checked[0]["prediction"],
+            "gradient": checked[0]["gradient"]}
 
 
 def make_global_inputs(side: int, seed: int, device: torch.device) -> dict:
@@ -129,14 +264,17 @@ def make_global_inputs(side: int, seed: int, device: torch.device) -> dict:
 
 
 def gpu_step(model, optimizer, global_input: dict, geometries: list,
-             strategy: str, *, capture: bool = False):
-    from scripts.m48_ms_sr_train import _forward_args
+             strategy: str, *, capture: bool = False,
+             stream_geometry: bool = False):
+    from scripts.m48_ms_sr_train import _forward_args, _geometry_device
     device = global_input["state"].device
     n = global_input["state"].shape[0]
     optimizer.zero_grad(set_to_none=True)
     prediction = torch.empty((n, 5), dtype=torch.float32) if capture else None
     objective = None
-    for geom in geometries:
+    for original_geometry in geometries:
+        geom = (_geometry_device(original_geometry, device)
+                if stream_geometry else original_geometry)
         if strategy == "full":
             fine = global_input["state"]
             baseline = global_input["baseline"]
@@ -157,7 +295,7 @@ def gpu_step(model, optimizer, global_input: dict, geometries: list,
         if capture:
             prediction[owned_global.cpu()] = pred_owned.detach().cpu()
         objective = weighted.detach() if objective is None else objective + weighted.detach()
-        del pred, pred_owned, fine, coarse, baseline, loss, weighted
+        del pred, pred_owned, fine, coarse, baseline, loss, weighted, geom
 
     verification = None
     if capture:
@@ -165,8 +303,13 @@ def gpu_step(model, optimizer, global_input: dict, geometries: list,
         grad = torch.cat([p.grad.detach().reshape(-1).cpu() if p.grad is not None
                           else torch.zeros(p.numel(), dtype=torch.float32)
                           for p in model.parameters()])
+        group_norms = gradient_group_norms(names, grad, model.mode)
+        spatial_std = prediction.std(dim=0).mean().item()
         verification = {"prediction": prediction, "gradient": grad,
-                        "parameters": names}
+                        "parameters": names,
+                        "prediction_rms": float(prediction.square().mean().sqrt().item()),
+                        "prediction_spatial_std": float(spatial_std),
+                        "gradient_group_norms": group_norms}
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
     optimizer.step()
     return objective, verification
@@ -184,19 +327,33 @@ def _gpu_worker(args) -> dict:
     initial_free = int(torch.cuda.mem_get_info(device)[0])
     budget = int(min(total, initial_free) * args.max_gpu_fraction)
     torch.cuda.reset_peak_memory_stats(device)
-    geom_cpu, build_seconds = make_geometries(
-        args.fine_side, args.core_side, args.depth, args.mode,
-        args.periodic_length, args.max_tiles, args.strategy)
+    residency = ("cpu_streamed" if args.strategy == "tiled"
+                 and (args.tiled_geometry_residency == "cpu"
+                      or (args.tiled_geometry_residency == "auto" and args.fine_side >= 80))
+                 else "gpu_cached")
+    try:
+        geom_cpu, build_seconds = make_geometries(
+            args.fine_side, args.core_side, args.depth, args.mode,
+            args.periodic_length, args.max_tiles, args.strategy,
+            max_host_graph_bytes=int(args.max_host_graph_gib * 2**30))
+    except HostGraphBudgetExceeded as exc:
+        return {"status": "host_graph_budget_exceeded", "error": str(exc),
+                "geometry_residency": residency}
     host_geom_bytes = sum(graph_tensor_bytes(g) for g in geom_cpu)
     if host_geom_bytes > args.max_host_graph_gib * (2**30):
         return {"status": "host_graph_budget_exceeded",
                 "host_graph_bytes": host_geom_bytes,
                 "geometry_build_seconds": build_seconds}
     start = time.perf_counter()
-    geom_gpu = [_geometry_device(g, device) for g in geom_cpu]
+    if residency == "cpu_streamed":
+        # Hold topology on host and transfer one tile at a time per update.
+        # Prevents N_tile * graph_bytes from becoming permanently GPU-resident.
+        geom_gpu = geom_cpu
+    else:
+        geom_gpu = [_geometry_device(g, device) for g in geom_cpu]
+        del geom_cpu
     torch.cuda.synchronize(device)
     transfer_seconds = time.perf_counter() - start
-    del geom_cpu
     if torch.cuda.memory_reserved(device) > budget:
         return {"status": "gpu_headroom_exceeded_at_preload",
                 "peak_reserved_bytes": int(torch.cuda.memory_reserved(device)),
@@ -209,6 +366,7 @@ def _gpu_worker(args) -> dict:
         fine_post_layers=args.depth, coarse_static_layers=args.depth,
         coarse_dynamic_layers=args.depth,
     ).to(device).train()
+    activate_attention_paths(model)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
     inputs = make_global_inputs(args.fine_side, args.seed, device)
     geometry_details = {
@@ -221,22 +379,30 @@ def _gpu_worker(args) -> dict:
         "gpu_total_memory_bytes": total, "gpu_initial_free_bytes": initial_free,
         "synthetic_inputs_only": True, "no_cedar_or_dns_fields": True,
         "identical_global_fm_time": True,
+        "geometry_residency": residency,
+        "streamed_geometry_transfer_in_update_time": residency == "cpu_streamed",
+        "initialization": ACTIVE_INIT,
     }
 
     first_loss = None
+    captured_steps = []
     for i in range(args.warmup):
         loss, verification = gpu_step(model, optimizer, inputs, geom_gpu,
-                                      args.strategy, capture=i == 0)
+                                      args.strategy, capture=i < VERIFICATION_STEPS,
+                                      stream_geometry=residency == "cpu_streamed")
         if i == 0:
             first_loss = float(loss.item())
-            verification["seed"] = args.seed
-            args.verification_output.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(verification, args.verification_output)
+        if verification is not None:
+            captured_steps.append(verification)
         torch.cuda.synchronize(device)
         if torch.cuda.max_memory_reserved(device) > budget:
             return {**geometry_details, "status": "gpu_headroom_exceeded",
                     "peak_reserved_bytes": int(torch.cuda.max_memory_reserved(device))}
 
+    args.verification_output.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"initialization": ACTIVE_INIT, "mode": args.mode,
+                "seed": args.seed, "steps": captured_steps},
+               args.verification_output)
     times = []
     cuda_times = []
     losses = []
@@ -246,7 +412,8 @@ def _gpu_worker(args) -> dict:
                                   torch.cuda.Event(enable_timing=True))
         t0 = time.perf_counter()
         start_event.record()
-        loss, _ = gpu_step(model, optimizer, inputs, geom_gpu, args.strategy)
+        loss, _ = gpu_step(model, optimizer, inputs, geom_gpu, args.strategy,
+                           stream_geometry=residency == "cpu_streamed")
         end_event.record()
         torch.cuda.synchronize(device)
         times.append(time.perf_counter() - t0)
@@ -303,6 +470,7 @@ def _run_worker(args, grid: dict, depth: int, core: int, strategy: str,
            "--max-gpu-fraction", str(args.max_gpu_fraction),
            "--max-host-graph-gib", str(args.max_host_graph_gib),
            "--verification-output", str(verification),
+           "--tiled-geometry-residency", args.tiled_geometry_residency,
            "--worker-output", str(result_file)]
     started = time.perf_counter()
     try:
@@ -366,9 +534,10 @@ def _write_csv(path: Path, data: list[dict]):
 
 
 def run(args) -> dict:
-    if (args.mode not in ("static", "dynamic") or args.width < 1
-            or args.heads < 1 or args.width % args.heads != 0
-            or args.warmup < 1 or args.measure < 2
+    if (args.mode not in ("static", "dynamic")
+            or args.tiled_geometry_residency not in ("auto", "cpu", "gpu")
+            or args.width < 1 or args.heads < 1 or args.width % args.heads != 0
+            or args.warmup < VERIFICATION_STEPS or args.measure < 2
             or args.seed < 0 or not 0 < args.max_gpu_fraction < 1
             or args.max_host_graph_gib <= 0 or args.worker_timeout_seconds < 1):
         raise ValueError("invalid A2 benchmark options")
@@ -382,16 +551,26 @@ def run(args) -> dict:
     if args.output_dir.exists():
         raise FileExistsError("A2 refuses to overwrite or resume an output directory")
     grids, provenance = authentic_teacher_grids(args.ms_sr_root, args.normalization_file)
-    args.output_dir.mkdir(parents=True)
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    gate = None
+    if 80 in sides:
+        gate = validate_48_parity_gate(
+            args.parity_gate_summary, mode=args.mode, depths=depths,
+            width=args.width, heads=args.heads, provenance=provenance,
+            current_commit=head)
+    args.output_dir.mkdir(parents=True)
     report = {"schema": SCHEMA, "status": "RUNNING", "source_commit": head,
               "no_scientific_training": True, "no_cedar_or_dns_field_evaluation": True,
               "same_global_fm_time_and_inputs": True,
+              "active_initialization": ACTIVE_INIT,
+              "required_verification_steps": VERIFICATION_STEPS,
+              "parity_gate_48": gate,
               "provenance": provenance,
               "requested": {"mode": args.mode, "fine_sides": sides, "depths": depths,
                             "core_sides": cores, "width": args.width,
                             "heads": args.heads, "warmup": args.warmup,
-                            "measure": args.measure, "max_tiles": args.max_tiles},
+                            "measure": args.measure, "max_tiles": args.max_tiles,
+                            "tiled_geometry_residency": args.tiled_geometry_residency},
               "trials": [], "comparisons": []}
     write_json(args.output_dir / "summary.json", report)
     for side, depth, core in product(sides, depths, cores):
@@ -432,10 +611,13 @@ def parse_args(argv=None):
     parser.add_argument("--core-sides", default="24")
     parser.add_argument("--width", type=int, default=64)
     parser.add_argument("--heads", type=int, default=4)
-    parser.add_argument("--warmup", type=int, default=1)
+    parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--measure", type=int, default=2)
     parser.add_argument("--seed", type=int, default=484)
     parser.add_argument("--max-tiles", type=int, default=8)
+    parser.add_argument("--tiled-geometry-residency", choices=("auto", "cpu", "gpu"),
+                        default="auto")
+    parser.add_argument("--parity-gate-summary", type=Path)
     parser.add_argument("--max-gpu-fraction", type=float, default=0.85)
     parser.add_argument("--max-host-graph-gib", type=float, default=12.0)
     parser.add_argument("--worker-timeout-seconds", type=int, default=1800)

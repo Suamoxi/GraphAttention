@@ -626,3 +626,19 @@ H2D setup, HDF5 and CEDAR; those setup costs are reported separately.
 Measured full speed advantage is t_tiled / t_full, so values >1 favor full.
 OOM and headroom failures remain unqualified, not extrapolated.
 See docs/M48_4E_A2_FULL_VS_TILED.md.
+
+
+## M48.4e A2.1 / A2.2 — Active attention and bounded 80^3 testing (2026-11-19)
+
+A2 numerical parity now requires nonzero decoder output and DiT modulation
+gates, with nonzero gradient paths through all fine/coarse attention blocks
+and cross-scale attention. Two consecutive AdamW steps must agree for identical
+global synthetic states and targets. Production initialization remains unchanged.
+Predictions, parameter gradients and gradient group norms are recorded; trivial
+zero-output or zero-attention tests are no longer accepted as numerical parity.
+For 80^3 the exact 64-tile p20 grid is run only after authenticated 48^3
+active parity, with all tile geometries CPU-resident and individually transferred
+to GPU during the step. Tiled 80^3 wall and CUDA times therefore include
+geometry host-to-device transfer, unlike cached 48^3 and full-field references.
+This is an engineering capacity/throughput gate, NOT physical CFD training or
+equivalence of independent per-patch stochastic FM trajectories.

@@ -1624,3 +1624,15 @@ Full method and launch contract: `docs/M48_4E_A1_DEPTH_HALO_GEOMETRY.md`.
 | Regression tests | tests/unit/test_m48_4e_a2_full_vs_tiled.py | 6 local controls passed, 2 full-repo numerical CPU tests skipped locally, GPU Calypso evidence pending |
 
 Measured computational comparison under a shared synthetic global FM process; not a convergence result or production independent-patch FM data-loader benchmark. See docs/M48_4E_A2_FULL_VS_TILED.md.
+
+
+## M48.4e A2.1 / A2.2 — Nonzero attention parity and 80^3 bound (2026-11-19)
+
+| Qualification | Implementation | Status / limitations |
+|---|---|---|
+| Nontrivial cross-scale/full-vs-patch predictions, gradients, and post-update agreement | scripts/m48_4e_a2_full_vs_tiled.py activation and compare_verification | Benchmark-only nonzero decoder and adaLN gates, two pre-update checks (second after AdamW), attention/cross-scale gradient activity. CPU local: 11 tests passed, 2 full-repo numerical integration tests skipped. GPU Calypso tests pending |
+| Evidence gate before scaling | validate_48_parity_gate | 80^3 requires matching 48^3 PASS with same commit, depth, width, heads, teacher provenance, and both active steps |
+| 80^3 exact-coverage benchmark | make_geometries and GPU worker residency | 64 p20^3 owned tiles cover 80^3. Host graph bytes capped incrementally; 80^3 tile graphs streamed CPU->GPU, H2D time included in update. Failure budget is UNQUALIFIED, not fabricated comparison |
+| Reproducibility | scripts/slurm/m48_4e_a2_full_vs_tiled.slurm | Fail closed on unexpected worker failure or parity mismatch. No CEDAR, no real DNS fields or scientific model training |
+
+Status: implementation committed; full-repo/GH200 numerical and capacity qualification pending. See docs/M48_4E_A2_FULL_VS_TILED.md.

@@ -1,6 +1,6 @@
 # M48.4e A2 — Full-field versus complete exact-halo tiling
 
-**Status (2026-11-19): implemented; isolated CUDA qualification pending Calypso.**
+**Status (2026-11-19): active-path parity and bounded 80^3 extension implemented; Calypso qualification pending.**
 
 A1 established that deep dynamic TwoScaleDiNAT can require nearly the entire
 48^3 periodic fine grid to compute a single owned patch. A2 measures whether
@@ -38,12 +38,22 @@ identical input fields, compare:
 Each tiled loss is backpropagated individually, accumulating a **single**
 gradient, followed by **one** gradient clipping operation and **one** AdamW
 update. Both strategies therefore supervise exactly N fine-grid nodes per
-optimizer update. Numerical equivalence is checked **before the first
-optimizer update**, by comparing assembled global predictions and all
-parameter gradients. Tolerances: prediction allclose rtol=5e-4, atol=5e-4;
-gradient allclose rtol=1e-2, atol=1e-4. Absolute and relative L2 errors are
-also stored; an unmet tolerance produces `PARITY_FAILED`, never an accepted
-speed result.
+optimizer update. Numerical equivalence is checked **at the first two optimizer steps**
+(pre-update predictions and gradients, including the second step *after* one
+AdamW update) using an explicitly activated DiT model, not the original
+zero-output-head initialization. For every attention block in the fine encoder,
+coarse encoder, fine decoder and optional dynamic coarse encoder, the
+zero-initialized adaLN modulation gate is seeded to small nonzero weights/biases;
+likewise the fine decoder output projection receives a nonzero weight. This is
+**benchmark-only** and does not alter production model initialization.
+The numerical gate requires a nonzero, spatially varying prediction and
+nonzero gradients in the fine/coarse/final attention blocks, cross-scale up,
+and (dynamic only) cross-scale down and dynamic coarse attention. Norms are
+reconstructed from saved named parameter gradients; zeroed or forged metrics
+cannot qualify. Tolerances: prediction allclose rtol=5e-4, atol=5e-4;
+gradient allclose rtol=1e-2, atol=1e-4, with independent relative-L2
+thresholds 1e-3 (prediction) and 2e-3 (gradient). Any unmet tolerance
+produces `PARITY_FAILED`, never an accepted speed result.
 
 The full reference graph uses the unchanged
 `build_targeted_two_scale_patch` with all fine indices owned and **zero
@@ -60,7 +70,7 @@ Each `(mode, grid, depth, core, strategy)` runs in an **isolated CUDA process**.
 The reference and tiled processes instantiate identically seeded networks,
 the same global random inputs/targets, and the same optimizer. A worker
 constructs the complete geometry on CPU, preloads its graph(s) on the GPU,
-and then runs `warmup=1`, `measure=2` by default. Synchronized wall update
+and then runs `warmup=2`, `measure=2` by default. Synchronized wall update
 seconds and CUDA event seconds include forward, backward, global GPU gathers
 in the tiled path, gradient clipping and optimizer. They exclude CPU geometry
 construction, graph transfers, CEDAR/DNS I/O, and initial random input
@@ -145,3 +155,84 @@ not fit at 80^3, keep exact-halo or investigate stage-wise partitioning,
 activation checkpointing and shared-context computation. No production
 model execution-mode change should occur on the basis of a structural
 proxy alone.
+
+
+## A2.1 (next qualification): nontrivial active-path numerical parity
+
+Earlier 48^3 CUDA receipts with all-zero predicted velocities were a useful
+execution benchmark but were not sufficient to validate attention-dependent
+output equivalence. The revised A2 now forces the DiT gates and final head
+nonzero in a deterministic, synthetic-only initialization and verifies two
+consecutive updates (step 0 and step 1 after one AdamW step). Every required
+attention/cross-scale gradient group must be nonzero. The model definition,
+FM loss, exact halo builder and scientific training code remain unchanged.
+
+Run the 48^3 tests **before** enabling the 80^3 tests:
+
+    cd /scratch/coop/theret/GraphAttention
+    git pull --rebase
+    sbatch --export=ALL,M48_MODE=static,M48_A2_FINE_SIDES=48,M48_A2_DEPTHS=2,4,8 \
+      scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
+    sbatch --export=ALL,M48_MODE=dynamic,M48_A2_FINE_SIDES=48,M48_A2_DEPTHS=2,4,8 \
+      scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
+
+Requirement: both summaries show PASS and each depth has two parity steps
+with nonzero spatial prediction variance and nonzero attention-path gradients.
+There is no equivalence claim for long training trajectories; two-step parity
+validates the execution kernel and immediate optimizer consistency only.
+
+## A2.2 (after A2.1 PASS): bounded 80^3 capacity and throughput
+
+The fine grid is 80^3 = 512000 owned nodes. With p=20, 64 non-overlapping
+cubic owned cores cover it exactly once; the coarse grid is 40^3.
+The 80^3 job **requires** `M48_A2_PARITY_GATE` pointing to a summary from
+A2.1 with the same commit SHA, architecture, width, heads, teacher provenance,
+and all requested depths numerically qualified. The full field and tiled
+strategies remain independent CUDA workers with a GPU memory headroom gate.
+
+In the 80^3 tiled path, `auto` geometry residency holds the 64 exact-halo
+graphs on CPU and transfers each graph to GPU during its owned-core update,
+instead of permanently preloading all 64 graphs in device memory. This is an
+honest out-of-core benchmark: **tiled update timing includes each host-to-GPU
+graph transfer**. The 48^3 path continues to preload 8 graphs, as in A2.
+The CPU aggregate geometry has an incremental 12 GiB default budget; worker
+timeouts and CUDA memory exclusions are recorded as unqualified, not assigned
+an imaginary throughput or speedup. Caching/prefetching improvements remain a
+separate experiment. This path does not read source CFD payloads or use CEDAR.
+
+First compare the depth-2, width-64 models (one static and one dynamic job):
+
+    # Change JOBID to the corresponding PASSED A2.1 job ID for each architecture.
+    STATIC_A21=/scratch/coop/theret/GraphAttention_runs/m48_4e_a2_full_vs_tiled/job_<STATIC_JOBID>_static_n48_p24/summary.json
+    DYNAMIC_A21=/scratch/coop/theret/GraphAttention_runs/m48_4e_a2_full_vs_tiled/job_<DYNAMIC_JOBID>_dynamic_n48_p24/summary.json
+
+    sbatch --export=ALL,M48_MODE=static,M48_A2_FINE_SIDES=80,M48_A2_CORE_SIDES=20,\
+M48_A2_MAX_TILES=64,M48_A2_DEPTHS=2,M48_A2_PARITY_GATE="$STATIC_A21" \
+      scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
+    sbatch --export=ALL,M48_MODE=dynamic,M48_A2_FINE_SIDES=80,M48_A2_CORE_SIDES=20,\
+M48_A2_MAX_TILES=64,M48_A2_DEPTHS=2,M48_A2_PARITY_GATE="$DYNAMIC_A21" \
+      scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
+
+Only after inspecting capacity, memory and parity at depth 2 should depth 4,
+then depth 8 be attempted with the same gate. For the 80^3 run, all
+comparisons may legitimately be UNQUALIFIED if either method exceeds the
+bounded memory/time limits; this is a capacity finding, not a passed speed
+comparison. Numerical mismatches or unexpected worker errors still fail the
+Slurm postflight.
+
+The user's separate reference capacity (at least 129^3 nodes, 10 layers,
+width 128 on a GH200) is useful hardware context but cannot predict the
+A2 memory footprint without matching the *number and type of subnetworks*,
+cross-scale attention, optimizer, precision and activation handling. A2 depth
+8 here means 24 static or 32 dynamic DiT blocks across the full model, not
+an isolated 8- or 10-layer transformer.
+
+## Scientific training-comparison boundary
+
+A2 only compares matched **computational updates**, not convergence or CFD
+statistics. A later real-data full-vs-patch study must match teacher case
+splits, frozen normalization, physical conditioning, FM source projection,
+optimizer schedule and effective node exposure. It must compare held-out
+field statistics and spectra (including errors near patch joins) as well as
+training throughput and peak memory, before claiming patch-wise training
+is scientifically equivalent or superior.
