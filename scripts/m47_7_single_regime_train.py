@@ -182,6 +182,16 @@ def run(args: argparse.Namespace) -> dict:
     ):
         raise ValueError("single-regime scaler provenance mismatch")
 
+    if not args.resume:
+        _write(args.output_dir / "normalization.json", {
+            "policy": "single-regime train-only sample-balanced nondimensional",
+            "case": ANCHOR_CASE,
+            "train_sample_ids": list(split.train_ids),
+            "channels": list(scalers.inputs.channel_names),
+            "nondimensional_mean": scalers.inputs.mean.detach().cpu().tolist(),
+            "nondimensional_std": scalers.inputs.scale.detach().cpu().tolist(),
+        })
+
     torch.manual_seed(args.seed)
     device = torch.device("cuda:0")
     collator = GraphTaskCollator(
