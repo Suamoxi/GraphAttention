@@ -162,10 +162,36 @@ def test_checkpointed_m37_equal_graph_loss_forward_grads_and_adamw_update(
     original = evaluate("packed")
     for mode in ("segmented", "sequential"):
         actual = evaluate(mode)
-        for x0, x1 in zip(original[:2], actual[:2]):
-            torch.testing.assert_close(x1, x0, atol=3e-5, rtol=3e-5)
-        for x0, x1 in zip(original[3:5], actual[3:5]):
-            torch.testing.assert_close(x1, x0, atol=1e-4, rtol=1e-3)
+        # Segmented broadcast uses the identical packed geometry, tensor
+        # shapes, and CSR topology: retain its stricter forward tolerance.
+        # Sequential mode invokes separate small CUDA GEMMs/CSR graphs,
+        # whose floating-point reduction ordering can differ from packed
+        # execution even when deterministic algorithms are enabled.
+        # Preserve strict loss, gradient, and AdamW update checks below.
+        sequential_cuda = mode == "sequential" and device_name == "cuda"
+        forward_atol = 1.0e-4 if sequential_cuda else 3.0e-5
+        for label, expected, observed in zip(
+            ("forward", "loss"), original[:2], actual[:2], strict=True,
+        ):
+            atol = forward_atol if label == "forward" else 3.0e-5
+            delta = float((observed - expected).abs().max())
+            print(
+                f"[M47 SEGMENTED PARITY] backend={backend} device={device_name} "
+                f"mode={mode} tensor={label} max_abs={delta:.9e} atol={atol:.1e}",
+                flush=True,
+            )
+            torch.testing.assert_close(
+                observed, expected, atol=atol, rtol=3.0e-5,
+                msg=f"{mode} {label} parity ({device_name}, {backend})",
+            )
+        for label, expected, observed in zip(
+            ("input_gradient", "conditioning_gradient"),
+            original[3:5], actual[3:5], strict=True,
+        ):
+            torch.testing.assert_close(
+                observed, expected, atol=1e-4, rtol=1e-3,
+                msg=f"{mode} {label} parity ({device_name}, {backend})",
+            )
         for key in original[2]:
             assert (original[2][key] is None) == (actual[2][key] is None)
             if original[2][key] is not None:
