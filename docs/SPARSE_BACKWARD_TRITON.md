@@ -377,3 +377,83 @@ Required artifacts for analysis:
 The Slurm script prints ARTIFACT_* for all exact paths before tests.
 If parity fails, investigate numerical differences before proposing
 any default-code optimization or extrapolating savings to larger meshes.
+
+## Single-graph ablation result: Slurm 511501 (real 65^3)
+
+Benchmark revision 7596ff3b7182a18408a96780b07f3292355fa03e.
+Ground truth:
+  /scratch/coop/theret/GraphAttention_runs/triton_broadcast_ablation_v1/job_511501/comparison.json
+  (plus both mode summaries, four reports, four per-process logs)
+Drive folder:
+  https://drive.google.com/drive/folders/1WJPlGW1cfAkGqnSli7LmM7kHYmKRwxdz
+
+Four fresh CUDA processes (same real Re54/Ma0.3:65 snapshot, 10-layer M37,
+128 hidden features, 4 heads, non-reentrant checkpointing, FP32 and AdamW).
+Per-run first step excluded from timings; the remaining three-step median:
+
+| Mode | CSR backend | Forward (ms) | Backward + loss (ms) | Complete step (ms) | Peak allocated (GiB) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Packed batch_index, B=1 | torch_sparse | 148.718 | 2565.187 | 2716.508 | 6.878 |
+| Packed batch_index, B=1 | torch_sparse_triton | 149.073 | 2338.514 | 2489.562 | 6.878 |
+| Native batch_index=None, B=1 | torch_sparse | 137.076 | 508.959 | 647.903 | 6.092 |
+| Native batch_index=None, B=1 | torch_sparse_triton | 137.428 | 288.340 | 427.575 | 6.092 |
+
+Speedups: packed vs native single-graph 4.193x with original CSR and
+5.823x with Triton; once single-graph, Triton contributes a further
+1.515x speedup. Combined original packed CSR vs native single-graph
+Triton: 6.353x, or 84.26% lower full-step latency. Maximum allocated
+GPU memory drops by 0.786 GiB (11.43%) in either backend. The peak
+reserved allocator memory is unchanged at 7.412 GiB.
+
+All four benchmark subprocesses report status=ok and exit_code=0.
+Matching one-/two-hop graph SHA-256, coordinate/state SHA-256, initial
+model-weight SHA-256 and 3051845 parameters. Four reported loss values
+are exactly equal between all arms:
+2.0007710457, 1.9952092171, 2.0095293522, 1.9809440374.
+The summary includes a per-arm 1e-4 loss-difference acceptance gate.
+The Slurm script preflights CPU/CUDA forward and input/conditioning/
+parameter-gradient parity on small graphs before benchmarking.
+Neither full model final parameter deltas nor real-graph per-parameter
+gradients have yet been explicitly compared; equal loss values do not
+establish full numerical equivalence of all parameter updates.
+
+The earlier 65^3 profiler showed 11 launches of
+indexing_backward_kernel<float,4> totaling ~2042 ms with Triton CSR.
+Switching from packed batch_index to the native single-graph path lowers
+the Triton backward median by 2050.174 ms. The close correspondence
+strongly supports the hypothesis that _broadcast_graph_features'
+features[batch_index] gradient contention dominates the former step.
+However batch_index=None also selects a different (mathematically
+equivalent) single-graph coordinate normalization path, so the ablation
+does not isolate only one source expression. No default model or frozen
+M47.4 training configuration was changed.
+
+The performance result is computational feasibility with M43's
+per-snapshot normalization, not a scientific training result, and is
+accepted only as "completed_not_accepted". The next step is to repeat
+the four-arm ablation on real Re94/Ma0.3:129 before any production
+fast-path change. Use exactly the existing opt-in runner:
+
+~~~bash
+cd /scratch/coop/theret/GraphAttention
+git status --short
+git pull --ff-only origin main
+sbatch --export=ALL,CSR_BROADCAST_CASE=Re94/Ma0.3:129 \
+  scripts/slurm/sparse_backward_triton_single_graph_ablation.slurm
+~~~
+
+For Slurm job <jobid>, mandatory output paths:
+- /scratch/coop/theret/GraphAttention_runs/csr_broadcast_<jobid>.out
+- /scratch/coop/theret/GraphAttention_runs/csr_broadcast_<jobid>.err
+- /scratch/coop/theret/GraphAttention_runs/triton_broadcast_ablation_v1/job_<jobid>/comparison.json
+- /scratch/coop/theret/GraphAttention_runs/triton_broadcast_ablation_v1/job_<jobid>/packed/summary.json
+- /scratch/coop/theret/GraphAttention_runs/triton_broadcast_ablation_v1/job_<jobid>/single_graph/summary.json
+- /scratch/coop/theret/GraphAttention_runs/triton_broadcast_ablation_v1/job_<jobid>/<packed|single_graph>/<torch_sparse|torch_sparse_triton>/report.json
+- /scratch/coop/theret/GraphAttention_runs/triton_broadcast_ablation_v1/job_<jobid>/<packed|single_graph>/<torch_sparse|torch_sparse_triton>/process.log
+
+All paths print with ARTIFACT_* at the start of the Slurm job.
+If the 129^3 numerical and performance gates pass, consider making
+single-graph broadcast selection an explicit validated capability for
+scientific training, with a full-real-graph parameter/gradient
+equivalence check before enabling any production default. Keep the
+multi-graph packed index path intact.
