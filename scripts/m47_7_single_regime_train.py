@@ -299,6 +299,7 @@ def run(args: argparse.Namespace) -> dict:
         ],
     }
     _write(args.output_dir / "summary.json", summary)
+    _write(args.output_dir / f"summary_epoch{args.max_epochs:02d}.json", summary)
     print(f"[M47.7B] COMPLETE {summary['status']}", flush=True)
     return summary
 
