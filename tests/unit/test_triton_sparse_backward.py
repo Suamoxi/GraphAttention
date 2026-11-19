@@ -163,13 +163,9 @@ def test_triton_geometric_attention_outputs_parameters_and_bias(nodes, long_row)
             f"cross_backend_max_abs={cross_backend_error:.6e}",
             flush=True,
         )
-    # GH200 repeatability (job 510265): baseline, candidate and cross-backend
-    # differences all reached 1.068413e-5 on this high-degree graph.
-    # Both backends share the original CUDA index_add_ forward.
-    # Keep the direct-kernel and backward gradient tolerances unchanged.
-    torch.testing.assert_close(
-        out2, out1, rtol=1e-5, atol=2e-5 if long_row else 1e-5,
-    )
+    # Deterministic parity is the canonical gate for this CUDA reduction.
+    # Retain the original strict forward and backward tolerances.
+    torch.testing.assert_close(out2, out1, rtol=1e-5, atol=1e-5)
     upstream = torch.randn_like(out1)
     (out1 * upstream).sum().backward()
     (out2 * upstream).sum().backward()
