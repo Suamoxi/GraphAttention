@@ -171,10 +171,8 @@ Run the 48^3 tests **before** enabling the 80^3 tests:
 
     cd /scratch/coop/theret/GraphAttention
     git pull --rebase
-    sbatch --export=ALL,M48_MODE=static,M48_A2_FINE_SIDES=48,M48_A2_DEPTHS=2,4,8 \
-      scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
-    sbatch --export=ALL,M48_MODE=dynamic,M48_A2_FINE_SIDES=48,M48_A2_DEPTHS=2,4,8 \
-      scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
+    M48_MODE=static sbatch --export=ALL scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
+    M48_MODE=dynamic sbatch --export=ALL scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
 
 Requirement: both summaries show PASS and each depth has two parity steps
 with nonzero spatial prediction variance and nonzero attention-path gradients.
@@ -203,15 +201,15 @@ separate experiment. This path does not read source CFD payloads or use CEDAR.
 First compare the depth-2, width-64 models (one static and one dynamic job):
 
     # Change JOBID to the corresponding PASSED A2.1 job ID for each architecture.
-    STATIC_A21=/scratch/coop/theret/GraphAttention_runs/m48_4e_a2_full_vs_tiled/job_<STATIC_JOBID>_static_n48_p24/summary.json
-    DYNAMIC_A21=/scratch/coop/theret/GraphAttention_runs/m48_4e_a2_full_vs_tiled/job_<DYNAMIC_JOBID>_dynamic_n48_p24/summary.json
+    STATIC_A21="/scratch/coop/theret/GraphAttention_runs/m48_4e_a2_full_vs_tiled/job_STATIC_JOBID_static_n48_p24/summary.json"
+    DYNAMIC_A21="/scratch/coop/theret/GraphAttention_runs/m48_4e_a2_full_vs_tiled/job_DYNAMIC_JOBID_dynamic_n48_p24/summary.json"
 
-    sbatch --export=ALL,M48_MODE=static,M48_A2_FINE_SIDES=80,M48_A2_CORE_SIDES=20,\
-M48_A2_MAX_TILES=64,M48_A2_DEPTHS=2,M48_A2_PARITY_GATE="$STATIC_A21" \
-      scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
-    sbatch --export=ALL,M48_MODE=dynamic,M48_A2_FINE_SIDES=80,M48_A2_CORE_SIDES=20,\
-M48_A2_MAX_TILES=64,M48_A2_DEPTHS=2,M48_A2_PARITY_GATE="$DYNAMIC_A21" \
-      scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
+    M48_MODE=static M48_A2_FINE_SIDES=80 M48_A2_CORE_SIDES=20 \
+      M48_A2_MAX_TILES=64 M48_A2_DEPTHS=2 M48_A2_PARITY_GATE="$STATIC_A21" \
+      sbatch --export=ALL scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
+    M48_MODE=dynamic M48_A2_FINE_SIDES=80 M48_A2_CORE_SIDES=20 \
+      M48_A2_MAX_TILES=64 M48_A2_DEPTHS=2 M48_A2_PARITY_GATE="$DYNAMIC_A21" \
+      sbatch --export=ALL scripts/slurm/m48_4e_a2_full_vs_tiled.slurm
 
 Only after inspecting capacity, memory and parity at depth 2 should depth 4,
 then depth 8 be attempted with the same gate. For the 80^3 run, all
