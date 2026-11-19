@@ -2,7 +2,7 @@
 
 ## Goal and status
 
-**Opt-in experimental backend; GH200 numerical and synthetic attention benchmark gates completed, but full-model training remains unmeasured.**
+**Opt-in experimental backend; synthetic GH200 benchmarks and a 65^3 real-HDF5 ten-layer training-step pilot completed. Scientific training acceptance remains pending.**
 This investigation is separate from the frozen M47.1/M47.4 scientific training
 continuations. It does not modify their checkpoints, numerical behavior,
 input distributions or training recipes.
@@ -164,3 +164,60 @@ Required analysis artifacts:
 The Slurm script prints full ARTIFACT_* paths before GPU execution.
 Use its output for analysis before attempting a 129^3 real graph.
 
+
+## First full-model GH200 result: Slurm 511302 (real 65^3)
+
+Revision 6be13c2e3b717dc2a5ec9a281865940b01df1783. The default real
+Re54/Ma0.3 65^3 snapshot (solut_hit_00000051.h5) contains 274625 nodes,
+1622400 directed one-hop edges and 4791930 exact-two-hop directed edges.
+Both runs executed four complete 10-layer, four-head, 128-hidden-channel
+Flow Matching AdamW steps with non-reentrant activation checkpointing.
+The first step was excluded from timing; medians cover three later steps.
+
+Source: /scratch/coop/theret/GraphAttention_runs/triton_full_training_v1/job_511302/
+(summary.json, preflight.json and paired per-backend report.json/process.log).
+Full Slurm stdout/stderr: csr_full_train_511302.out and .err.
+
+| Stage | torch_sparse median (ms) | torch_sparse_triton median (ms) | Speedup |
+| --- | ---: | ---: | ---: |
+| Forward | 149.316 | 148.847 | 1.003x |
+| Backward + loss | 2558.048 | 2340.270 | 1.093x |
+| Optimizer | 1.667 | 1.594 | 1.046x |
+| Complete step | 2709.511 | 2490.930 | 1.088x |
+
+The full step fell by 218.58 ms (8.07%). Both full models completed with
+6.878 GiB peak allocated and 7.412 GiB peak reserved memory. All four
+reported probe-only loss values were identical. The comparison JSON
+confirms matching real graph/input SHA-256 fingerprints, identical initial
+weight hashes and equal model parameter counts. The Slurm preflight passed
+three CPU tests and one deterministic checkpointed Triton integration test.
+
+For the five local plus five exact-two-hop attention blocks, the isolated
+65^3 backward reductions predict 5*(18.081-8.751)+5*(49.771-14.530) =
+222.85 ms savings. The full-model observed backward savings are 217.78 ms,
+within 2.3% of this prediction. Thus the reduced end-to-end speedup appears
+consistent with unchanged model operations and checkpoint recomputation
+rather than an unexpected loss of kernel acceleration.
+
+This is a matched **computational feasibility probe only**, using
+M43-B1's per-snapshot normalization. Identical loss *values* are not proof
+of every parameter gradient or updated weight being bitwise equivalent.
+No scientific validation, general unstructured graph benchmark, or
+M47.4 training was attempted. The result remains "completed_not_accepted".
+
+### Next: paired real 129^3 checkpointed probe
+
+Do not alter the frozen M47.4 training. Use the same full-training Slurm
+script with the exact existing Re94/Ma0.3:129 mesh/case:
+
+~~~bash
+CSR_FULL_CASE=Re94/Ma0.3:129 \
+  sbatch --export=ALL,CSR_FULL_CASE=Re94/Ma0.3:129 \
+  scripts/slurm/sparse_backward_triton_full_training.slurm
+~~~
+
+The new job writes the same eight artifacts listed above, in a unique
+job_<jobid> directory. Verify peak GPU allocation, equal initial weights,
+equal actual geometry hashes, and median end-to-end speedup before drawing
+scalability conclusions. Full model profiling remains a separate optional
+follow-up.
