@@ -360,7 +360,13 @@ def one_case_probe(
                         "device_total_us": float(getattr(event, "device_time_total", 0.0)),
                         "self_cpu_us": float(event.self_cpu_time_total),
                     })
-                operations.sort(key=lambda item: item["self_device_us"], reverse=True)
+                gpu_ranked = sorted(
+                    operations, key=lambda item: item["self_device_us"], reverse=True,
+                )
+                cpu_ranked = sorted(
+                    operations, key=lambda item: item["self_cpu_us"], reverse=True,
+                )
+                named = {item["op"]: item for item in operations}
                 profile_record = {
                     "status": "complete",
                     "scope": "one CUDA-profiled full optimizer step, diagnostic NOT timing",
@@ -370,7 +376,13 @@ def one_case_probe(
                     "revision": report["revision"],
                     "operator_count": len(operations),
                     "total_self_device_us": sum(item["self_device_us"] for item in operations),
-                    "top_operators": operations[:80],
+                    "total_self_cpu_us": sum(item["self_cpu_us"] for item in operations),
+                    "phases": {
+                        phase: named.get(f"CSR_PROFILE_{phase}", {})
+                        for phase in ("FORWARD", "BACKWARD", "ADAMW")
+                    },
+                    "top_operators": gpu_ranked[:80],
+                    "top_cpu_operators": cpu_ranked[:80],
                 }
                 write_report(operator_profile_output, profile_record)
                 print(f"[M43-B1] operator profile saved: {operator_profile_output}", flush=True)
