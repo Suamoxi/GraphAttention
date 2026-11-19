@@ -150,8 +150,9 @@ def worker(manifest_file: Path, execution: str, report_path: Path, audit_dir: Pa
             )
         stable = records[1:]
         wanted = (
-            "preparation_seconds", "transfer_seconds", "forward_backward_seconds",
-            "optimizer_seconds", "update_seconds", "total_step_seconds",
+            "preparation_seconds", "transfer_seconds", "forward_seconds",
+            "backward_seconds", "forward_backward_seconds", "optimizer_seconds",
+            "update_seconds", "total_step_seconds",
         )
         measurements[str(side)] = {
             "case": record["case"], "snapshot_id": int(record["snapshot_id"]),
