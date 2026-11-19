@@ -44,7 +44,7 @@ def measured_steps(report: dict, *, warmup: int, expected_steps: int) -> dict | 
 
 
 def run_pair(*, root: Path, case_spec: str, output_dir: Path,
-             steps: int, seed: int) -> dict:
+             steps: int, seed: int, single_graph_forward: bool = False) -> dict:
     if steps < 3:
         raise ValueError("at least three steps required: one JIT warmup and two measurements")
     case = inspect_case(root, case_spec)
@@ -60,6 +60,7 @@ def run_pair(*, root: Path, case_spec: str, output_dir: Path,
         "steps_per_backend": steps,
         "warmup_steps_excluded": 1,
         "seed": seed,
+        "single_graph_forward": bool(single_graph_forward),
         "model": {
             "architecture": "AlternatingDilatedGeometricDiT",
             "hidden_dim": 128, "num_heads": 4, "num_layers": 10,
@@ -91,6 +92,8 @@ def run_pair(*, root: Path, case_spec: str, output_dir: Path,
             "--activation-checkpointing",
             "--sparse-backend", backend,
         ]
+        if single_graph_forward:
+            command.append("--single-graph-forward")
         start = time.perf_counter()
         with process_log.open("w") as log:
             log.write(f"backend={backend} revision={summary['code_revision']}\n")
@@ -108,6 +111,7 @@ def run_pair(*, root: Path, case_spec: str, output_dir: Path,
             "process_log": str(process_log),
             "graph": report.get("graph"),
             "model_parameters": report.get("model_parameters"),
+            "single_graph_forward": report.get("single_graph_forward"),
             "initial_weights_sha256": report.get("initial_weights_sha256"),
             "gpu": report.get("gpu"),
             "measurements": measured,
@@ -131,6 +135,8 @@ def run_pair(*, root: Path, case_spec: str, output_dir: Path,
     )
     if (
         a is not None and b is not None and same_graph and same_weights
+        and baseline["single_graph_forward"] == candidate["single_graph_forward"]
+        and baseline["single_graph_forward"] == single_graph_forward
         and baseline["exit_code"] == 0 and candidate["exit_code"] == 0
         and baseline["model_parameters"] == candidate["model_parameters"]
     ):
@@ -165,10 +171,15 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--steps", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--single-graph-forward", action="store_true",
+        help="Benchmark-only: use existing non-packed model path for one graph",
+    )
     args = parser.parse_args()
     report = run_pair(
         root=args.root, case_spec=args.case, output_dir=args.output_dir,
         steps=args.steps, seed=args.seed,
+        single_graph_forward=args.single_graph_forward,
     )
     if report["status"] != "completed_not_accepted":
         raise SystemExit(2)
