@@ -241,6 +241,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         conditioning: torch.Tensor | None = None,
         attention_edge_indices: Mapping[str, torch.Tensor] | None = None,
         periodic_length: float | None = None,
+        graph_sizes: tuple[int, ...] | None = None,
     ) -> torch.Tensor:
         _validate_model_inputs(
             inputs,
@@ -255,11 +256,20 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             device=inputs.device,
         )
         if batch_index is not None:
-            _validate_packed_batch_index(
+            counts = _validate_packed_batch_index(
                 batch_index,
                 num_nodes=inputs.shape[0],
                 device=inputs.device,
             )
+            if graph_sizes is not None and (
+                type(graph_sizes) is not tuple
+                or tuple(int(count) for count in counts) != graph_sizes
+            ):
+                raise ValueError(
+                    "graph_sizes must exactly match the contiguous packed graph batch"
+                )
+        elif graph_sizes is not None:
+            raise ValueError("graph_sizes requires a packed batch_index")
 
         _validate_edge_index(
             edge_index,
@@ -372,6 +382,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
                     fixed_block=block,
                     fixed_edges=layer_edge_index,
                     fixed_batch_index=batch_index,
+                    fixed_graph_sizes=graph_sizes,
                     fixed_sparse_adj=layer_sparse_adj,
                 ) -> torch.Tensor:
                     kwargs: dict[str, object] = {"edge_displacement": displacement}
@@ -381,6 +392,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
                         state, condition, edge_index=fixed_edges,
                         batch_index=fixed_batch_index,
                         attention_kwargs=kwargs,
+                        graph_sizes=fixed_graph_sizes,
                     )
 
                 hidden = checkpoint(
@@ -398,6 +410,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
                     edge_index=layer_edge_index,
                     batch_index=batch_index,
                     attention_kwargs=attention_kwargs,
+                    graph_sizes=graph_sizes,
                 )
             if self._block_memory_observer is not None:
                 self._block_memory_observer(layer_index)
@@ -406,4 +419,5 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             hidden,
             condition_embedding,
             batch_index=batch_index,
+            graph_sizes=graph_sizes,
         )
