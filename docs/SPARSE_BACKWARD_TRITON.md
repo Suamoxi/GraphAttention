@@ -584,3 +584,82 @@ sequential reference, and marks the experiment failed_or_review_required
 if numerical gates are violated. An additional direct packed-index-vs-
 segmented full-parameter audit is always recorded separately on success.
 No scientific trainer/default optimizer changes were made.
+
+### 511557 two-real-snapshot segmented multigraph result (Stage 0 PASS)
+
+Real Re54/Ma0.3:65 snapshots solut_hit_00000051.h5 and
+solut_hit_00000052.h5, same 65^3 mesh/topology, different solution
+fields. Computation revision eeec0d2ee58d4fcb570b9bcfcbc474994b858e00.
+Drive artifacts:
+https://drive.google.com/drive/folders/17IXucZQ1KAlZAXJ0tNEKPJkeAFBx-xl8
+Scratch root:
+  /scratch/coop/theret/GraphAttention_runs/m47_segmented_multigraph_v1/job_511557_0
+
+All three fresh-GPU subprocesses completed with no errors. Both
+samples have 274625 nodes; the disjoint packed graph has 549250 nodes,
+3244800 local directed edges and 9583860 exact-two-hop directed edges.
+Two real snapshots share physical Re/Ma and mesh: Stage 0 does NOT
+establish mixed-regime or mixed-resolution behavior. Same input/topology
+hashes and 3051845 starting parameters across all modes.
+
+Triton CSR + 10-layer M37, checkpointed, FP32, AdamW(lr=1e-4):
+synchronized unprofiled median over optimizer steps 2-4; step 1
+excluded for warmup and full-tensor gradient/update audit.
+
+| Execution | Forward (ms) | Backward + loss (ms) | Full step (ms) | Peak allocated (GiB) | Peak reserved (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| packed_index | 301.149 | 2640.989 | 2943.275 | 13.878 | 15.699 |
+| packed_segmented | 291.555 | 583.127 | 876.119 | 13.878 | 15.699 |
+| sequential_accum | 281.606 | 577.104 | 860.268 | 6.442 | 7.656 |
+
+Packed-index -> segmented: 3.359x faster full step; the backward
+improvement is ~2057.861 ms. Segmented is ~1.84% SLOWER than sequential
+accumulation on this particular single-GH200 B=2 workload, and uses
+2.15x the allocated peak GPU memory. While graph/step timings were
+stable, only three post-warmup measurements are available; do not
+generalize the 1.84% distinction beyond the tested configuration.
+
+All 3051845 named parameter gradients and updated weights passed
+the complete first-step audit:
+- packed_segmented vs packed_index: maximum gradient difference 0;
+  maximum post-AdamW parameter difference 0; equal all four losses.
+- packed_segmented vs sequential_accum: maximum gradient difference
+  2.4139881e-6 (final_layer.projection.weight), maximum post-AdamW
+  parameter difference 2.1827873e-11; maximum 4-step loss difference
+  2.3841858e-7. Zero elements exceeded gradient tolerances
+  atol=5e-4,rtol=5e-3 or post-update tolerances
+  atol=3e-6,rtol=2e-4.
+
+Interpretation: segmented expand+cat eliminates the large packed-index
+backward bottleneck without changing the tested model numerics, but
+it DOES NOT demonstrate an efficiency advantage over sequential
+single-graph gradient accumulation for two large graphs on one GPU.
+The packed approach materializes graph-wide modulation and carries
+both graphs' activations simultaneously. The sequential reference
+remains the recommended memory-efficient baseline for this regime.
+
+Stage 1 is justified as a **separate mixed-resolution feasibility
+experiment**, NOT as evidence that packed batching will be faster.
+It may exceed resource limits; never infer success from Stage 0.
+Submit a separate job after updating a clean main branch:
+
+~~~bash
+cd /scratch/coop/theret/GraphAttention
+git status --short
+git pull --ff-only origin main
+sbatch --array=1 scripts/slurm/m47_segmented_multigraph_ablation.slurm
+~~~
+
+For array job <jobid>, task 1:
+- /scratch/coop/theret/GraphAttention_runs/m47_seg_batch_<jobid>_1.out
+- /scratch/coop/theret/GraphAttention_runs/m47_seg_batch_<jobid>_1.err
+- /scratch/coop/theret/GraphAttention_runs/m47_segmented_multigraph_v1/job_<jobid>_1/summary.json
+- /scratch/coop/theret/GraphAttention_runs/m47_segmented_multigraph_v1/job_<jobid>_1/manifest.json
+- <output>/<packed_index|packed_segmented|sequential_accum>/report.json
+- <output>/<packed_index|packed_segmented|sequential_accum>/process.log
+- <output>/<packed_index|packed_segmented|sequential_accum>/audit.pt
+
+No scientific M47 trainer, normalization constants, or conditioning
+parameters were changed. Probe-only normalization is used. Re/Ma values
+are dataset labels for Stage 1; the M43 probe conditions on Flow
+Matching time rather than explicit physical Re/Ma parameters.
