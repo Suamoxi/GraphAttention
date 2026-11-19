@@ -165,12 +165,14 @@ class TwoScaleDiNAT(nn.Module):
         coarse_edges: torch.Tensor, coarse_dilated: torch.Tensor,
         refinement: int | torch.Tensor, time: torch.Tensor,
         coarse_batch_index: torch.Tensor | None = None,
+        coarse_graph_sizes: tuple[int, ...] | None = None,
         periodic_length: float,
     ) -> torch.Tensor:
         s = self._scale(refinement, time=time)
         return self.coarse_encoder(
             coarse_state, edge_index=coarse_edges, coords=coarse_coords,
             batch_index=coarse_batch_index, conditioning=s,
+            graph_sizes=coarse_graph_sizes,
             attention_edge_indices={"dilated": coarse_dilated},
             periodic_length=periodic_length,
         )
@@ -186,6 +188,8 @@ class TwoScaleDiNAT(nn.Module):
         periodic_length: float, coarse_spacing: float,
         fine_batch_index: torch.Tensor | None = None,
         coarse_batch_index: torch.Tensor | None = None,
+        fine_graph_sizes: tuple[int, ...] | None = None,
+        coarse_graph_sizes: tuple[int, ...] | None = None,
         cached_coarse: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if state.ndim != 2 or state.shape[1] != self.channels or baseline.shape != state.shape:
@@ -201,12 +205,14 @@ class TwoScaleDiNAT(nn.Module):
         fine_kwargs = dict(
             edge_index=fine_edges, coords=fine_coords,
             batch_index=fine_batch_index, conditioning=conditions,
+            graph_sizes=fine_graph_sizes,
             attention_edge_indices={"dilated": fine_dilated},
             periodic_length=periodic_length,
         )
         coarse_kwargs = dict(
             edge_index=coarse_edges, coords=coarse_coords,
             batch_index=coarse_batch_index, conditioning=conditions,
+            graph_sizes=coarse_graph_sizes,
             attention_edge_indices={"dilated": coarse_dilated},
             periodic_length=periodic_length,
         )
@@ -217,6 +223,7 @@ class TwoScaleDiNAT(nn.Module):
                 coarse_edges=coarse_edges, coarse_dilated=coarse_dilated,
                 refinement=refinement, time=time,
                 coarse_batch_index=coarse_batch_index,
+                coarse_graph_sizes=coarse_graph_sizes,
                 periodic_length=periodic_length,
             )
         hf = self.fine_encoder(torch.cat((state, baseline), dim=1), **fine_kwargs)
