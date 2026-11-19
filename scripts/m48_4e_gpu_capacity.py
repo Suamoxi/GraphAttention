@@ -188,14 +188,18 @@ def authentic_teacher_grids(ms_sr_root: Path, normalization_file: Path) -> tuple
 
 
 def build_geometry(fine_side: int, core_side: int, depth: int,
-                   mode: str, periodic_length: float):
+                   mode: str, periodic_length: float, *,
+                   origin: tuple[int, int, int] | None = None):
     from graph_attention.geometry.two_scale_targeted import build_targeted_two_scale_patch
     from scripts.m48_ms_sr_train import _owned_cube
 
     if fine_side not in (48, 80) or core_side > fine_side or depth < 1:
         raise ValueError("unsupported M48 geometry configuration")
     # Deliberately cross the x and z periodic seams, and use an odd y origin.
-    origin = (fine_side - 3, fine_side // 3 + 1, fine_side - 2)
+    if origin is None:
+        origin = (fine_side - 3, fine_side // 3 + 1, fine_side - 2)
+    if len(origin) != 3 or any(not isinstance(x, int) or x < 0 or x >= fine_side for x in origin):
+        raise ValueError("invalid fine-grid patch origin")
     owned = _owned_cube(fine_side, core_side, origin)
     started = time.perf_counter()
     plan, geometry = build_targeted_two_scale_patch(

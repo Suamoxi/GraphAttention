@@ -580,3 +580,23 @@ random origins, CEDAR preprocessing efficiency, convergence or
 resolution generalization. See
 `docs/M48_4E_GPU_CAPACITY_PHASE_A.md` and
 `scripts/m48_4e_gpu_capacity.py`.
+
+
+## M48.4e A1 — Depth and halo geometry qualification (2026-11-19)
+
+A1 is a **CPU-only measurement** of the existing exact M48 dependency closure,
+with no changes to network, filtered fields, CEDAR, or periodic indexing.
+The A1 depth `d` means `d` fine-pre, `d` fine-post, `d` coarse-static
+blocks, plus `d` coarse-dynamic blocks in dynamic mode. Each sequence
+alternates exact one-hop and exact-two-hop attention as already implemented.
+
+Owned cores remain periodic on the **original full lattice**, and halo
+boundaries are not given artificial periodic edges. Source metadata must pass
+44-teacher manifest and normalization authentication; physical periodic
+lengths are case-dependent, with one authenticated representative length
+per grid used for the topology-only geometry audit.
+
+Report explicit fine/coarse node and edge counts, read-to-owned ratio,
+read fractions and layer-weighted **structural work proxies**. Idealized
+full-coverage ratios do not constitute measured GPU execution speed or
+training convergence. See `docs/M48_4E_A1_DEPTH_HALO_GEOMETRY.md`.

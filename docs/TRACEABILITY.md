@@ -1596,3 +1596,16 @@ Status: **locally syntax-checked and nine CPU tests passed, one real-repo
 parity test skipped in standalone container; GPU Calypso evidence pending**.
 No training was started. Documented in
 `docs/M48_4E_GPU_CAPACITY_PHASE_A.md`.
+
+
+## M48.4e A1 — Depth-dependent halo geometry audit (2026-11-19)
+
+| Scope | Code / evidence | Qualification status |
+|---|---|---|
+| Exact M48 static/dynamic geometry with depth 2/4/6/8, owned cores 12/16/20/24, two periods-compatible grid families, seam and interior origins | `scripts/m48_4e_a1_halo_geometry.py` calls the unchanged production `build_targeted_two_scale_patch` through the shared `scripts/m48_4e_gpu_capacity.py:build_geometry` wrapper | Local Python tests passed; real Calypso geometry sweep pending |
+| Teacher-only provenance and physical-period handling | Existing `authentic_teacher_grids`, manifest SHA and 44-teacher frozen normalization selection | Existing metadata qualification reused; no CFD fields opened |
+| Read-node/edge support, read amplification, idealized full-coverage layer-work proxies | `geometry_metrics` and `summarize` with exact read/edge sets and analytic full Cartesian reference degrees 6/18, r=2 cross support 27/8 | Comparison metrics only; do not interpret as measured GPU wall-time acceleration |
+| CPU-only per-trial memory and time boundaries with fail-closed receipts | `scripts/slurm/m48_4e_a1_halo_geometry.slurm`, worker subprocesses, `summary.json` / `trials.csv` | CPU unit tests passed; cluster job pending |
+
+No model, CEDAR projection, physical training data, or normalization was changed.
+Full method and launch contract: `docs/M48_4E_A1_DEPTH_HALO_GEOMETRY.md`.
