@@ -4,7 +4,7 @@ Feasibility only, NOT scientific training: per-snapshot standardization
 is deliberately probe-only. No checkpoint or trained weights are saved.
 Read one real AVBP HDF5 snapshot/mesh via the existing dataset and
 GraphTaskCollator; build real exact-two-hop edges; perform two full
-M37 10-layer torch_sparse AdamW training steps on one GPU.
+M37 10-layer AdamW training steps on one GPU (selectable sparse backend).
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def normalized_probe_state(batch):
 
 
 def model_config(*, hidden_dim: int = 128, num_layers: int = 10,
-                 num_heads: int = 4):
+                 num_heads: int = 4, sparse_backend: str = "torch_sparse"):
     if hidden_dim <= 0 or num_layers <= 0 or num_heads <= 0:
         raise ValueError("model widths and layer count must be positive")
     if hidden_dim % num_heads:
@@ -106,7 +106,9 @@ def model_config(*, hidden_dim: int = 128, num_layers: int = 10,
     cfg.dropout = 0.0
     cfg.qkv_bias = True
     cfg.out_proj_bias = False
-    cfg.sparse_attention_backend = "torch_sparse"
+    if sparse_backend not in {"torch_sparse", "torch_sparse_triton"}:
+        raise ValueError("unsupported M37 sparse attention backend")
+    cfg.sparse_attention_backend = sparse_backend
     cfg.include_self_attention = False
     return cfg
 
@@ -128,6 +130,7 @@ def one_case_probe(
     hidden_dim: int = 128, num_layers: int = 10, num_heads: int = 4,
     activation_checkpointing: bool = False,
     profile_blocks: bool = False,
+    sparse_backend: str = "torch_sparse",
 ) -> dict:
     if num_steps < 1 or expected_side < 3:
         raise ValueError("num_steps must be >=1 and expected_side >=3")
@@ -142,7 +145,7 @@ def one_case_probe(
             "hidden_dim": hidden_dim, "num_layers": num_layers,
             "num_heads": num_heads, "mlp_ratio": 4,
             "activation_checkpointing": bool(activation_checkpointing),
-            "sparse_attention_backend": "torch_sparse",
+            "sparse_attention_backend": sparse_backend,
             "include_self_attention": False,
         },
         "host": socket.gethostname(),
@@ -228,6 +231,7 @@ def one_case_probe(
         t0 = time.perf_counter()
         cfg = model_config(
             hidden_dim=hidden_dim, num_layers=num_layers, num_heads=num_heads,
+            sparse_backend=sparse_backend,
         )
         cfg.activation_checkpointing = bool(activation_checkpointing)
         generator = torch.Generator(device=device).manual_seed(seed + 1000)
@@ -347,6 +351,11 @@ def main() -> None:
     p.add_argument("--layers", type=int, default=10)
     p.add_argument("--heads", type=int, default=4)
     p.add_argument(
+        "--sparse-backend",
+        choices=("torch_sparse", "torch_sparse_triton"),
+        default="torch_sparse",
+    )
+    p.add_argument(
         "--activation-checkpointing", action="store_true",
         help="Non-reentrant activation rematerialization for each M37 DiT block",
     )
@@ -361,6 +370,7 @@ def main() -> None:
         hidden_dim=a.hidden_dim, num_layers=a.layers, num_heads=a.heads,
         activation_checkpointing=a.activation_checkpointing,
         profile_blocks=a.profile_blocks,
+        sparse_backend=a.sparse_backend,
         output=a.output,
     )
     if result["status"] != "ok":
