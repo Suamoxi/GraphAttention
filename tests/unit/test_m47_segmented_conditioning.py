@@ -199,10 +199,49 @@ def test_checkpointed_m37_equal_graph_loss_forward_grads_and_adamw_update(
                     actual[2][key], original[2][key],
                     atol=1e-4, rtol=1e-3, msg=f"{mode} gradient {key}",
                 )
-            torch.testing.assert_close(
-                actual[5][key], original[5][key],
-                atol=1e-5, rtol=1e-4, msg=f"{mode} update {key}",
-            )
+            if sequential_cuda and original[2][key] is not None:
+                # AdamW step 1 normalizes each gradient with |g|+eps.
+                # Different CUDA reduction orders can change the sign of
+                # a nearly zero gradient, causing O(2*lr) parameter-update
+                # differences even when gradients pass close comparison.
+                # Do NOT relax the packed/segmented update parity gate.
+                # Instead verify that the sequential update discrepancy
+                # is explained by its measured gradient discrepancy.
+                old_grad = original[2][key]
+                new_grad = actual[2][key]
+                eps = 1.0e-8  # PyTorch AdamW default
+                lr = 1.0e-4
+                predicted_update_difference = lr * (
+                    old_grad / (old_grad.abs() + eps)
+                    - new_grad / (new_grad.abs() + eps)
+                )
+                observed_update_difference = actual[5][key] - original[5][key]
+                max_abs_update_difference = float(
+                    observed_update_difference.abs().max()
+                )
+                max_abs_formula_residual = float(
+                    (observed_update_difference - predicted_update_difference)
+                    .abs().max()
+                )
+                if max_abs_update_difference > 1e-5:
+                    print(
+                        f"[M47 SEGMENTED ADAMW] backend={backend} "
+                        f"mode=sequential parameter={key} "
+                        f"max_abs_update_difference={max_abs_update_difference:.9e} "
+                        f"max_abs_formula_residual={max_abs_formula_residual:.9e}",
+                        flush=True,
+                    )
+                torch.testing.assert_close(
+                    observed_update_difference,
+                    predicted_update_difference,
+                    atol=1e-5, rtol=1e-4,
+                    msg=f"sequential AdamW gradient-update consistency {key}",
+                )
+            else:
+                torch.testing.assert_close(
+                    actual[5][key], original[5][key],
+                    atol=1e-5, rtol=1e-4, msg=f"{mode} update {key}",
+                )
 
 
 def test_m37_segmented_forward_rejects_mismatched_packed_lengths():
