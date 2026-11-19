@@ -114,12 +114,12 @@ def model_config(*, hidden_dim: int = 128, num_layers: int = 10,
     return cfg
 
 
-def _model_forward(model: torch.nn.Module, problem):
+def _model_forward(model: torch.nn.Module, problem, *, single_graph_forward: bool = False):
     return model(
         problem.inputs,
         edge_index=problem.edge_index,
         coords=problem.coords,
-        batch_index=problem.batch_index,
+        batch_index=None if single_graph_forward else problem.batch_index,
         conditioning=problem.conditioning,
         attention_edge_indices=problem.attention_edge_indices,
     )
@@ -132,6 +132,7 @@ def one_case_probe(
     activation_checkpointing: bool = False,
     profile_blocks: bool = False,
     sparse_backend: str = "torch_sparse",
+    single_graph_forward: bool = False,
     operator_profile_step: int | None = None,
     operator_profile_output: Path | None = None,
 ) -> dict:
@@ -155,6 +156,7 @@ def one_case_probe(
             "activation_checkpointing": bool(activation_checkpointing),
             "sparse_attention_backend": sparse_backend,
             "include_self_attention": False,
+            "single_graph_forward": bool(single_graph_forward),
         },
         "host": socket.gethostname(),
         "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
@@ -162,6 +164,7 @@ def one_case_probe(
         "pytorch_version": torch.__version__,
         "wall_seconds": {}, "per_step": [],
         "activation_checkpointing": bool(activation_checkpointing),
+        "single_graph_forward": bool(single_graph_forward),
         "profile_blocks": bool(profile_blocks),
         "operator_profile_step": operator_profile_step,
         "operator_profile_output": str(operator_profile_output) if operator_profile_output else None,
@@ -246,6 +249,15 @@ def one_case_probe(
         t0 = time.perf_counter()
         batch = task_batch_to_device(batch_host, device=device, dtype=torch.float32)
         batch = normalized_probe_state(batch)
+        if single_graph_forward:
+            # The M43 probe has exactly one sample, but verify that this
+            # optional fast path is not used on a multi-graph batch.
+            if (batch.batch_index is None
+                    or batch.conditioning.shape[0] != 1
+                    or not bool((batch.batch_index == 0).all())):
+                raise ValueError(
+                    "single_graph_forward requires one packed graph with all-zero batch_index"
+                )
         torch.cuda.synchronize(device)
         report["wall_seconds"][stage] = time.perf_counter() - t0
         report["gpu_after_transfer"] = gpu_memory()
@@ -320,10 +332,10 @@ def one_case_probe(
 
             stage = f"forward_{iteration+1}"
             if profiler is None:
-                prediction = _model_forward(model, problem)
+                prediction = _model_forward(model, problem, single_graph_forward=single_graph_forward)
             else:
                 with torch.profiler.record_function("CSR_PROFILE_FORWARD"):
-                    prediction = _model_forward(model, problem)
+                    prediction = _model_forward(model, problem, single_graph_forward=single_graph_forward)
             torch.cuda.synchronize(device)
             forward_seconds = time.perf_counter() - t0
 
@@ -450,6 +462,10 @@ def main() -> None:
         "--profile-blocks", action="store_true",
         help="Synchronize and record GPU allocated/reserved memory after each forward block",
     )
+    p.add_argument(
+        "--single-graph-forward", action="store_true",
+        help="Benchmark-only: pass batch_index=None for a verified single graph",
+    )
     p.add_argument("--operator-profile-step", type=int)
     p.add_argument("--operator-profile-output", type=Path)
     a = p.parse_args()
@@ -460,6 +476,7 @@ def main() -> None:
         activation_checkpointing=a.activation_checkpointing,
         profile_blocks=a.profile_blocks,
         sparse_backend=a.sparse_backend,
+        single_graph_forward=a.single_graph_forward,
         operator_profile_step=a.operator_profile_step,
         operator_profile_output=a.operator_profile_output,
         output=a.output,
