@@ -457,3 +457,106 @@ single-graph broadcast selection an explicit validated capability for
 scientific training, with a full-real-graph parameter/gradient
 equivalence check before enabling any production default. Keep the
 multi-graph packed index path intact.
+
+## M47 experimental heterogeneous multi-graph segmented-conditioning gate
+
+This is a computational test, NOT an architecture/default-trainer change.
+
+The model already supports disjoint packed graphs with different node
+counts and connectivity, through GraphTaskCollator and batch_index.
+However, DiTBlock/DiTFinalLayer previously expanded global adaLN
+modulation via graph_features[batch_index], leading to highly contended
+advanced-indexing backward for large graphs.
+
+An explicitly opt-in graph_sizes=(N1, N2, ...) argument in M37 now
+selects segmented expand+cat of global modulation. This retains packed
+graph edges and independent graph-level Flow Matching time. Each
+expand is a view whose backward is a per-graph reduction; torch.cat
+materializes the forward feature tensor. Default calls still use the
+unchanged packed advanced-indexing implementation. The native single
+graph path is also unchanged.
+
+Three execution modes are compared with the SAME real CFD inputs,
+same generated Flow Matching time/noise per graph and same initial
+weights in fresh CUDA subprocesses:
+
+1. packed_index: original batch_index advanced-indexing broadcast.
+2. packed_segmented: native expand+cat per contiguous graph segment.
+3. sequential_accum: one single-graph fast-path forward/backward per
+   physical graph; accumulate the losses/gradients, then perform a
+   *single* AdamW optimizer update.
+
+All modes use a 10-layer M37 DiNAT-DiT (128 hidden channels, 4 heads),
+checkpointing, FP32, original Triton CSR backward and AdamW(lr=1e-4).
+The scientific FlowMatchingTask.sample_reduced_mse already weights
+the two physical graphs equally by mean channel/node loss, regardless
+of unequal node counts; the sequential reference explicitly reproduces
+that weighting, dividing each individual loss by B=2. The same packed
+Flow Matching training problem is generated per step in all modes.
+The worker uses only probe-only per-snapshot normalization and the
+existing M43 one-sample initialization. No scientific M47.4 model
+checkpoint, normalization, or long training run is changed.
+
+Step 1 is a compilation warmup AND numerical audit: gradients for
+every parameter and all post-AdamW parameters are saved to per-mode
+audit.pt files on scratch. The driver compares these complete tensors
+against sequential accumulation with per-element gradient tolerances
+atol=5e-4, rtol=5e-3; updated parameters atol=3e-6,
+rtol=2e-4, and reports worst deviations and mismatch counts.
+It also checks all input/topology/initial-weight SHA-256 fingerprints
+and the full per-step equal-graph loss sequence (atol=1e-4).
+Steps 2-4 provide synchronized, unprofiled forward/backward/optimizer
+and full-step median timings and peak GPU allocation. All outcomes
+remain "completed_not_accepted" even when numerically acceptable:
+this is computational feasibility, not scientific training.
+
+Run in two stages; do not run mixed 129^3 until 65^3 gate passes:
+
+### Stage 0: two different real CFD snapshots with same 65^3 mesh
+
+~~~bash
+cd /scratch/coop/theret/GraphAttention
+git status --short
+git pull --ff-only origin main
+sbatch --array=0 scripts/slurm/m47_segmented_multigraph_ablation.slurm
+~~~
+
+Task 0 uses two distinct HDF5 snapshots from Re54/Ma0.3:65.
+This is different physical field data, but the same mesh and regime.
+It isolates heterogeneous per-sample inputs without changing resolution.
+
+### Stage 1: different regimes AND different resolutions
+
+~~~bash
+sbatch --array=1 scripts/slurm/m47_segmented_multigraph_ablation.slurm
+~~~
+
+Task 1 uses the existing real Re54/Ma0.3:65 and Re94/Ma0.3:129
+datasets, with distinct mesh connectivity and node counts. Combined:
+2,421,314 nodes; a single GPU is used for all 3 modes.
+Memory feasibility is not assumed; inspect the Slurm outcome.
+Only Flow Matching time is in the M43 probe's model conditioning;
+Re/Ma conditioning belongs to frozen M47 scientific experiments and
+is *not* added to this numerical computational comparison.
+
+For array job <arrayid> task <taskid>, output root:
+  /scratch/coop/theret/GraphAttention_runs/m47_segmented_multigraph_v1/job_<arrayid>_<taskid>/
+
+The Slurm script prints every exact ARTIFACT_* path:
+- /scratch/coop/theret/GraphAttention_runs/m47_seg_batch_<arrayid>_<taskid>.out
+- /scratch/coop/theret/GraphAttention_runs/m47_seg_batch_<arrayid>_<taskid>.err
+- <output>/manifest.json
+- <output>/summary.json
+- <output>/packed_index/{report.json,process.log,audit.pt}
+- <output>/packed_segmented/{report.json,process.log,audit.pt}
+- <output>/sequential_accum/{report.json,process.log,audit.pt}
+
+Return stdout/stderr, manifest/summary and the three reports/logs.
+The raw audit.pt files can remain on scratch unless parity fails;
+the driver already compares *all* first-step gradients/updates and
+records mismatch counts in summary.json. If the gate fails, include
+audit.pt to reproduce exact parameter-level discrepancies.
+
+Do not extrapolate a two-graph test into arbitrary variable-degree
+unstructured-mesh scaling or change scientific training defaults
+without checking task-1 results and physical normalization choices.
