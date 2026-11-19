@@ -48,11 +48,20 @@ echo "CSR Triton benchmark revision=$(git rev-parse HEAD) graph=${SIDE}cube topo
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -c \
     'import torch,triton;print("torch",torch.__version__,"triton",triton.__version__,"cuda",torch.cuda.is_available())'
-# Parity and integration tests must pass before timing is accepted.
-# Keep parity diagnostics visible even when tests pass.
-singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q -s \
-    tests/unit/test_triton_sparse_backward.py \
-    tests/unit/test_dinat_dit.py
+# Use deterministic CUDA for the numerical parity gate only.
+# The original chunked index_add_ forward is nondeterministic on CUDA;
+# deterministic execution avoids stochastic false negatives in gradient parity.
+# Run the latency benchmark separately in its original (non-deterministic) mode.
+singularity exec --nv "${BIND[@]}" "$IMAGE" \
+    env CUBLAS_WORKSPACE_CONFIG=:4096:8 "$PYTHON" -c '
+import sys
+import pytest
+import torch
+
+torch.use_deterministic_algorithms(True)
+print("TRITON_PARITY_DETERMINISTIC=", torch.are_deterministic_algorithms_enabled(), flush=True)
+raise SystemExit(pytest.main(["-q", "-s", *sys.argv[1:]]))
+' tests/unit/test_triton_sparse_backward.py tests/unit/test_dinat_dit.py
 ARGS=()
 if [ "$PROFILE" = YES ]; then ARGS+=(--profile); fi
 singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -u \
