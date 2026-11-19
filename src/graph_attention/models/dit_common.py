@@ -63,12 +63,14 @@ class DiTBlock(nn.Module):
         edge_index: torch.Tensor,
         batch_index: torch.Tensor | None,
         attention_kwargs: Mapping[str, object] | None = None,
+        graph_sizes: tuple[int, ...] | None = None,
     ) -> torch.Tensor:
         graph_modulation = self.adaLN_modulation(condition_embedding)
         node_modulation = _broadcast_graph_features(
             graph_modulation,
             batch_index=batch_index,
             num_nodes=inputs.shape[0],
+            graph_sizes=graph_sizes,
         )
         (
             shift_attn,
@@ -111,12 +113,14 @@ class DiTFinalLayer(nn.Module):
         condition_embedding: torch.Tensor,
         *,
         batch_index: torch.Tensor | None,
+        graph_sizes: tuple[int, ...] | None = None,
     ) -> torch.Tensor:
         graph_modulation = self.adaLN_modulation(condition_embedding)
         node_modulation = _broadcast_graph_features(
             graph_modulation,
             batch_index=batch_index,
             num_nodes=inputs.shape[0],
+            graph_sizes=graph_sizes,
         )
         shift, scale = node_modulation.chunk(2, dim=-1)
         hidden = _modulate(self.norm(inputs), shift, scale)
@@ -438,13 +442,37 @@ def _broadcast_graph_features(
     *,
     batch_index: torch.Tensor | None,
     num_nodes: int,
+    graph_sizes: tuple[int, ...] | None = None,
 ) -> torch.Tensor:
+    """Broadcast per-graph features, with opt-in segmented autograd.
+
+    graph_sizes is a prevalidated contiguous packed-graph size tuple, cached
+    once per batch. Expanding each row creates an inexpensive view; cat
+    materializes the forward values but backward uses per-segment reductions
+    rather than a contended advanced-indexing scatter. This is experimental
+    and never selected by the default training path.
+    """
     if features.ndim != 2:
         raise ValueError("graph features must have shape [B, C]")
     if batch_index is None:
+        if graph_sizes is not None:
+            raise ValueError("graph_sizes requires a packed batch_index")
         if features.shape[0] != 1:
             raise ValueError("single-graph inputs require exactly one graph feature row")
         return features.expand(num_nodes, -1)
+    if graph_sizes is not None:
+        if (len(graph_sizes) != features.shape[0]
+                or any(type(n) is not int or n <= 0 for n in graph_sizes)
+                or sum(graph_sizes) != num_nodes):
+            raise ValueError("graph_sizes must contain one positive integer per packed graph")
+        # Skip cat for B=1: the exact same view/gradient as the fast single graph.
+        if len(graph_sizes) == 1:
+            return features.expand(num_nodes, -1)
+        return torch.cat(
+            [row.expand(count, -1) for row, count in zip(
+                features.split(1, dim=0), graph_sizes, strict=True
+            )], dim=0,
+        )
     return features[batch_index]
 
 
