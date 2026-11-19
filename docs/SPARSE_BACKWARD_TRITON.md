@@ -663,3 +663,75 @@ No scientific M47 trainer, normalization constants, or conditioning
 parameters were changed. Probe-only normalization is used. Re/Ma values
 are dataset labels for Stage 1; the M43 probe conditions on Flow
 Matching time rather than explicit physical Re/Ma parameters.
+
+
+### 511565 heterogeneous real-graph segmented-broadcast Stage 1 result
+
+**Numerical and memory feasibility PASSED; no packed batching advantage
+over sequential accumulation on one GH200. Scientific acceptance remains
+"completed_not_accepted" (short M43 probe-only normalization and FM time
+conditioning; no explicit Ma/Re physical conditioning).**
+
+Job 511565, computation revision
+8746dd0ad701226d822d6486ea8c30920904ec2f, real samples:
+- Re54/Ma0.3 65^3 = 274,625 nodes,
+  /archivenfs/phlusim/HIT_DNS_COMP/Re54/Ma0.3/SOLUT/solut_hit_00000051.h5
+- Re94/Ma0.3 129^3 = 2,146,689 nodes,
+  /archivenfs/phlusim/HIT_DNS_COMP/Re94/Ma0.3/SOLUT/solut_hit_00000051.h5
+- combined packed graph: 2,421,314 nodes, 10-layer M37/DiNAT-DiT,
+  hidden=128, 4 heads, checkpointing, Triton CSR backward, FP32,
+  AdamW(lr=1e-4), equal *per-physical-graph* loss.
+
+Artifacts in Drive:
+https://drive.google.com/drive/folders/1NYTsSmYi_zbc3HiMxXqbKDgrNmfxopPc
+
+Absolute scratch output root:
+  /scratch/coop/theret/GraphAttention_runs/m47_segmented_multigraph_v1/job_511565_1
+Main files: summary.json, manifest.json, plus for each of
+packed_index, packed_segmented, sequential_accum:
+report.json, process.log, audit.pt.
+
+Three processes exit 0, status "ok". Each had 4 optimizer steps;
+step 1 excluded. Synchronized unprofiled medians of steps 2-4:
+
+| Mode | Forward (s) | Backward + loss (s) | Full step (s) | Peak alloc (GiB) | Peak reserved (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| packed_index | 1.343699 | 18.596750 | 19.942264 | 60.934964 | 66.765625 |
+| packed_segmented | 1.318111 | 2.597638 | 3.917339 | 60.934964 | 66.765625 |
+| sequential_accum | 1.268721 | 2.548612 | 3.819152 | 48.140202 | 61.804688 |
+
+The segmented conditioning is 5.090768x faster than packed index
+(full step), principally reducing backward by 15.9991 seconds/step.
+Sequential accumulation is still 2.57% faster than packed segmented,
+with 12.795 GiB (26.6%) less peak *allocated* memory.
+
+Full first-step audit across all 3,051,845 model parameter elements:
+- packed_index vs packed_segmented: exactly equal gradients, post-AdamW
+  parameters, and recorded losses (max differences all 0).
+- either packed mode vs sequential_accum: max |gradient delta| =
+  6.3568354e-5 (final_layer.projection.weight), max |updated-parameter
+  delta| = 2.9103830e-11, max 4-step loss delta = 2.3841858e-7.
+  No elements violated audited gradient (atol=5e-4, rtol=5e-3) or
+  post-update (atol=3e-6, rtol=2e-4) tolerances.
+These are numerical tolerances, not a claim of exact sequential parity.
+
+Stage 0 (two distinct same-regime 65^3 real snapshots) yielded packed
+segmented 0.876119s/step vs sequential 0.860268s/step. Mixed-resolution
+Stage 1 similarly prefers sequential (3.917339s vs 3.819152s). We
+therefore should keep the benchmark-only segmented capability available
+but should not enable it as the scientific training default for
+single-GPU heterogeneous CFD batches.
+
+Next work, if scientifically needed:
+1. Confirm the scientific trainer can accumulate B individual
+   equal-sample losses (each scaled 1/B) before ONE optimizer update.
+   Respect task-native normalization and physical conditioning in
+   scientific runs, not the per-snapshot probe normalization.
+2. Benchmark DDP graph-per-GPU with correct per-graph weighting and
+   communication overhead, if more than one GPU is available.
+3. Consider fused graph-conditioning modulation (avoids materializing
+   N x 6H broadcast) only if packed single-GPU execution becomes a
+   requirement at larger graph counts; no evidence of benefit here.
+
+Do not claim the 65^3 / 129^3 computational comparison validates
+generalization across regimes or physical-condition fidelity.
