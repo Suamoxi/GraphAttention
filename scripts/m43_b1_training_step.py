@@ -132,9 +132,16 @@ def one_case_probe(
     activation_checkpointing: bool = False,
     profile_blocks: bool = False,
     sparse_backend: str = "torch_sparse",
+    operator_profile_step: int | None = None,
+    operator_profile_output: Path | None = None,
 ) -> dict:
     if num_steps < 1 or expected_side < 3:
         raise ValueError("num_steps must be >=1 and expected_side >=3")
+    if operator_profile_step is not None:
+        if not 1 <= operator_profile_step <= num_steps or operator_profile_output is None:
+            raise ValueError("profiling requires a valid step and output path")
+    elif operator_profile_output is not None:
+        raise ValueError("a profiling output requires --operator-profile-step")
     report = {
         "status": "incomplete", "case": case,
         "snapshot_file": str(snapshot.resolve(strict=True)),
@@ -156,6 +163,8 @@ def one_case_probe(
         "wall_seconds": {}, "per_step": [],
         "activation_checkpointing": bool(activation_checkpointing),
         "profile_blocks": bool(profile_blocks),
+        "operator_profile_step": operator_profile_step,
+        "operator_profile_output": str(operator_profile_output) if operator_profile_output else None,
         "forward_block_memory": [],
         "note": (
             "Diagnostic full M37 training steps, one snapshot, probe-only "
@@ -293,6 +302,16 @@ def one_case_probe(
             if profile_blocks:
                 current_step[0] = iteration + 1
             print(f"[M43-B1] Training step {iteration+1}/{num_steps}", flush=True)
+            profiler = None
+            if operator_profile_step == iteration + 1:
+                profiler = torch.profiler.profile(
+                    activities=[
+                        torch.profiler.ProfilerActivity.CPU,
+                        torch.profiler.ProfilerActivity.CUDA,
+                    ],
+                    record_shapes=False, profile_memory=False, with_stack=False,
+                )
+                profiler.start()
             step_start = time.perf_counter()
             optimizer.zero_grad(set_to_none=True)
             problem = task.make_training_problem(batch, generator=generator)
@@ -300,7 +319,11 @@ def one_case_probe(
             t0 = time.perf_counter()
 
             stage = f"forward_{iteration+1}"
-            prediction = _model_forward(model, problem)
+            if profiler is None:
+                prediction = _model_forward(model, problem)
+            else:
+                with torch.profiler.record_function("CSR_PROFILE_FORWARD"):
+                    prediction = _model_forward(model, problem)
             torch.cuda.synchronize(device)
             forward_seconds = time.perf_counter() - t0
 
@@ -309,15 +332,48 @@ def one_case_probe(
             loss = task.training_loss(prediction, problem).mean
             if not bool(torch.isfinite(loss)):
                 raise FloatingPointError("non-finite Flow Matching loss")
-            loss.backward()
+            if profiler is None:
+                loss.backward()
+            else:
+                with torch.profiler.record_function("CSR_PROFILE_BACKWARD"):
+                    loss.backward()
             torch.cuda.synchronize(device)
             backward_seconds = time.perf_counter() - t0
 
             t0 = time.perf_counter()
             stage = f"optimizer_{iteration+1}"
-            optimizer.step()
+            if profiler is None:
+                optimizer.step()
+            else:
+                with torch.profiler.record_function("CSR_PROFILE_ADAMW"):
+                    optimizer.step()
             torch.cuda.synchronize(device)
             optim_seconds = time.perf_counter() - t0
+            if profiler is not None:
+                profiler.stop()
+                operations = []
+                for event in profiler.key_averages():
+                    operations.append({
+                        "op": event.key,
+                        "calls": int(event.count),
+                        "self_device_us": float(getattr(event, "self_device_time_total", 0.0)),
+                        "device_total_us": float(getattr(event, "device_time_total", 0.0)),
+                        "self_cpu_us": float(event.self_cpu_time_total),
+                    })
+                operations.sort(key=lambda item: item["self_device_us"], reverse=True)
+                profile_record = {
+                    "status": "complete",
+                    "scope": "one CUDA-profiled full optimizer step, diagnostic NOT timing",
+                    "case": case,
+                    "backend": sparse_backend,
+                    "step": iteration + 1,
+                    "revision": report["revision"],
+                    "operator_count": len(operations),
+                    "total_self_device_us": sum(item["self_device_us"] for item in operations),
+                    "top_operators": operations[:80],
+                }
+                write_report(operator_profile_output, profile_record)
+                print(f"[M43-B1] operator profile saved: {operator_profile_output}", flush=True)
             report["per_step"].append({
                 "step": iteration + 1,
                 "forward_seconds": forward_seconds,
@@ -382,6 +438,8 @@ def main() -> None:
         "--profile-blocks", action="store_true",
         help="Synchronize and record GPU allocated/reserved memory after each forward block",
     )
+    p.add_argument("--operator-profile-step", type=int)
+    p.add_argument("--operator-profile-output", type=Path)
     a = p.parse_args()
     result = one_case_probe(
         case=a.case, snapshot=a.snapshot, mesh=a.mesh,
@@ -390,6 +448,8 @@ def main() -> None:
         activation_checkpointing=a.activation_checkpointing,
         profile_blocks=a.profile_blocks,
         sparse_backend=a.sparse_backend,
+        operator_profile_step=a.operator_profile_step,
+        operator_profile_output=a.operator_profile_output,
         output=a.output,
     )
     if result["status"] != "ok":
