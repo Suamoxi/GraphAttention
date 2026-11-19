@@ -108,6 +108,7 @@ def run_pair(*, root: Path, case_spec: str, output_dir: Path,
             "process_log": str(process_log),
             "graph": report.get("graph"),
             "model_parameters": report.get("model_parameters"),
+            "initial_weights_sha256": report.get("initial_weights_sha256"),
             "gpu": report.get("gpu"),
             "measurements": measured,
             "error": report.get("error"),
@@ -124,8 +125,12 @@ def run_pair(*, root: Path, case_spec: str, output_dir: Path,
     candidate = summary["backends"][BACKENDS[1]]
     a, b = baseline["measurements"], candidate["measurements"]
     same_graph = baseline["graph"] is not None and baseline["graph"] == candidate["graph"]
+    same_weights = (
+        baseline["initial_weights_sha256"] is not None
+        and baseline["initial_weights_sha256"] == candidate["initial_weights_sha256"]
+    )
     if (
-        a is not None and b is not None and same_graph
+        a is not None and b is not None and same_graph and same_weights
         and baseline["exit_code"] == 0 and candidate["exit_code"] == 0
         and baseline["model_parameters"] == candidate["model_parameters"]
     ):
@@ -137,13 +142,17 @@ def run_pair(*, root: Path, case_spec: str, output_dir: Path,
             "max_absolute_probe_loss_difference": max(
                 abs(x - y) for x, y in zip(a["losses"], b["losses"])
             ),
-            "same_graph": True,
+            "same_graph_and_inputs": True,
+            "same_initial_weights": True,
             "same_model_parameter_count": True,
         }
         summary["status"] = "completed_not_accepted"
     else:
         summary["status"] = "failed_or_incomplete"
-        summary["comparison"] = {"same_graph": same_graph}
+        summary["comparison"] = {
+            "same_graph_and_inputs": same_graph,
+            "same_initial_weights": same_weights,
+        }
     atomic_json(out / "summary.json", summary)
     print(f"[FULL CSR] status={summary['status']} summary={out / 'summary.json'}", flush=True)
     return summary
