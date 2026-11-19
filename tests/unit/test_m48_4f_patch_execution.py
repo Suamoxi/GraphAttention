@@ -72,7 +72,7 @@ def test_three_modes_have_same_owned_loss_gradients_and_adamw(
         )
         assert metrics["owned_fine_nodes"] == 4 * (2**3)
         assert len(metrics["patch_losses"]) == 4
-        assert all(torch.isfinite(v).item() for v in audit["predictions"])
+        assert bool(torch.isfinite(audit["predictions"]).all())
         audits[mode] = (metrics, audit)
     seq = audits["sequential_single"]
     indexed = audits["packed_index"]
