@@ -293,3 +293,87 @@ The Slurm job prints every path before GPU execution. Return stdout,
 stderr, summary, both operator_profile.json and both process.log for
 the first analysis; also return both report.json if a mismatch or failure
 occurs. Its only purpose is operator-level bottleneck identification.
+
+## Operator profile result: 511309 (real 65^3)
+
+Code revision b79f8cc404b8f00768e51299fe850df0b5ed2b27.
+Source:
+  /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_511309/
+Both one-step CUDA operator profiles completed with the same real HDF5
+graph/input/initial weights and the same reported probe losses.
+
+Selected top CUDA event classes in the separately profiled second step:
+
+| Event | torch_sparse | torch_sparse_triton |
+| --- | ---: | ---: |
+| indexing_backward_kernel<float, 4>, 11 launches | 2045.607 ms | 2042.301 ms |
+| aten::_index_put_impl_, 41 calls | 2069.127 ms | 2065.815 ms |
+| aten::index_add_ | 156.170 ms | 60.493 ms |
+| aten::index | 128.569 ms | 57.009 ms |
+| Triton _csr_rows_reduce | N/A | 50.069 ms |
+| sampled_addmm | 31.278 ms | 31.267 ms |
+
+The aten::_index_put_impl_ and raw indexing_backward_kernel entries
+largely represent the same underlying work and MUST NOT be added
+together. CPU cudaStreamSynchronize time is also GPU waiting, not
+independent CPU processing. Key-averaged profiler self-device totals
+are not directly comparable with unprofiled wall time; the profiler
+includes operator and kernel-level entries with overlapping attribution.
+
+Model source suggests a specific reason for the 11 large indexing-backward
+launches: _broadcast_graph_features in dit_common.py indexes
+features[batch_index] in every one of ten DiT blocks and in the final
+layer. For a single packed graph, batch_index is all zeros, producing
+strong scatter-gradient contention. The exact match in launch counts
+is evidence, but the current profile lacks per-call tensor shapes
+and stacks; this source identification remains a hypothesis pending ablation.
+
+## Next: packed versus native single-graph model path (opt-in)
+
+The existing model already uses features.expand(num_nodes, -1)
+when batch_index=None. Its backward reduces graph-conditioning gradients
+rather than gathering/scattering into a single graph row.
+
+M43's real-HDF5 probe now accepts --single-graph-forward as an
+EXPERIMENTAL flag. It validates that the original batch is exactly one
+graph with all-zero batch_index, then calls M37 with batch_index=None.
+The default path is unchanged, as are model weights, attention kernels,
+Flow Matching, AdamW and activation checkpointing.
+
+The controlled four-arm ablation runs:
+- torch_sparse with original packed batch_index
+- torch_sparse_triton with original packed batch_index
+- torch_sparse with native single-graph batch_index=None
+- torch_sparse_triton with native single-graph batch_index=None
+
+All four use the same 65^3 snapshot, seed and ten-layer architecture
+in fresh CUDA processes. Four optimizer steps per arm, with the first
+excluded from unprofiled timing. CPU and CUDA preflight tests check
+model forward and input/conditioning/parameter gradient parity between
+the two paths. The summary also compares probe-only loss sequences
+and matching graph/input/initial-weight SHA-256 hashes. This is NOT
+scientific training; no checkpoints are written. Do not enable this
+path for multi-graph inputs.
+
+Run from clean main:
+~~~bash
+cd /scratch/coop/theret/GraphAttention
+git pull --ff-only origin main
+sbatch scripts/slurm/sparse_backward_triton_single_graph_ablation.slurm
+~~~
+
+For Slurm job <jobid>, output root is:
+  /scratch/coop/theret/GraphAttention_runs/triton_broadcast_ablation_v1/job_<jobid>/
+
+Required artifacts for analysis:
+- /scratch/coop/theret/GraphAttention_runs/csr_broadcast_<jobid>.out
+- /scratch/coop/theret/GraphAttention_runs/csr_broadcast_<jobid>.err
+- <output>/comparison.json
+- <output>/packed/summary.json
+- <output>/single_graph/summary.json
+- <output>/<packed|single_graph>/<torch_sparse|torch_sparse_triton>/report.json
+- <output>/<packed|single_graph>/<torch_sparse|torch_sparse_triton>/process.log
+
+The Slurm script prints ARTIFACT_* for all exact paths before tests.
+If parity fails, investigate numerical differences before proposing
+any default-code optimization or extrapolating savings to larger meshes.
