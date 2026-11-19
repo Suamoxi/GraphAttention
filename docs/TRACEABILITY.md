@@ -1581,3 +1581,18 @@ The M48.4c benchmark is single-GPU and compares GPU graph
 microbatches 1/2/4 with the **same effective four-patch optimizer
 objective**. No DDP or full-lattice Heun generation is introduced.
 See `docs/M48_4C_SAMPLING_GPU_BENCHMARK.md`.
+
+
+## M48.4e — Phase A exact-halo GPU capacity measurement (2026-11-19)
+
+| Item | Classification | Implementation | Qualification | Scientific limitation |
+|---|---|---|---|---|
+| Frozen 44-teacher grid provenance and manifest-only access | Metadata validation | `scripts/m48_4e_gpu_capacity.py:authentic_teacher_grids` | `tests/unit/test_m48_4e_gpu_capacity.py` | Real HDF5 fields not opened in Phase A |
+| Repeated disjoint exact periodic graph geometry | Computational benchmark | `build_geometry`, `pack_repeated_geometry`, `verify_packed_graph` | Unit cross-graph edge checks; parity against M48.4c packing where installed; existing M48 targeted-vs-full tests | One seam-crossing geometry replicated; randomized spatial origins postponed |
+| Static/dynamic model forward/backward and AdamW performance | GPU engineering | `_gpu_trial`, isolated subprocess CUDA worker, network width/depth parameters | CPU unit tests + Grace GPU job pending | Synthetic data; no CEDAR nor physical training outcome |
+| Safe capacity selection for 48^3/80^3 and 12^3..24^3 patches | GPU efficiency | `run_sweep`, `scripts/slurm/m48_4e_gpu_capacity.slurm` | Isolated OOM trials, memory-headroom gate, atomic per-trial JSON/CSV receipts | Not an optimizer batch-size or patch-size scientific recommendation |
+
+Status: **locally syntax-checked and nine CPU tests passed, one real-repo
+parity test skipped in standalone container; GPU Calypso evidence pending**.
+No training was started. Documented in
+`docs/M48_4E_GPU_CAPACITY_PHASE_A.md`.

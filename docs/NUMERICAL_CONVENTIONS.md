@@ -542,3 +542,41 @@ See `docs/M48_4C_SAMPLING_GPU_BENCHMARK.md` for the geometry, exact
 packed-graph edges, numerical tests, memory/throughput measurements,
 and operational gate. Single-GPU performance is unvalidated until
 the Calypso benchmark jobs return.
+
+
+## M48.4e — Phase-A isolated GPU capacity (2026-11-19)
+
+M48.4e Phase A does **not** change any physical formula, training loss,
+CEDAR operator, projected FM source, teacher data or frozen normalization.
+
+It measures the actual static/dynamic TwoScaleDiNAT network
+forward/backward and AdamW on **synthetic** five-channel patch features,
+with exact M48 local/dilated/cross-scale graph supports and periodic
+seam-crossing owned fine cores. The fixed graph template is replicated
+as disconnected components with graph-specific synthetic FM times and
+targets. It is a GPU computational capacity test, **not** training or
+a test of globally projected Gaussian source noise. The original
+44-teacher manifest and frozen normalization are authenticated using
+metadata and hashes only; source field payloads are never opened.
+
+Parameter sweep: fine grids 48^3 and 80^3, owned patch sides
+12/16/20/24, CUDA microbatch 1/2/4/.../256, with production-candidate
+width/depth explicitly tunable. This benchmarking batch size **is the
+optimizer batch size for its synthetic step**; the scientific effective
+batch is not thereby selected. A later supervised training optimizer
+configuration is a separate statistical decision.
+
+CUDA work includes actual forward, backward, gradient clipping and
+AdamW; CUDA event and synchronized wall times are reported separately
+from CPU geometry construction, packing and host-to-device transfer.
+OOM trials execute in isolated processes and are excluded from
+throughput ranking. Rank qualified GPU configurations by owned nodes
+per update second within a GPU reserved-memory safety budget.
+
+Only exact dependent read nodes enter network computations and only
+owned fine nodes contribute to the synthetic MSE. A GPU run at one
+patch size/geometry origin cannot prove equivalent capacity for all
+random origins, CEDAR preprocessing efficiency, convergence or
+resolution generalization. See
+`docs/M48_4E_GPU_CAPACITY_PHASE_A.md` and
+`scripts/m48_4e_gpu_capacity.py`.
