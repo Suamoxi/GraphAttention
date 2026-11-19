@@ -49,6 +49,8 @@ done
 # Static syntax and small checkpointed numerical gradient gate.
 singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -m py_compile \
     scripts/m43_b1_training_step.py scripts/benchmark_triton_full_training.py
+singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q \
+    tests/unit/test_triton_full_training_benchmark.py
 singularity exec --nv "${BIND[@]}" "$IMAGE" \
     env CUBLAS_WORKSPACE_CONFIG=:4096:8 "$PYTHON" -c '
 import pytest
