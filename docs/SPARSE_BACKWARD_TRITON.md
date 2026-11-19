@@ -221,3 +221,75 @@ job_<jobid> directory. Verify peak GPU allocation, equal initial weights,
 equal actual geometry hashes, and median end-to-end speedup before drawing
 scalability conclusions. Full model profiling remains a separate optional
 follow-up.
+
+## Full-model 129^3 result: Slurm 511305 (real Re94/Ma0.3)
+
+Revision e0806c52b14a9b5147b4d57d8c960755f20866c1.
+The original 10-layer M37 checkpointed model was tested with the real
+Re94/Ma0.3 129^3 snapshot: 2146689 nodes, 12780288 one-hop directed
+edges, and 38042874 exact-two-hop directed edges. The 3 CPU and 1
+deterministic CUDA preflight tests passed. Both backends completed four
+Flow Matching AdamW updates, with the first discarded as a warmup.
+
+| Stage | original median | Triton median | Speedup |
+| --- | ---: | ---: | ---: |
+| Forward | 1.192308 s | 1.193019 s | 0.999x |
+| Backward incl. loss | 20.037588 s | 18.257388 s | 1.098x |
+| AdamW | 0.001945 s | 0.001985 s | 0.980x |
+| Full optimizer step | 21.232421 s | 19.452927 s | 1.091x |
+
+Combined step time fell by 1.779494 s (8.38%). Both backends reported
+53.165580 GiB peak allocated GPU and 58.296875 GiB reserved. Both
+reports used the same graph/coordinate/input hashes, initial model
+weight hash, and 3051845 parameters, with identical four reported loss
+values. The comparison summary has status completed_not_accepted,
+consistent with the M43 probe-only normalization.
+
+The isolated 129^3 kernel timings predict five one-hop plus five
+exact-two-hop backward savings of 1.7741 s. Observed full-model backward
+savings are 1.7802 s, a 0.35% difference. This supports transfer of the
+kernel improvement into the checkpointed model. Larger backward costs
+are outside the optimized kernels; their attribution requires profiling.
+
+Original artifacts:
+- /scratch/coop/theret/GraphAttention_runs/csr_full_train_511305.out
+- /scratch/coop/theret/GraphAttention_runs/csr_full_train_511305.err
+- /scratch/coop/theret/GraphAttention_runs/triton_full_training_v1/job_511305/
+  (summary.json, preflight.json, paired report.json and process.log)
+
+The 65^3 and 129^3 results are single-job computational probes, not
+multi-run uncertainty estimates or scientific training validation.
+Do not alter the frozen M47.4 recipe based on these measurements alone.
+
+## Next diagnostic: paired CUDA operator profile on real 65^3
+
+Start at 65^3 to keep profiling overhead and artifact size controlled.
+The new profile runner reuses M43-B1 and records one warmup plus one
+separately CUDA-profiled full checkpointed optimizer step for each
+backend. CUDA operator self times and call counts are summarized into
+JSON; no large Chrome trace or scientific checkpoint is saved by default.
+The profiler changes execution behavior, so its step durations must NOT
+be compared with the earlier unprofiled timing benchmark.
+
+~~~bash
+cd /scratch/coop/theret/GraphAttention
+git pull --ff-only origin main
+sbatch scripts/slurm/sparse_backward_triton_full_profile.slurm
+~~~
+
+Output paths for Slurm job <jobid>:
+- /scratch/coop/theret/GraphAttention_runs/csr_full_profile_<jobid>.out
+- /scratch/coop/theret/GraphAttention_runs/csr_full_profile_<jobid>.err
+- /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_<jobid>/preflight.json
+- /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_<jobid>/summary.json
+- /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_<jobid>/torch_sparse/report.json
+- /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_<jobid>/torch_sparse/operator_profile.json
+- /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_<jobid>/torch_sparse/process.log
+- /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_<jobid>/torch_sparse_triton/report.json
+- /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_<jobid>/torch_sparse_triton/operator_profile.json
+- /scratch/coop/theret/GraphAttention_runs/triton_full_profile_v1/job_<jobid>/torch_sparse_triton/process.log
+
+The Slurm job prints every path before GPU execution. Return stdout,
+stderr, summary, both operator_profile.json and both process.log for
+the first analysis; also return both report.json if a mismatch or failure
+occurs. Its only purpose is operator-level bottleneck identification.
