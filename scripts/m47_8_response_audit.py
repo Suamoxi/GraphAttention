@@ -30,7 +30,7 @@ from scripts.m47_8_response_math import mode_leakage, response_geometry, transfe
 from scripts.train_generative import _load_standardizers
 from scripts.train_m43_b_multires import FIELDS, build_recipe
 
-PROTOCOL = "m47_8a_frozen_cross_channel_response_v1"
+PROTOCOL = "m47_8a_frozen_cross_channel_response_v2"
 CHANNELS = ("rho", "rhou", "rhov", "rhow", "rhoE")
 
 
@@ -49,6 +49,44 @@ def _verify_mode(mode: tuple[int, int, int], side: tuple[int, int, int]) -> None
         raise ValueError("probe modes must be strictly below the FFT Nyquist index")
 
 
+def _periodic_carriers(coords: torch.Tensor, mode: tuple[int, int, int],
+                       grid) -> tuple[tuple[torch.Tensor, torch.Tensor], float]:
+    """Create physical Fourier modes using the *nondimensional* model coordinates.
+
+    The M47 task replaces physical coordinates with x/L_ref. Therefore
+    multiplying model coords by physical rad/m wavenumbers is incorrect.
+    The normalized periodic-box coordinate is independent of L_ref.
+    Check the actual packed node-order FFT before every perturbation.
+    """
+    if grid.periodic_endpoint_mode != "drop_max" or any(
+        full != unique + 1 for full, unique in zip(grid.source_shape, grid.shape)
+    ):
+        raise ValueError("Fourier probe requires endpoint-inclusive periodic mesh")
+    if coords.ndim != 2 or coords.shape != (
+        int(np.prod(grid.source_shape)), 3
+    ) or not torch.isfinite(coords).all():
+        raise ValueError("model coords must be finite [N,3] for this periodic mesh")
+    minimum = coords.amin(dim=0)
+    extent = coords.amax(dim=0) - minimum
+    if not bool(torch.isfinite(extent).all()) or not bool((extent > 0).all()):
+        raise ValueError("degenerate physical box extent in model coords")
+    box_fraction = (coords - minimum) / extent
+    phase = (2 * np.pi) * (box_fraction * coords.new_tensor(mode)).sum(dim=1)
+    carriers = torch.cos(phase), torch.sin(phase)
+    leakage = []
+    for carrier in carriers:
+        field = np.zeros((*grid.shape, 3), dtype=np.float64)
+        field[..., 0] = scatter_unique(carrier.detach().cpu().numpy(), grid)
+        leak = mode_leakage(field, mode)
+        leakage.append(leak)
+        if not np.isfinite(leak) or leak > 1e-6:
+            raise ValueError(
+                f"injected carrier is not Fourier mode {mode}; "
+                f"FFT off-mode leakage={leak:.8g}; check mesh indexing and units"
+            )
+    return carriers, float(max(leakage))
+
+
 def _to_momentum_rate_velocity(velocity_std: torch.Tensor,
                                rho_dns: torch.Tensor, scales: torch.Tensor,
                                u_ref: float) -> np.ndarray:
@@ -65,12 +103,7 @@ def _response(model: torch.nn.Module, batch, state: torch.Tensor,
     """Central finite differences; each column is one physical input channel."""
     amplitude = physical_rms_m_per_s * relative_amplitude
     lengths = tuple(float(n * dx) for n, dx in zip(grid.shape, grid.spacing))
-    frequency = torch.tensor(
-        [2 * np.pi * n / length for n, length in zip(mode, lengths)],
-        device=state.device, dtype=state.dtype,
-    )
-    phase = (batch.coords - batch.coords.amin(dim=0)) @ frequency
-    carriers = (torch.cos(phase), torch.sin(phase))
+    carriers, input_mode_leakage = _periodic_carriers(batch.coords, mode, grid)
     t = torch.full((batch.num_graphs,), time, device=state.device, dtype=state.dtype)
     matrix = np.zeros((3, 3), dtype=np.complex128)
     leakages = []
@@ -100,6 +133,7 @@ def _response(model: torch.nn.Module, batch, state: torch.Tensor,
         "time": time,
         "relative_amplitude": relative_amplitude,
         "amplitude_m_per_s": amplitude,
+        "input_mode_leakage_fraction_max": input_mode_leakage,
         "response_leakage_fraction_mean": float(np.mean(leakages)),
         **stats,
     }
@@ -259,6 +293,8 @@ def run(args: argparse.Namespace) -> dict:
         "reference_scaling": "U_ref, inverse train-only scaler, fixed DNS density",
         "response_definition": "d(U_ref*d(rho*u)/dt / rho_DNS)/d(delta physical u); fixed rho_DNS; NOT instantaneous physical velocity derivative at interpolated Gaussian state",
         "mode_transfer_definition": "complex +k diagonal Fourier response estimated by central +/- perturbations for cos and sin; offmode power measured separately",
+        "coordinate_convention": "model coordinates are nondimensionalized x/L_ref; input carriers use (coords-min)/(max-min) times 2pi integer modes and must pass physical FFT purity check",
+        "v1_correction": "v1 incorrectly multiplied nondimensional coordinates by physical rad/m wavenumbers; v1 response matrices are invalid",
         "note": "A single DNS realization and finite perturbations yield local Jacobians, not a full ensemble-average covariance or proof of spatial invariance. Time endpoints are excluded.",
         "clean_state_estimates": clean_estimates,
         "responses": responses,
