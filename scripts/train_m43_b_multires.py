@@ -226,12 +226,22 @@ def _one_batch(
     return prepared
 
 
-def _forward(model: torch.nn.Module, problem) -> torch.Tensor:
+def _forward(
+    model: torch.nn.Module, problem, *, single_graph_forward: bool = False,
+) -> torch.Tensor:
+    """Opt-in native single-graph broadcast; default packed M43/M47 is unchanged."""
+    if single_graph_forward and (
+        problem.num_graphs != 1
+        or problem.conditioning.shape[0] != 1
+        or problem.batch_index.ndim != 1
+        or problem.batch_index.shape[0] != problem.inputs.shape[0]
+    ):
+        raise ValueError("single_graph_forward requires exactly one packed physical graph")
     return model(
         problem.inputs,
         coords=problem.coords,
         edge_index=problem.edge_index,
-        batch_index=problem.batch_index,
+        batch_index=None if single_graph_forward else problem.batch_index,
         conditioning=problem.conditioning,
         attention_edge_indices=problem.attention_edge_indices,
     )
@@ -273,6 +283,7 @@ def evaluate(
     standardizers: Any,
     collator: GraphTaskCollator,
     device: torch.device,
+    single_graph_forward: bool = False,
 ) -> dict[str, Any]:
     model.eval()
     by_case: dict[str, list[float]] = {}
@@ -285,7 +296,9 @@ def evaluate(
                 standardizers=standardizers, device=device,
             )
             problem = task.make_validation_problem(prepared)
-            aggregate = task.training_loss(_forward(model, problem), problem)
+            aggregate = task.training_loss(_forward(
+                model, problem, single_graph_forward=single_graph_forward,
+            ), problem)
             if aggregate.sample_count != 1:
                 raise RuntimeError("evaluation microbatch must be one physical sample")
             scalar = float(aggregate.mean.detach().cpu())
@@ -322,6 +335,7 @@ def train_epoch(
     max_steps: int | None = None,
     tensorboard: M43TensorBoardMonitor | None = None,
     optimizer_step_offset: int = 0,
+    single_graph_forward: bool = False,
 ) -> dict[str, Any]:
     order = balanced_case_interleave(selected, seed=seed, epoch=epoch)
     model.train()
@@ -354,7 +368,9 @@ def train_epoch(
                 )
                 _synchronize(device)
                 forward_started = time.perf_counter()
-                aggregate = task.training_loss(_forward(model, problem), problem)
+                aggregate = task.training_loss(_forward(
+                model, problem, single_graph_forward=single_graph_forward,
+            ), problem)
                 _synchronize(device)
                 forward_seconds = time.perf_counter() - forward_started
                 if aggregate.sample_count != 1:

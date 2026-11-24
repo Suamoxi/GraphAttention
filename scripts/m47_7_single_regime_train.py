@@ -37,6 +37,14 @@ from scripts.train_m43_b_multires import (
 )
 
 PROTOCOL = "m47_7b_single_regime_extended_training_v1"
+OPTIMIZED_BACKEND = "torch_sparse_triton"
+
+
+def optimized_recipe():
+    """M37 architecture with the previously audited, opt-in Triton CSR backward."""
+    recipe = build_recipe()
+    recipe.sparse_attention_backend = OPTIMIZED_BACKEND
+    return recipe
 
 
 def _write(path: Path, content: dict) -> None:
@@ -64,7 +72,7 @@ def signature(args: argparse.Namespace, split: SplitManifest) -> dict:
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     if not revision:
         raise RuntimeError("missing source revision")
-    recipe = OmegaConf.to_container(build_recipe(), resolve=True)
+    recipe = OmegaConf.to_container(optimized_recipe(), resolve=True)
     ref_file = args.reference_dir / "Re54_Ma0.2.yaml"
     content = {
         "protocol": PROTOCOL,
@@ -93,6 +101,11 @@ def signature(args: argparse.Namespace, split: SplitManifest) -> dict:
         "learning_rate": args.lr,
         "weight_decay": 0.0,
         "physical_samples_per_optimizer_step": 1,
+        "execution": {
+            "sparse_attention_backend": OPTIMIZED_BACKEND,
+            "single_graph_forward": True,
+            "optimizer_update": "one_physical_sample",
+        },
     }
     encoded = json.dumps(content, sort_keys=True, separators=(",", ":"))
     return {"sha256": hashlib.sha256(encoded.encode()).hexdigest(), "content": content}
@@ -202,7 +215,7 @@ def run(args: argparse.Namespace) -> dict:
         collator([data[val_indices[0]]])
     ))
     model, initialization = instantiate_controlled_model(
-        build_recipe(), probe, seed=args.seed,
+        optimized_recipe(), probe, seed=args.seed,
     )
     model = model.to(device=device, dtype=torch.float32)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
@@ -236,11 +249,12 @@ def run(args: argparse.Namespace) -> dict:
             model=model, optimizer=optimizer, task=task,
             standardizers=scalers, collator=collator, device=device,
             generator=generator, tensorboard=None,
+            single_graph_forward=True,
         )
         validation = evaluate(
             data, val_indices,
             model=model, task=task, standardizers=scalers,
-            collator=collator, device=device,
+            collator=collator, device=device, single_graph_forward=True,
         )
         if validation["mean"] < best:
             best = validation["mean"]
@@ -287,6 +301,7 @@ def run(args: argparse.Namespace) -> dict:
         "reference": "audited M47 case-specific scaling",
         "normalization": "single-regime train-only sample-balanced",
         "optimizer_accumulation": 1,
+        "execution": signature_report["content"]["execution"],
         "source_multi_regime_checkpoint_not_loaded": True,
         "training_signature_sha256": signature_report["sha256"],
         "original_split_file": str(args.frozen_run_dir / "split.json"),

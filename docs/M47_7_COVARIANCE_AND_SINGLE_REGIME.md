@@ -14,6 +14,61 @@ improves this coupling. It does NOT yet change graph topology, use a
 correlated Gaussian prior, or isolate long-range context from prior
 choice. Those require subsequent controlled ablations if needed.
 
+## M47.7B fast execution (new training runs only)
+
+The 65^3 real-HDF5 benchmark (Slurm 511501) measured 2.717 s/step
+for packed-index original CSR versus 0.428 s/step for native single-graph
+broadcast plus Triton CSR backward. Later two-graph tests (Slurm 511557
+and 511565) passed complete first-step gradient/AdamW parity within the
+published tolerances. These are computational probes, not guaranteed
+long-run bitwise parity or an empirical M47.7B speed prediction.
+
+M47.7B now **opts into** the already implemented `torch_sparse_triton`
+backward and native `batch_index=None` model forward, strictly when
+`NodeRegressionBatch.num_graphs == 1`. It retains the original
+`train_epoch` and `evaluate` algorithms, task, model weights, graph
+topology, optimizer, source noise, train-only normalization and
+per-sample objective. The shared M43/M47 training calls still use
+their original packed-index path by default. M47.7A remains completely
+unchanged, using the frozen scientific checkpoints.
+
+Training signatures record both the optimized backend and the
+single-graph mode. A new default output root prevents accidentally
+resuming or overwriting legacy runs:
+`m47_7_single_regime_training_fast_v1/` for training and
+`m47_7_single_regime_evaluation_fast_v1/` for evaluation.
+Old checkpoints must not be resumed into the new optimized execution
+trajectory; changing the training code or git commit between epoch 10
+and 30 is rejected by the existing resume-signature check.
+
+The train Slurm preflight now runs the M47.7 physics/split tests,
+CPU/CUDA native single-graph parity tests, and deterministic checkpointed
+Triton full-DiNAT backward test in the production image before training.
+This is **not** a claim that the optimized 30-epoch run has executed.
+Inspect Slurm logs and JSON artifacts before accepting the comparison.
+
+To submit stages and evaluations without interactive dependency handling:
+
+~~~bash
+JOB10=$(sbatch --parsable --export=ALL,M47_7_STAGE=10 \
+  scripts/slurm/m47_7_single_regime.slurm | cut -d ';' -f1)
+JOB30=$(sbatch --parsable --dependency=afterok:$JOB10 \
+  --export=ALL,M47_7_STAGE=30 \
+  scripts/slurm/m47_7_single_regime.slurm | cut -d ';' -f1)
+EVAL10=$(sbatch --parsable --dependency=afterok:$JOB10 \
+  --export=ALL,M47_7_EPOCH=10 \
+  scripts/slurm/m47_7_single_eval.slurm | cut -d ';' -f1)
+EVAL30=$(sbatch --parsable --dependency=afterok:$JOB30 \
+  --export=ALL,M47_7_EPOCH=30 \
+  scripts/slurm/m47_7_single_eval.slurm | cut -d ';' -f1)
+printf 'train10=%s train30=%s eval10=%s eval30=%s\n' \
+  "$JOB10" "$JOB30" "$EVAL10" "$EVAL30"
+~~~
+
+If stage 10 times out or fails, afterok prevents stage 30; diagnose
+the error and resume stage 10 explicitly from `last.pt`. Do not
+change the repository revision between resumes.
+
 ## A: Read-only Fourier covariance audit
 
 Three frozen M47.4 epoch-10 checkpoints (none, mach, mach_re), each
@@ -60,6 +115,8 @@ Case: Re54/Ma0.2, original 65^3 stored mesh and 64^3 unique FFT grid.
   The test split stays sealed; no new random or temporal split.
 - Same M37 DiNAT-DiT architecture, local/exact-two-hop attention,
   no periodic graph modification, and independent Gaussian FM source.
+  M47.7B uses opt-in Triton CSR backward and native single-graph
+  conditioning broadcast; the mathematical model/objective is unchanged.
 - Same model seed (42), learning rate (1e-4), AdamW weight decay 0,
   Flow Matching objective, 1000 time embedding scale, and Heun sampling.
 - Fit a NEW train-only sample-balanced scaler on ONLY this physical
@@ -155,7 +212,7 @@ Include Slurm .out/.err for m47_7_tensor_<jobid>_<task>.
 
 ~~~text
 /scratch/coop/theret/GraphAttention_runs/
-  m47_7_single_regime_training/
+  m47_7_single_regime_training_fast_v1/
     run_signature.json          # required
     split.json                  # required
     normalization.json          # required
@@ -165,7 +222,7 @@ Include Slurm .out/.err for m47_7_tensor_<jobid>_<task>.
     epoch10.pt                  # do NOT upload unless requested
     epoch30.pt                  # do NOT upload unless requested
     standardizers.pt            # do NOT upload unless requested
-  m47_7_single_regime_evaluation/
+  m47_7_single_regime_evaluation_fast_v1/
     epoch10/
       summary.json              # required
       case_Re54_Ma0.2_covariance.json

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import torch
 
 from scripts.m47_7_covariance_metrics import (
     SECTORS, aggregate_spectral_tensor, spectral_tensor_audit,
@@ -106,3 +107,50 @@ def test_single_regime_source_split_preserves_m47_1_membership(
     assert len(filtered.validation_ids) == 5
     assert len(filtered.test_ids) == 3
     assert full == content
+
+
+def test_m47_7_fast_recipe_is_opt_in_and_preserves_m37_architecture():
+    from scripts.train_m43_b_multires import build_recipe
+    from scripts.m47_7_single_regime_train import optimized_recipe
+    original, accelerated = build_recipe(), optimized_recipe()
+    assert original.sparse_attention_backend == "torch_sparse"
+    assert accelerated.sparse_attention_backend == "torch_sparse_triton"
+    a, b = dict(original), dict(accelerated)
+    a.pop("sparse_attention_backend")
+    b.pop("sparse_attention_backend")
+    assert a == b
+    assert accelerated.activation_checkpointing
+
+
+def test_m47_7_single_forward_uses_native_path_and_rejects_multigraph():
+    from scripts.train_m43_b_multires import _forward
+
+    class Recorder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.seen = object()
+
+        def forward(self, inputs, *, batch_index, **kwargs):
+            self.seen = batch_index
+            return inputs
+
+    probe = SimpleNamespace(
+        num_graphs=1,
+        inputs=torch.ones((4, 3)),
+        coords=torch.zeros((4, 2)),
+        edge_index=torch.empty((2, 0), dtype=torch.long),
+        batch_index=torch.zeros(4, dtype=torch.long),
+        conditioning=torch.ones((1, 1)),
+        attention_edge_indices={},
+    )
+    model = Recorder()
+    torch.testing.assert_close(_forward(model, probe), probe.inputs)
+    assert model.seen is probe.batch_index
+    torch.testing.assert_close(
+        _forward(model, probe, single_graph_forward=True), probe.inputs,
+    )
+    assert model.seen is None
+    probe.num_graphs = 2
+    probe.conditioning = torch.ones((2, 1))
+    with pytest.raises(ValueError, match="one packed physical graph"):
+        _forward(model, probe, single_graph_forward=True)
