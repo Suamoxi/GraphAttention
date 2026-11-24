@@ -34,9 +34,9 @@ These matrices are **local linear responses**, not measured output covariances. 
 All Python workloads, including syntax validation and unit tests, run within
 `scripts/slurm/m47_8_response_audit.slurm` on the `grace` Slurm partition.
 
-This launcher reuses the verified M47.7 environment:
+This launcher reuses the verified M47.7 environment without an explicit Slurm memory request:
 
-- `#SBATCH --partition=grace`, `--gres=gpu:1`, 4 CPUs, 64 GiB host RAM.
+- `#SBATCH --partition=grace`, `--gres=gpu:1`, 4 CPUs; no explicit `--mem` directive (cluster defaults apply).
 - Singularity image: `/softs/local_arm/singularity/images/pyg25.03.sif`.
 - Python executable inside the container: `/scratch/coop/theret/avbpML_env/bin/python3`.
 - Bind mounts: `/home`, `/scratch`, and available archives.
