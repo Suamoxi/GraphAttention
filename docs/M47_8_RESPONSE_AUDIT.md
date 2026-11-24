@@ -28,6 +28,46 @@ with forward-normalized FFT. Report the complex 3x3 matrix, its off-diagonal nor
 
 These matrices are **local linear responses**, not measured output covariances. An off-diagonal response is necessary for a general direction-dependent spectral projector but is not sufficient to reproduce the DNS covariance. Even an exact Gaussian transport can have a nearly diagonal Jacobian close to t=0 or t=1; the informative times are strictly interior.
 
+## M47.8A v1 audit correction (2026-11-24)
+
+The first uploaded Grace result (`job_516958_epoch30_val0`, protocol v1)
+contains an error specifically in the Fourier response probe. The
+`NodeRegressionTask` nondimensionalizes graph node coordinates as
+`x/L_ref`, whereas the v1 probe multiplied these coordinates by
+**dimensional** angular wavenumbers in rad/m. The resulting injected
+cosines and sines were **not** the intended Fourier modes.
+
+Therefore all **v1 Fourier response matrices**, apparent off-diagonal
+coefficients, projector-fit diagnostics and response off-mode leakage
+are invalid. Their extreme reported off-mode energy (~99.9996-99.99999%)
+is not evidence that the neural network scatters energy into other
+wavenumbers.
+
+The v1 **clean-state estimates** and **fixed-seed Heun sweep** remain
+valid because neither uses the Fourier carrier construction. The v1
+full-field exact Gaussian oracle is also unaffected.
+
+Protocol `m47_8a_frozen_cross_channel_response_v2` fixes this:
+
+1. For each axis, convert the already nondimensional model coordinates
+   to their periodic-box fraction:
+   `xi=(coords_i-min(coords_i))/(max(coords_i)-min(coords_i))`.
+2. Form `phase=2*pi*sum_i(mode_i*xi)`, which is dimensionless.
+3. Reconstruct each injected cosine/sine on the real 64^3 unique-grid
+   ordering and FFT it **before** evaluating the model.
+4. Abort unless the fraction of injected Fourier energy outside
+   `{+k,-k}` is below `1e-6`, for both carriers. Persist the checked
+   input leakage separately from the model's response leakage.
+
+The new CPU regression test uses a randomly permuted endpoint-inclusive
+mesh with deliberately different nondimensional coordinate extents to
+reproduce and prevent this exact unit mismatch.
+
+**The response test must be rerun with the current repository revision.**
+Use the same frozen checkpoint, validation sample, Gaussian seed, times,
+wavevectors and amplitudes to make the v1/v2 distinction isolated to
+the perturbation construction.
+
 ## Submit through a Grace sbatch job (mandatory)
 
 **Do not execute Python, pytest, or the Gaussian oracle on the login node.**
@@ -103,7 +143,7 @@ standardizers are only read. The audit uses the established `torch_sparse`
 model execution, consistent with the frozen M47.7 evaluation, even though
 the original training used `torch_sparse_triton`.
 
-The response output contains **18 complex response matrices**, three
+The corrected v2 response output contains **18 complex response matrices**, three
 clean-state diagnostics and the Heun control. The two amplitude values
 are a finite-difference linearity test; disagreement warrants smaller
 amplitudes or higher-precision diagnostics.
