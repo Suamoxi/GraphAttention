@@ -154,3 +154,51 @@ def test_m47_7_single_forward_uses_native_path_and_rejects_multigraph():
     probe.conditioning = torch.ones((2, 1))
     with pytest.raises(ValueError, match="one packed physical graph"):
         _forward(model, probe, single_graph_forward=True)
+
+
+def test_m47_7_triton_packed_forward_defaults_to_segmented_broadcast():
+    from scripts.train_m43_b_multires import _forward
+
+    class Recorder(torch.nn.Module):
+        sparse_attention_backend = "torch_sparse_triton"
+
+        def __init__(self):
+            super().__init__()
+            self.batch_index_seen = None
+            self.graph_sizes_seen = None
+
+        def forward(self, inputs, *, batch_index, graph_sizes=None, **kwargs):
+            self.batch_index_seen = batch_index
+            self.graph_sizes_seen = graph_sizes
+            return inputs
+
+    model = Recorder()
+    problem = SimpleNamespace(
+        num_graphs=2,
+        inputs=torch.ones((7, 3)),
+        coords=torch.zeros((7, 2)),
+        edge_index=torch.empty((2, 0), dtype=torch.long),
+        batch_index=torch.tensor([0, 0, 0, 1, 1, 1, 1]),
+        ptr=torch.tensor([0, 3, 7]),
+        conditioning=torch.ones((2, 1)),
+        attention_edge_indices={},
+    )
+    torch.testing.assert_close(_forward(model, problem), problem.inputs)
+    assert model.batch_index_seen is problem.batch_index
+    assert model.graph_sizes_seen == (3, 4)
+
+    problem.num_graphs = 1
+    problem.inputs = problem.inputs[:3]
+    problem.batch_index = torch.zeros(3, dtype=torch.long)
+    problem.conditioning = problem.conditioning[:1]
+    problem.ptr = torch.tensor([0, 3])
+    _forward(model, problem)
+    assert model.graph_sizes_seen == (3,)
+    _forward(model, problem, single_graph_forward=True)
+    assert model.batch_index_seen is None
+    assert model.graph_sizes_seen is None
+
+    model.sparse_attention_backend = "torch_sparse"
+    _forward(model, problem)
+    assert model.batch_index_seen is problem.batch_index
+    assert model.graph_sizes_seen is None
