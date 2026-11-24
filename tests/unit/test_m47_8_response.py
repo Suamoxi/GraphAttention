@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import torch
+from types import SimpleNamespace
 
 from scripts.m47_8_response_math import mode_leakage, response_geometry, transfer_column
-from scripts.m47_8_response_audit import _mode_arg, _verify_mode
+from scripts.m47_8_response_audit import _mode_arg, _verify_mode, _periodic_carriers
 
 
 def _carriers(mode=(1, 1, 0), side=17):
@@ -56,3 +58,49 @@ def test_fourier_modes_and_amplitudes_are_validated():
     with pytest.raises(ValueError, match="Nyquist"):
         _verify_mode((32, 1, 0), (64, 64, 64))
     _verify_mode((8, 6, 5), (64, 64, 64))
+
+
+def test_actual_task_nondimensional_coords_produce_pure_fourier_carriers():
+    # Original periodic mesh has 9^3 nodes, while FFT uses unique 8^3.
+    # Task coords are (physical mesh coords / L_ref), with arbitrary L_ref
+    # and box extents; node ordering can be non-C-order.
+    n = 8
+    mesh = np.indices((n + 1, n + 1, n + 1)).reshape(3, -1).T
+    lengths_in_reference_units = np.array([0.23, 1.17, 3.79])
+    scaled = mesh * (lengths_in_reference_units / n)
+    rng = np.random.default_rng(47)
+    permutation = rng.permutation(scaled.shape[0])
+    model_coords = torch.tensor(scaled[permutation], dtype=torch.float32)
+    grid = SimpleNamespace(
+        shape=(n, n, n),
+        source_shape=(n + 1, n + 1, n + 1),
+        spacing=(1.0e-6, 2.0e-6, 3.0e-6),
+        periodic_endpoint_mode="drop_max",
+        linear_indices=permutation,
+    )
+    mode = (2, 1, 3)
+    carriers, maximum_leak = _periodic_carriers(model_coords, mode, grid)
+    assert maximum_leak < 1e-10
+    assert len(carriers) == 2
+    for carrier in carriers:
+        assert carrier.shape == (n + 1) ** 3
+
+    # Guard against the v1 bug: physical rad/m frequency multiplied by
+    # already nondimensional coordinates aliases to other FFT modes.
+    physical_freq = np.array(mode) * 2 * np.pi / (n * np.array(grid.spacing))
+    bad_phase = (
+        model_coords - model_coords.amin(dim=0)
+    ) @ model_coords.new_tensor(physical_freq)
+    from scripts.m47_6_spatial_metrics import scatter_unique
+    bad = np.zeros((*grid.shape, 3))
+    bad[..., 0] = scatter_unique(torch.cos(bad_phase).numpy(), grid)
+    assert mode_leakage(bad, mode) > 0.1
+
+
+def test_carrier_rejects_wrong_periodic_grid():
+    grid = SimpleNamespace(
+        shape=(8, 8, 8), source_shape=(8, 8, 8),
+        periodic_endpoint_mode="drop_max",
+    )
+    with pytest.raises(ValueError, match="endpoint-inclusive"):
+        _periodic_carriers(torch.zeros((512, 3)), (1, 1, 0), grid)
