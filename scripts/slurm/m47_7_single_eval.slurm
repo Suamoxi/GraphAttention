@@ -16,8 +16,8 @@ IMAGE=${M47_IMAGE:-/softs/local_arm/singularity/images/pyg25.03.sif}
 PYTHON=${M47_PYTHON:-/scratch/coop/theret/avbpML_env/bin/python3}
 DATA=${M47_ARCHIVE_ROOT:-/archivenfs/phlusim/HIT_DNS_COMP}
 REFS=${M47_CONDITION_REFS:-/scratch/coop/theret/GraphAttention_runs/m47_physical_conditions/case_references}
-TRAIN=${M47_7B_TRAIN_DIR:-/scratch/coop/theret/GraphAttention_runs/m47_7_single_regime_training_fast_v1}
-OUT_ROOT=${M47_7B_EVAL_ROOT:-/scratch/coop/theret/GraphAttention_runs/m47_7_single_regime_evaluation_fast_v1}
+TRAIN=${M47_7B_TRAIN_DIR:-/scratch/coop/theret/GraphAttention_runs/m47_7_single_regime_training_segmented_v1}
+OUT_ROOT=${M47_7B_EVAL_ROOT:-/scratch/coop/theret/GraphAttention_runs/m47_7_single_regime_evaluation_segmented_v1}
 EPOCH=${M47_7_EPOCH:-missing}
 case "$EPOCH" in 10|30) ;; *) echo "M47_7_EPOCH must be 10 or 30" >&2; exit 2 ;; esac
 OUT="$OUT_ROOT/epoch$EPOCH"
