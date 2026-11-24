@@ -103,7 +103,8 @@ def signature(args: argparse.Namespace, split: SplitManifest) -> dict:
         "physical_samples_per_optimizer_step": 1,
         "execution": {
             "sparse_attention_backend": OPTIMIZED_BACKEND,
-            "single_graph_forward": True,
+            "single_graph_forward": False,
+            "packed_conditioning": "segmented_expand_cat",
             "optimizer_update": "one_physical_sample",
         },
     }
@@ -249,12 +250,12 @@ def run(args: argparse.Namespace) -> dict:
             model=model, optimizer=optimizer, task=task,
             standardizers=scalers, collator=collator, device=device,
             generator=generator, tensorboard=None,
-            single_graph_forward=True,
+            single_graph_forward=False,
         )
         validation = evaluate(
             data, val_indices,
             model=model, task=task, standardizers=scalers,
-            collator=collator, device=device, single_graph_forward=True,
+            collator=collator, device=device, single_graph_forward=False,
         )
         if validation["mean"] < best:
             best = validation["mean"]
