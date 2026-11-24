@@ -458,6 +458,25 @@ scientific training, with a full-real-graph parameter/gradient
 equivalence check before enabling any production default. Keep the
 multi-graph packed index path intact.
 
+## M47.7B scientific training default (segmented Triton packed conditioning)
+
+The scientific M43/M47 forward helper now passes `graph_sizes` for **packed**
+graph batches whenever the model backend is `torch_sparse_triton`.
+This makes `_broadcast_graph_features` use segmented expand+cat rather
+than contended advanced indexing. For one graph it uses only expand.
+The native `batch_index=None` fast path remains an explicit option.
+Standalone benchmark workers invoke the model directly and still retain
+all three original indexing/segmented/sequential experimental arms.
+
+M47.7B is the first long scientific training runner opted into this
+combination. The frozen `torch_sparse` recipes and old checkpoints are
+unmodified; M47.7B uses separate `m47_7_single_regime_training_segmented_v1`
+artifacts. Review the live Calypso tests and actual training times before
+treating this configuration as scientifically validated or faster than
+the benchmarked native B=1 path.
+
+See `docs/M47_7_COVARIANCE_AND_SINGLE_REGIME.md` for the exact launch.
+
 ## M47 experimental heterogeneous multi-graph segmented-conditioning gate
 
 This is a computational test, NOT an architecture/default-trainer change.
