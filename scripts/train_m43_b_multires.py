@@ -235,6 +235,7 @@ def _forward(
         or problem.conditioning.shape[0] != 1
         or problem.batch_index.ndim != 1
         or problem.batch_index.shape[0] != problem.inputs.shape[0]
+        or not bool((problem.batch_index == 0).all())
     ):
         raise ValueError("single_graph_forward requires exactly one packed physical graph")
     return model(
@@ -368,9 +369,10 @@ def train_epoch(
                 )
                 _synchronize(device)
                 forward_started = time.perf_counter()
-                aggregate = task.training_loss(_forward(
-                model, problem, single_graph_forward=single_graph_forward,
-            ), problem)
+                aggregate = task.training_loss(
+                    _forward(model, problem, single_graph_forward=single_graph_forward),
+                    problem,
+                )
                 _synchronize(device)
                 forward_seconds = time.perf_counter() - forward_started
                 if aggregate.sample_count != 1:
