@@ -28,44 +28,94 @@ with forward-normalized FFT. Report the complex 3x3 matrix, its off-diagonal nor
 
 These matrices are **local linear responses**, not measured output covariances. An off-diagonal response is necessary for a general direction-dependent spectral projector but is not sufficient to reproduce the DNS covariance. Even an exact Gaussian transport can have a nearly diagonal Jacobian close to t=0 or t=1; the informative times are strictly interior.
 
-## Run on Calypso (GPU required)
+## Submit through a Grace sbatch job (mandatory)
 
-From the GraphAttention repository root, activate its existing working Python environment, then:
+**Do not execute Python, pytest, or the Gaussian oracle on the login node.**
+All Python workloads, including syntax validation and unit tests, run within
+`scripts/slurm/m47_8_response_audit.slurm` on the `grace` Slurm partition.
 
-```bash
-git pull --rebase origin main
-python -m pytest -q tests/unit/test_m47_8_response.py tests/unit/test_m47_8_gaussian_oracle.py tests/unit/test_m47_7_covariance.py
-TRAIN=/scratch/coop/theret/GraphAttention_runs/m47_7_single_regime_training_fast_v1
-OUT=/scratch/coop/theret/GraphAttention_runs/m47_8a_cross_channel_epoch30_v1
-python -m scripts.m47_8_response_audit \
-  --train-dir "$TRAIN" \
-  --epoch 30 \
-  --validation-index 0 \
-  --times 0.25 0.5 0.75 \
-  --modes 2,2,0 4,3,1 8,6,5 \
-  --amplitudes 0.04 0.08 \
-  --sampler-steps 25 50 100 \
-  --output-dir "$OUT"
-```
+This launcher reuses the verified M47.7 environment:
 
-The command **must execute on a Calypso GPU allocation**; it is not an interactive-login-node workload. To compare with additional frozen validation DNS, choose a new output path and `--validation-index 1` (through 4). The training split and code revision are checked from `run_signature.json`; checkpoint weights, split, scalers and DNS files are read only. A pre-existing output directory is rejected. The audit forward uses the established `torch_sparse` implementation, as did the frozen M47.7 evaluation; the original accelerated training checkpoint used `torch_sparse_triton`.
+- `#SBATCH --partition=grace`, `--gres=gpu:1`, 4 CPUs, 64 GiB host RAM.
+- Singularity image: `/softs/local_arm/singularity/images/pyg25.03.sif`.
+- Python executable inside the container: `/scratch/coop/theret/avbpML_env/bin/python3`.
+- Bind mounts: `/home`, `/scratch`, and available archives.
+- Frozen source: `m47_7_single_regime_training_fast_v1/epoch30.pt`
+  (the **native single-graph** Triton-backed checkpoint; not the newer
+  segmented training trajectory).
 
-Audit output: `$OUT/audit.json`, containing 3 time points x 3 Fourier wavevectors x 2 perturbation amplitudes = **18 complex response matrices**, plus three clean-state estimate diagnostics, and an optional fixed-source Heun control sweep. Matrix units are dimensionless (physical velocity-equivalent rate per physical input velocity, and the FM time coordinate is dimensionless).
-
-The two epsilon values are a finite-difference linearity check. A large disagreement between their matrices invalidates the linear-response approximation for that mode/time and motivates smaller perturbations or float64 diagnostics.
-
-## Independent full-field Gaussian oracle (CPU)
-
-To demonstrate that an independent Gaussian source is not a fundamental mathematical obstruction, run:
+From the cluster login node, use only repository and Slurm commands:
 
 ```bash
-python -m scripts.m47_8_gaussian_oracle \
-  --side 33 --fraction 0.018731345684936694 \
-  --samples 3 --heun-steps 25 50 100 200 \
-  --output /tmp/m47_8_gaussian_oracle.json
+cd /scratch/coop/theret/GraphAttention
+git pull --ff-only origin main
+git status --short
+
+JOB=$(sbatch --parsable scripts/slurm/m47_8_response_audit.slurm)
+echo "Submitted M47.8 Grace job $JOB"
+squeue -j "$JOB"
 ```
 
-The exact Gaussian optimal straight-path FM vector field is used, with a flat isotropic spatial spectrum and transverse/longitudinal covariance eigenvalues such that their longitudinal fraction is 1.8731%. **No DiNAT model is trained.** A separate future experiment must train unchanged M37 on these synthetic full-field targets, using its original Gaussian source and FM loss, before drawing an architectural conclusion.
+The job itself runs, in this order:
+
+1. `python -m py_compile` for the M47.8 scripts and unit tests.
+2. `python -m pytest` for the response, Gaussian-oracle, and M47.7 covariance tests.
+3. `python -m scripts.m47_8_gaussian_oracle`, with 33^3 grid,
+   3 samples and Heun 25/50/100/200 steps.
+4. `python -m scripts.m47_8_response_audit` on the frozen epoch-30 checkpoint,
+   using three times, three wavevectors and two perturbation amplitudes,
+   plus a fixed-source Heun 25/50/100-step control.
+
+Each Python command runs through `singularity exec --nv` **inside the Grace
+sbatch allocation**, never in an interactive shell.
+
+For another validation DNS snapshot (indices 0 to 4), submit a separate
+job and let it create an isolated Slurm-job-specific output directory:
+
+```bash
+JOB=$(sbatch --parsable --export=ALL,M47_8_VAL_INDEX=1 \
+  scripts/slurm/m47_8_response_audit.slurm)
+echo "Submitted validation index 1 as job $JOB"
+```
+
+Optional `M47_8_EPOCH=10` selects the earlier saved checkpoint; epoch 30
+is the default. `M47_8_TRAIN_DIR`, `M47_REPO`, `M47_IMAGE`, `M47_PYTHON`,
+`M47_ARCHIVE_ROOT`, `M47_CONDITION_REFS`, and `M47_8_OUT_ROOT`
+override paths through `sbatch --export=ALL,...` when necessary.
+
+Each job creates:
+
+```text
+/scratch/coop/theret/GraphAttention_runs/m47_8a_response_audit/
+    job_<SLURM_JOB_ID>_epoch30_val0/
+        full_field_gaussian_oracle.json
+        frozen_checkpoint_response/
+            audit.json
+```
+
+The Grace logs are stored at
+`/scratch/coop/theret/GraphAttention_runs/m47_8_response_<JOB_ID>.out`
+and `.err`, following the same logging policy as M47.7.
+
+The launcher refuses missing checkpoint/references, a dirty repository,
+or a pre-existing output directory. M47.7 model weights, split and
+standardizers are only read. The audit uses the established `torch_sparse`
+model execution, consistent with the frozen M47.7 evaluation, even though
+the original training used `torch_sparse_triton`.
+
+The response output contains **18 complex response matrices**, three
+clean-state diagnostics and the Heun control. The two amplitude values
+are a finite-difference linearity test; disagreement warrants smaller
+amplitudes or higher-precision diagnostics.
+
+## Independent full-field Gaussian oracle (run inside the same sbatch job)
+
+The CPU-only analytical Gaussian oracle is intentionally grouped with
+the GPU audit so its tests and computation also run on Grace using the
+same Python environment. It demonstrates that a unit-Gaussian source
+can reach a longitudinal fraction near 1.873% under exact FM transport.
+**It does not train DiNAT-DiT.** The separate neural full-field Gaussian
+learning experiment is deferred until the read-only audit is evaluated.
 
 ## Interpretation checklist
 
