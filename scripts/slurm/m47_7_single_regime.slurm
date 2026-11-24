@@ -17,7 +17,7 @@ PYTHON=${M47_PYTHON:-/scratch/coop/theret/avbpML_env/bin/python3}
 DATA=${M47_ARCHIVE_ROOT:-/archivenfs/phlusim/HIT_DNS_COMP}
 REFS=${M47_CONDITION_REFS:-/scratch/coop/theret/GraphAttention_runs/m47_physical_conditions/case_references}
 RUN_ROOT=${M47_4_OUT_ROOT:-/scratch/coop/theret/GraphAttention_runs/m47_4_longer_training}
-OUT=${M47_7B_TRAIN_DIR:-/scratch/coop/theret/GraphAttention_runs/m47_7_single_regime_training_fast_v1}
+OUT=${M47_7B_TRAIN_DIR:-/scratch/coop/theret/GraphAttention_runs/m47_7_single_regime_training_segmented_v1}
 STAGE=${M47_7_STAGE:-missing}
 case "$STAGE" in 10|30) ;; *) echo "Set M47_7_STAGE=10 or 30" >&2; exit 2 ;; esac
 FROZEN="$RUN_ROOT/none/epoch10"
@@ -39,11 +39,12 @@ BIND=(-B /home:/home -B /scratch:/scratch)
 for path in /archivenfs /archive2; do
     if [ -d "$path" ]; then BIND+=(-B "$path:$path"); fi
 done
-echo "[M47.7B] stage=$STAGE backend=torch_sparse_triton native_single_graph=YES revision=$(git rev-parse HEAD) out=$OUT"
+echo "[M47.7B] stage=$STAGE backend=torch_sparse_triton packed_conditioning=segmented_auto revision=$(git rev-parse HEAD) out=$OUT"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q \
     tests/unit/test_m47_7_covariance.py \
     tests/unit/test_m47_single_graph_broadcast.py \
+    tests/unit/test_m47_segmented_conditioning.py \
     tests/unit/test_triton_sparse_backward.py::test_triton_full_dinat_with_activation_checkpointing
 
 ARGS=()
