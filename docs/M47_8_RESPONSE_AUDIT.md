@@ -50,7 +50,7 @@ python -m scripts.m47_8_response_audit \
 
 The command **must execute on a Calypso GPU allocation**; it is not an interactive-login-node workload. To compare with additional frozen validation DNS, choose a new output path and `--validation-index 1` (through 4). The training split and code revision are checked from `run_signature.json`; checkpoint weights, split, scalers and DNS files are read only. A pre-existing output directory is rejected. The audit forward uses the established `torch_sparse` implementation, as did the frozen M47.7 evaluation; the original accelerated training checkpoint used `torch_sparse_triton`.
 
-Audit output: `$OUT/audit.json`, containing 3 time points x 3 Fourier wavevectors x 2 perturbation amplitudes = **18 complex response matrices**, plus four clean-state estimate diagnostics (actually 3 at the default time points), and an optional fixed-source Heun control sweep. Matrix units are dimensionless (physical velocity-equivalent rate per physical input velocity, and the FM time coordinate is dimensionless).
+Audit output: `$OUT/audit.json`, containing 3 time points x 3 Fourier wavevectors x 2 perturbation amplitudes = **18 complex response matrices**, plus three clean-state estimate diagnostics, and an optional fixed-source Heun control sweep. Matrix units are dimensionless (physical velocity-equivalent rate per physical input velocity, and the FM time coordinate is dimensionless).
 
 The two epsilon values are a finite-difference linearity check. A large disagreement between their matrices invalidates the linear-response approximation for that mode/time and motivates smaller perturbations or float64 diagnostics.
 
