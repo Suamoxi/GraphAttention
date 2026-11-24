@@ -14,7 +14,7 @@ improves this coupling. It does NOT yet change graph topology, use a
 correlated Gaussian prior, or isolate long-range context from prior
 choice. Those require subsequent controlled ablations if needed.
 
-## M47.7B fast execution (new training runs only)
+## M47.7B segmented Triton execution (new training runs only)
 
 The 65^3 real-HDF5 benchmark (Slurm 511501) measured 2.717 s/step
 for packed-index original CSR versus 0.428 s/step for native single-graph
@@ -23,27 +23,39 @@ and 511565) passed complete first-step gradient/AdamW parity within the
 published tolerances. These are computational probes, not guaranteed
 long-run bitwise parity or an empirical M47.7B speed prediction.
 
-M47.7B now **opts into** the already implemented `torch_sparse_triton`
-backward and native `batch_index=None` model forward, strictly when
-`NodeRegressionBatch.num_graphs == 1`. It retains the original
-`train_epoch` and `evaluate` algorithms, task, model weights, graph
-topology, optimizer, source noise, train-only normalization and
-per-sample objective. The shared M43/M47 training calls still use
-their original packed-index path by default. M47.7A remains completely
-unchanged, using the frozen scientific checkpoints.
+M47.7B now uses `torch_sparse_triton` backward and **packed segmented
+graph-conditioning broadcast**. For any packed batch forwarded by
+`scripts/train_m43_b_multires.py::_forward` using Triton, graph sizes
+are derived from the existing contiguous packed-batch offsets and passed
+as `graph_sizes` into the unchanged DiNAT-DiT implementation. Its
+`_broadcast_graph_features` selects per-graph expand+cat, avoiding
+contended indexed backward. For exactly one graph, the implementation
+uses `expand` without a `cat`, but retains the packed coordinate
+normalization path. This is distinct from and not guaranteed as fast
+as the separately measured native `batch_index=None` fast path.
+
+The shared M43/M47 `torch_sparse` training default is unchanged;
+`torch_sparse_triton` scientific forwards use segmented broadcasting
+by default. The explicit `single_graph_forward=True` path remains
+available when chosen; standalone kernel/packing benchmarks call the
+model directly and are unaffected. M47.7B retains the same original
+`train_epoch` and `evaluate` algorithms, task, model architecture,
+graph topology, optimizer, source noise, train-only normalization
+and per-sample objective. M47.7A remains completely unchanged.
 
 Training signatures record both the optimized backend and the
 single-graph mode. A new default output root prevents accidentally
 resuming or overwriting legacy runs:
-`m47_7_single_regime_training_fast_v1/` for training and
-`m47_7_single_regime_evaluation_fast_v1/` for evaluation.
+`m47_7_single_regime_training_segmented_v1/` for training and
+`m47_7_single_regime_evaluation_segmented_v1/` for evaluation.
 Old checkpoints must not be resumed into the new optimized execution
 trajectory; changing the training code or git commit between epoch 10
 and 30 is rejected by the existing resume-signature check.
 
 The train Slurm preflight now runs the M47.7 physics/split tests,
-CPU/CUDA native single-graph parity tests, and deterministic checkpointed
-Triton full-DiNAT backward test in the production image before training.
+CPU/CUDA native single-graph and segmented-packed gradient/AdamW parity
+tests, and the deterministic checkpointed Triton full-DiNAT backward
+test in the production image before training.
 This is **not** a claim that the optimized 30-epoch run has executed.
 Inspect Slurm logs and JSON artifacts before accepting the comparison.
 
@@ -115,7 +127,7 @@ Case: Re54/Ma0.2, original 65^3 stored mesh and 64^3 unique FFT grid.
   The test split stays sealed; no new random or temporal split.
 - Same M37 DiNAT-DiT architecture, local/exact-two-hop attention,
   no periodic graph modification, and independent Gaussian FM source.
-  M47.7B uses opt-in Triton CSR backward and native single-graph
+  M47.7B uses opt-in Triton CSR backward and segmented packed
   conditioning broadcast; the mathematical model/objective is unchanged.
 - Same model seed (42), learning rate (1e-4), AdamW weight decay 0,
   Flow Matching objective, 1000 time embedding scale, and Heun sampling.
@@ -212,7 +224,7 @@ Include Slurm .out/.err for m47_7_tensor_<jobid>_<task>.
 
 ~~~text
 /scratch/coop/theret/GraphAttention_runs/
-  m47_7_single_regime_training_fast_v1/
+  m47_7_single_regime_training_segmented_v1/
     run_signature.json          # required
     split.json                  # required
     normalization.json          # required
@@ -222,7 +234,7 @@ Include Slurm .out/.err for m47_7_tensor_<jobid>_<task>.
     epoch10.pt                  # do NOT upload unless requested
     epoch30.pt                  # do NOT upload unless requested
     standardizers.pt            # do NOT upload unless requested
-  m47_7_single_regime_evaluation_fast_v1/
+  m47_7_single_regime_evaluation_segmented_v1/
     epoch10/
       summary.json              # required
       case_Re54_Ma0.2_covariance.json
