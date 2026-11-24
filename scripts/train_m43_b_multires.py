@@ -229,7 +229,8 @@ def _one_batch(
 def _forward(
     model: torch.nn.Module, problem, *, single_graph_forward: bool = False,
 ) -> torch.Tensor:
-    """Opt-in native single-graph broadcast; default packed M43/M47 is unchanged."""
+    """Native single-graph opt-in; packed Triton training uses segmented adaLN."""
+
     if single_graph_forward and (
         problem.num_graphs != 1
         or problem.conditioning.shape[0] != 1
@@ -238,6 +239,16 @@ def _forward(
         or not bool((problem.batch_index == 0).all())
     ):
         raise ValueError("single_graph_forward requires exactly one packed physical graph")
+    kwargs = {}
+    if (not single_graph_forward
+            and getattr(model, "sparse_attention_backend", None) == "torch_sparse_triton"):
+        # Reuse contiguous physical-graph offsets. B=1 avoids a GPU sync.
+        if problem.num_graphs == 1:
+            sizes = (problem.inputs.shape[0],)
+        else:
+            sizes = tuple(int(n) for n in (problem.ptr[1:] - problem.ptr[:-1]).tolist())
+        kwargs["graph_sizes"] = sizes
+
     return model(
         problem.inputs,
         coords=problem.coords,
@@ -245,6 +256,7 @@ def _forward(
         batch_index=None if single_graph_forward else problem.batch_index,
         conditioning=problem.conditioning,
         attention_edge_indices=problem.attention_edge_indices,
+        **kwargs,
     )
 
 
