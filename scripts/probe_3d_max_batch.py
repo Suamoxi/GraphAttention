@@ -235,7 +235,7 @@ def main() -> None:
             result = _attempt(batch_size=b, dataset=dataset, task=task, collator=collator, model_cfg=model_cfg, device=device, indices=indices, standardizers=scaler, repeats=args.repeats)
             payload['attempts'].append(result)
             tmp = args.output.with_suffix('.tmp')
-            tmp.write_text(json.dumps(payload, indent=2) + '\\n')
+            tmp.write_text(json.dumps(payload, indent=2) + '\n')
             tmp.replace(args.output)
             print(json.dumps(result), flush=True)
             if result['status'] != 'ok':
