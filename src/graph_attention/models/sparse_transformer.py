@@ -673,12 +673,19 @@ def _validate_hidden_inputs(
     *,
     expected_channels: int,
     parameter: torch.Tensor,
+    allow_autocast: bool = False,
 ) -> None:
     if inputs.ndim != 2 or inputs.shape[1] != expected_channels:
         raise ValueError(f"inputs must have shape [N, {expected_channels}]")
     if not inputs.is_floating_point():
         raise TypeError("inputs must use a floating-point dtype")
-    if inputs.dtype != parameter.dtype:
+    autocast_compatible = (
+        allow_autocast and inputs.device == parameter.device
+        and parameter.dtype == torch.float32
+        and torch.is_autocast_enabled(inputs.device.type)
+        and inputs.dtype == torch.get_autocast_dtype(inputs.device.type)
+    )
+    if inputs.dtype != parameter.dtype and not autocast_compatible:
         raise TypeError(f"inputs use dtype {inputs.dtype}, expected model dtype {parameter.dtype}")
     if inputs.device != parameter.device:
         raise ValueError(f"inputs are on {inputs.device}, expected model device {parameter.device}")

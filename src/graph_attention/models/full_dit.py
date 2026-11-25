@@ -62,6 +62,7 @@ class FullDiTMultiheadAttention(nn.Module):
             inputs,
             expected_channels=self.hidden_dim,
             parameter=self.qkv.weight,
+            allow_autocast=True,
         )
 
         if batch_index is None:
