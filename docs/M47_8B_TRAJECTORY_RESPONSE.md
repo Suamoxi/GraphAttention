@@ -17,9 +17,7 @@ deterministic Gaussian initial field `x0` for two paths:
 - Teacher: `x_teacher(t)=(1-t)*x0+t*x_DNS`.
 - Generated: `x_generated(t)=HeunODE(v_theta,x0,t)`.
 
-Use the previously established M47.2 key
-`M47.2/Re54/Ma0.2/replicate_0000`, seed `20261116`.
-A strict equality guard confirms that the two paths share the same `x0`.
+Use fixed seed `20261116` and a distinct M47.2 replicate key for each validation index: `replicate_0000` through `replicate_0004`. This gives different Gaussian sources across validation snapshots but **identical x0 within each teacher/generated pair**. A strict equality guard verifies that pairing.
 
 **100 Heun steps** exactly visit `t=0.25,0.50,0.75` at steps 25,50,75.
 The probe rejects non-grid times instead of rounding, so comparisons
