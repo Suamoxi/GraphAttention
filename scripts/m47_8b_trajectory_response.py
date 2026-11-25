@@ -41,7 +41,7 @@ def run(args: argparse.Namespace) -> dict:
     ctx = load_context(args)
     model, batch, grid = ctx.model, ctx.batch, ctx.grid
     scale, uref, rho_dns = ctx.scalers.inputs.scale, ctx.u_ref, ctx.dns_rho
-    key = f"M47.2/{ANCHOR_CASE}/replicate_0000"
+    key = f"M47.2/{ANCHOR_CASE}/replicate_{args.validation_index:04d}"
     source = _deterministic_sampling_source(batch, args.seed, (key,))
     samples = heun_snapshots(
         model, ctx.task, batch, steps=args.steps, seed=args.seed,
