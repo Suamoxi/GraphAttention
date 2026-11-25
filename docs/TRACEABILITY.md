@@ -1636,3 +1636,18 @@ Measured computational comparison under a shared synthetic global FM process; no
 | Reproducibility | scripts/slurm/m48_4e_a2_full_vs_tiled.slurm | Fail closed on unexpected worker failure or parity mismatch. No CEDAR, no real DNS fields or scientific model training |
 
 Status: implementation committed; full-repo/GH200 numerical and capacity qualification pending. See docs/M48_4E_A2_FULL_VS_TILED.md.
+
+
+### M49 explicit blocked HIT split
+
+- Specification: M49 blocked temporal HIT_LES_FORCED comparison in
+  `docs/SCIENTIFIC_SPEC.md`.
+- Membership: `configs/splits/m49_hit_les_forced_blocked50.json` (exact audited IDs,
+  including both buffers).
+- Implementation: `load_explicit_split_manifest` in
+  `src/graph_attention/data/splits.py`, opt-in `generative.split_manifest_file`
+  in `scripts/train_generative.py`; existing grouped-random default is unchanged.
+- Validation: `tests/unit/test_m49_explicit_split.py`; target-cluster
+  training/restart validation pending.
+- Classification: experimental data selection / anti-leakage convention, not an
+  independence guarantee or change to the generative objective.

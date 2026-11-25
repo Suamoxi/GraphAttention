@@ -16,3 +16,6 @@ sampling_seed: 5678
 checkpoint_every: 0
 strict_resume: false
 evaluate_test: true
+
+# Optional frozen membership with explicit exclusions; overrides random ratios.
+split_manifest_file: null

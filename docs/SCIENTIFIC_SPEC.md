@@ -926,3 +926,21 @@ dimensionless conservative fields, kinetic energy, velocity spectra and compress
 Helmholtz energy partition; forcing-family differences are preserved in the dataset
 provenance. Numerical methods and limitations are documented in
 \`docs/M46_HIT_ALL_SNAPSHOT_SIMILARITY.md\`; the model/trainer is unchanged.
+
+
+### M49: blocked temporal HIT_LES_FORCED comparison
+
+The Full DiT / DiNAT architecture comparison uses a frozen explicit sample-ID
+manifest rather than randomly interleaving one correlated simulation trajectory.
+The audited 1,261 numbered snapshots are ordered by numeric filename index
+(physical output times not verified). The duplicate `last_solution` is excluded
+at discovery. The manifest assigns 800 snapshots to training, excludes 50,
+assigns 180 to validation, excludes 50, and assigns 181 to held-out test.
+All active training snapshots are retained and shuffled during optimization.
+The 50-snapshot buffers are a project experimental choice motivated by global
+TKE decorrelation; neither full-field independence nor stationarity is asserted.
+The observed energy drift means this chronological split also tests a modest
+distribution shift. Train-only statistical scaling and equal-sample loss are
+unchanged. The nominal optimizer batch is 16 (microbatch 8, accumulation 2),
+with 50 complete optimizer updates per training epoch. The held-out test is not
+evaluated during training. No architecture or Flow Matching equation changes.

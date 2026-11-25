@@ -23,6 +23,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.tensorboard import SummaryWriter
 
 from graph_attention.data import make_grouped_split_manifest
+from graph_attention.data.splits import load_explicit_split_manifest
 from graph_attention.objectives import SampleLossAggregate, sample_reduced_mse
 from graph_attention.tasks import (
     DiffusionDenoisingTask,
@@ -113,13 +114,20 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     raw_group_key = settings.get("group_metadata_key", None)
     group_key = None if raw_group_key is None else str(raw_group_key)
     group_ids = dataset_group_ids(dataset, sample_ids, group_key)
-    split = make_grouped_split_manifest(
-        sample_ids,
-        group_ids,
-        seed=seed,
-        train_ratio=float(settings.train_ratio),
-        validation_ratio=float(settings.validation_ratio),
-    )
+    explicit_split_file = settings.get("split_manifest_file", None)
+    excluded_ids: tuple[str, ...] = ()
+    if explicit_split_file is not None:
+        split, excluded_ids = load_explicit_split_manifest(
+            str(explicit_split_file), sample_ids, group_ids,
+        )
+    else:
+        split = make_grouped_split_manifest(
+            sample_ids,
+            group_ids,
+            seed=seed,
+            train_ratio=float(settings.train_ratio),
+            validation_ratio=float(settings.validation_ratio),
+        )
     if not split.validation_ids:
         raise ValueError("configured split produced an empty validation set")
     if not split.test_ids:
@@ -134,6 +142,10 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         for key, ids in (("train_ids", split.train_ids), ("validation_ids", split.validation_ids), ("test_ids", split.test_ids)):
             if manifest[key] != list(ids):
                 raise RuntimeError(f"resume split differs: {key}")
+        if manifest.get("excluded_ids", []) != list(excluded_ids):
+            raise RuntimeError("resume excluded IDs differ")
+        if explicit_split_file is not None and manifest["sample_ids"] != list(sample_ids):
+            raise RuntimeError("resume dataset inventory differs")
     if resume_existing:
         standardizers = _load_standardizers(output_dir / "standardizers.pt")
         if tuple(standardizers.train_sample_ids) != tuple(split.train_ids):
@@ -163,6 +175,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
             split=split,
             runtime_provenance=runtime_provenance,
             standardizers=standardizers,
+            excluded_ids=excluded_ids,
+            explicit_split_file=explicit_split_file,
         )
 
     collator = GraphTaskCollator(task, dataset.field_catalog, cfg.geometry)
@@ -458,6 +472,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         "num_train_samples": len(train_indices),
         "num_validation_samples": len(validation_indices),
         "num_test_samples": len(test_indices),
+        "num_excluded_samples": len(excluded_ids),
+        "split_policy": "explicit_manifest" if explicit_split_file is not None else "grouped_random",
         "num_groups": len(set(group_ids)),
         "num_train_groups": len({group_by_sample[value] for value in split.train_ids}),
         "num_validation_groups": len({group_by_sample[value] for value in split.validation_ids}),
@@ -869,6 +885,8 @@ def _write_dataset_artifacts(
     split: Any,
     runtime_provenance: dict[str, Any],
     standardizers: Any,
+    excluded_ids: tuple[str, ...] = (),
+    explicit_split_file: str | None = None,
 ) -> None:
     group_by_sample = dict(zip(sample_ids, group_ids, strict=True))
     payload: dict[str, Any] = {
@@ -878,6 +896,9 @@ def _write_dataset_artifacts(
         "train_ids": list(split.train_ids),
         "validation_ids": list(split.validation_ids),
         "test_ids": list(split.test_ids),
+        "excluded_ids": list(excluded_ids),
+        "split_policy": "explicit_manifest" if explicit_split_file is not None else "grouped_random",
+        "explicit_split_file": str(explicit_split_file) if explicit_split_file is not None else None,
         "train_groups": sorted({group_by_sample[value] for value in split.train_ids}),
         "validation_groups": sorted({group_by_sample[value] for value in split.validation_ids}),
         "test_groups": sorted({group_by_sample[value] for value in split.test_ids}),

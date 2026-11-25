@@ -7,7 +7,7 @@
 #SBATCH --output=/scratch/coop/theret/GraphAttention_runs/%x_%j.out
 #SBATCH --error=/scratch/coop/theret/GraphAttention_runs/%x_%j.err
 
-# Provisional numbered-snapshot random split until the stationarity audit is reviewed.
+# Frozen chronological membership from the M49 HIT inventory; buffers excluded.
 # M49_MAX_EPOCHS is cumulative, not additional epochs.
 set -euo pipefail
 REPO=${M49_REPO:-/scratch/coop/theret/GraphAttention}
@@ -16,7 +16,7 @@ PYTHON=${M49_PYTHON:-/scratch/coop/theret/avbpML_env/bin/python3}
 ROOT=${M49_ROOT:-/scratch/coop/theret/GraphAttention_runs/m49}
 MAX_EPOCHS=${M49_MAX_EPOCHS:-25}
 MODE=${M49_MODE:-start}
-RUN_NAME=m49_full_dit_fp32_h128_l10_h4_b8_a2_seed42_numbered_random
+RUN_NAME=m49_full_dit_fp32_h128_l10_h4_b8_a2_seed42_blocked50
 RUN_DIR="$ROOT/training/$RUN_NAME"
 
 cd "$REPO"
@@ -55,6 +55,7 @@ singularity exec --nv -B /home -B /scratch --env "PYTHONPATH=$REPO/src:$REPO" \
     model.mlp_ratio=4 model.condition_embed_dim=128 \
     model.dropout=0.0 model.qkv_bias=true model.out_proj_bias=false \
     model.use_sdpa=true model.activation_checkpointing=false \
+    generative.split_manifest_file="$REPO/configs/splits/m49_hit_les_forced_blocked50.json" \
     generative.output_root="$ROOT/training" \
     generative.batch_size=8 generative.gradient_accumulation_steps=2 \
     generative.num_workers=4 generative.device=cuda \

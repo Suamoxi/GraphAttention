@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import random
+from pathlib import Path
 from dataclasses import dataclass
 from math import isfinite
 from typing import Literal
@@ -143,3 +145,40 @@ def _assert_group_disjoint(
             raise ValueError(
                 f"group leakage detected between {left} and {right}: {sorted(overlap)}"
             )
+
+
+def load_explicit_split_manifest(
+    path: str | Path,
+    sample_ids: tuple[str, ...],
+    group_ids: tuple[str, ...],
+) -> tuple[SplitManifest, tuple[str, ...]]:
+    """Read fixed membership, including explicitly excluded buffer samples.
+
+    Require exact coverage of the discovered inventory and disjoint groups
+    across the three active splits. Never silently resplit or ignore new files.
+    """
+    payload = json.loads(Path(path).read_text())
+    keys = ("train_ids", "validation_ids", "test_ids", "excluded_ids")
+    for key in keys:
+        if not isinstance(payload.get(key), list):
+            raise ValueError(f"explicit split requires list {key}")
+        if any(not isinstance(v, str) or not v.strip() for v in payload[key]):
+            raise ValueError(f"invalid sample ID in {key}")
+    manifest = SplitManifest(*(tuple(payload[key]) for key in keys[:3]))
+    excluded = tuple(payload["excluded_ids"])
+    declared = manifest.all_ids + excluded
+    if len(set(declared)) != len(declared):
+        raise ValueError("explicit split contains duplicate or overlapping IDs")
+    if len(set(sample_ids)) != len(sample_ids) or len(sample_ids) != len(group_ids):
+        raise ValueError("invalid dataset sample/group inventory")
+    missing = set(declared) - set(sample_ids)
+    unexpected = set(sample_ids) - set(declared)
+    if missing or unexpected:
+        raise ValueError(
+            f"explicit split inventory mismatch: missing={sorted(missing)}, "
+            f"unexpected={sorted(unexpected)}"
+        )
+    if not manifest.validation_ids or not manifest.test_ids:
+        raise ValueError("explicit split requires nonempty validation and test sets")
+    _assert_group_disjoint(manifest, sample_ids, group_ids)
+    return manifest, excluded
