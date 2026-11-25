@@ -6,6 +6,7 @@ import argparse
 import gc
 import json
 import time
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,9 @@ from omegaconf import OmegaConf
 from graph_attention.data import AVBPDirectoryHDF5Dataset
 from graph_attention.tasks import FlowMatchingTask
 from graph_attention.training.data_pipeline import GraphTaskCollator, task_batch_to_device
+from graph_attention.training import fit_train_standardizers
+from graph_attention.data import make_grouped_split_manifest
+from graph_attention.utils.provenance import collect_runtime_provenance
 from graph_attention.training.model_factory import instantiate_controlled_model
 
 
@@ -27,6 +31,8 @@ def _forward_model(model: torch.nn.Module, batch: Any) -> torch.Tensor:
     }
     if batch.attention_edge_indices:
         kwargs["attention_edge_indices"] = batch.attention_edge_indices
+    if getattr(model, 'sparse_attention_backend', None) == 'torch_sparse_triton':
+        kwargs['graph_sizes'] = tuple(int(n) for n in (batch.ptr[1:] - batch.ptr[:-1]).tolist())
     return model(batch.inputs, **kwargs)
 
 
@@ -63,6 +69,9 @@ def _attempt(
     collator: GraphTaskCollator,
     model_cfg: Any,
     device: torch.device,
+    indices=None,
+    standardizers=None,
+    repeats=0,
 ) -> dict[str, Any]:
     model = None
     optimizer = None
@@ -72,9 +81,11 @@ def _attempt(
     predictions = None
     aggregate = None
     try:
-        samples = [dataset[index] for index in range(batch_size)]
+        samples = [dataset[index] for index in (range(batch_size) if indices is None else indices[:batch_size])]
         host_batch = collator(samples)
         batch = task_batch_to_device(host_batch, device=device, dtype=torch.float32)
+        if standardizers is not None:
+            batch = standardizers.transform(batch)
         generator = torch.Generator(device=device).manual_seed(1042)
         problem = task.make_training_problem(batch, generator=generator)
 
@@ -88,19 +99,35 @@ def _attempt(
 
         # Two steps ensure AdamW state has been allocated and exercise reuse of
         # cached sparse topology on the second step.
-        for _ in range(2):
+        times = []
+        for step in range(2 + repeats):
+            torch.cuda.synchronize(device)
+            tick = time.perf_counter()
+            if step >= 2:
+                problem = task.make_training_problem(batch, generator=generator)
             optimizer.zero_grad(set_to_none=True)
             predictions = _forward_model(model, problem)
             aggregate = task.training_loss(predictions, problem)
             aggregate.mean.backward()
             optimizer.step()
+            if not bool(torch.isfinite(aggregate.mean)):
+                raise RuntimeError('nonfinite training loss')
+            torch.cuda.synchronize(device)
+            if step == 1 and repeats:
+                torch.cuda.reset_peak_memory_stats(device)
+            if step >= 2:
+                times.append(time.perf_counter() - tick)
 
         torch.cuda.synchronize(device)
         elapsed = time.perf_counter() - start
         return {
             "batch_size": batch_size,
             "status": "ok",
-            "two_step_seconds": elapsed,
+            "total_step_seconds": elapsed,
+            "two_step_seconds": elapsed if not repeats else None,
+            "measured_step_seconds": times,
+            "median_step_seconds": statistics.median(times) if times else None,
+            "samples_per_second": batch_size / statistics.median(times) if times else None,
             "peak_allocated_gib": torch.cuda.max_memory_allocated(device) / 1024**3,
             "peak_reserved_gib": torch.cuda.max_memory_reserved(device) / 1024**3,
         }
@@ -126,6 +153,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=("dinat", "full"), required=True)
     parser.add_argument("--max-batch", type=int, default=64)
+    parser.add_argument("--backend", choices=("torch_sparse", "torch_sparse_triton"))
+    parser.add_argument("--checkpointing", action="store_true")
+    parser.add_argument("--sweep", action="store_true", help="Train-only scaled real data; powers of two through max-batch")
+    parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument(
         "--include-local-self-attention",
         action="store_true",
@@ -163,7 +194,7 @@ def main() -> None:
         case_file=args.case_file,
         case_id="HIT_LES_FORCED",
     )
-    if args.max_batch > len(dataset):
+    if not args.sweep and args.max_batch > len(dataset):
         raise ValueError("--max-batch exceeds dataset size")
 
     task = FlowMatchingTask(
@@ -178,7 +209,39 @@ def main() -> None:
             raise ValueError("--include-local-self-attention requires --model dinat")
         model_cfg.include_self_attention = False
         model_cfg.include_local_self_attention = True
+    if args.backend:
+        if args.model != 'dinat':
+            parser.error('--backend is only for dinat')
+        model_cfg.sparse_attention_backend = args.backend
+    if args.checkpointing:
+        model_cfg.activation_checkpointing = True
     collator = GraphTaskCollator(task, dataset.field_catalog, geometry_cfg)
+    if args.sweep:
+        if args.repeats < 1:
+            parser.error('--repeats must be positive')
+        ids = tuple(dataset.sample_ids)
+        split = make_grouped_split_manifest(ids, ids, seed=42, train_ratio=.7, validation_ratio=.15)
+        lookup = {v:i for i,v in enumerate(ids)}
+        indices = [lookup[v] for v in split.train_ids]
+        if not split.validation_ids or not split.test_ids:
+            raise RuntimeError('empty validation or test split')
+        scaler = fit_train_standardizers(task, (dataset[i] for i in indices), dataset.field_catalog, split).to(device=device, dtype=torch.float32)
+        payload = dict(model=args.model, backend=str(model_cfg.get('sparse_attention_backend', 'sdpa')), checkpointing=args.checkpointing, provenance=collect_runtime_provenance(), train_count=len(indices), validation_count=len(split.validation_ids), test_count=len(split.test_ids), train_ids=list(split.train_ids), validation_ids=list(split.validation_ids), test_ids=list(split.test_ids), attempts=[])
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        if args.output.exists():
+            raise FileExistsError(args.output)
+        b = 1
+        while b <= min(args.max_batch, len(indices)):
+            result = _attempt(batch_size=b, dataset=dataset, task=task, collator=collator, model_cfg=model_cfg, device=device, indices=indices, standardizers=scaler, repeats=args.repeats)
+            payload['attempts'].append(result)
+            tmp = args.output.with_suffix('.tmp')
+            tmp.write_text(json.dumps(payload, indent=2) + '\\n')
+            tmp.replace(args.output)
+            print(json.dumps(result), flush=True)
+            if result['status'] != 'ok':
+                break
+            b *= 2
+        return
 
     attempts: list[dict[str, Any]] = []
     low = 1
