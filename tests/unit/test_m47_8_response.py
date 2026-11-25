@@ -83,7 +83,7 @@ def test_actual_task_nondimensional_coords_produce_pure_fourier_carriers():
     assert maximum_leak < 1e-10
     assert len(carriers) == 2
     for carrier in carriers:
-        assert carrier.shape == (n + 1) ** 3
+        assert carrier.shape == ((n + 1) ** 3,)
 
     # Guard against the v1 bug: physical rad/m frequency multiplied by
     # already nondimensional coordinates aliases to other FFT modes.
