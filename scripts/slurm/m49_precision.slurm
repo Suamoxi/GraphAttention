@@ -31,5 +31,5 @@ if [[ "$MODEL" == full ]]; then
 else
     TEST=tests/unit/test_m49_dinat_amp.py
 fi
-run -m pytest -q -rs "$TEST" --junitxml="$OUT/tests.xml"
+run -m pytest -q -rs "$TEST" tests/unit/test_m49_precision_optimizer.py --junitxml="$OUT/tests.xml"
 run -u -m scripts.benchmark_m49_precision --model "$MODEL" --batch "$B" --output "$OUT/precision.json"

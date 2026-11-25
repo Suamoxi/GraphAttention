@@ -36,6 +36,15 @@ def cpu_copy(value):
     return value
 
 
+def optimizer_steps(state_dict):
+    return {int(k): float(v["step"]) for k, v in state_dict["state"].items()
+            if "step" in v}
+
+
+def load_independent_optimizer_state(optimizer, snapshot):
+    optimizer.load_state_dict(cpu_copy(snapshot))
+
+
 def vector(model, *, gradients=False):
     return torch.cat([
         (p.grad if gradients else p).detach().float().cpu().reshape(-1)
@@ -159,6 +168,13 @@ def main():
                 raise RuntimeError("nonfinite shared warmup loss")
         common_weights = cpu_copy(model.state_dict())
         common_opt = cpu_copy(opt.state_dict())
+        # Optimizer.load_state_dict may retain CPU scalar step tensors by
+        # reference. Clone for every branch, including FP32, so that the
+        # shared reference snapshot cannot be mutated by the first trajectory.
+        common_steps = optimizer_steps(common_opt)
+        if not common_steps or set(common_steps.values()) != {3.0}:
+            raise RuntimeError("unexpected shared AdamW step counters")
+        report["shared_adamw_steps"] = sorted(set(common_steps.values()))
         common_vector = vector(model)
         del model, opt, loss
         gc.collect()
@@ -172,8 +188,13 @@ def main():
             amp = mode == "bf16_amp"
             model, opt = new_model()
             model.load_state_dict(common_weights)
-            opt.load_state_dict(common_opt)
+            load_independent_optimizer_state(opt, common_opt)
+            branch_steps = optimizer_steps(opt.state_dict())
+            if branch_steps != common_steps:
+                raise RuntimeError(f"optimizer starting step mismatch: {mode}")
             pred, loss = step(model, opt, comparison, amp)
+            if optimizer_steps(common_opt) != common_steps:
+                raise RuntimeError(f"shared optimizer state mutated: {mode}")
             first = dict(prediction=pred.float().cpu(), gradients=vector(model, gradients=True),
                          update=vector(model)-common_vector, loss=float(loss))
             if not all(bool(torch.isfinite(first[k]).all()) for k in ("prediction", "gradients", "update")):
@@ -221,7 +242,11 @@ def main():
             trajectory = vector(model)
             if not bool(torch.isfinite(trajectory).all()):
                 raise RuntimeError(f"nonfinite weights: {mode}")
-            rec = dict(seconds=times, median_step_seconds=statistics.median(times),
+            if optimizer_steps(common_opt) != common_steps:
+                raise RuntimeError(f"shared optimizer state mutated during trajectory: {mode}")
+            rec = dict(starting_adamw_steps=sorted(set(branch_steps.values())),
+                       ending_adamw_steps=sorted(set(optimizer_steps(opt.state_dict()).values())),
+                       seconds=times, median_step_seconds=statistics.median(times),
                        samples_per_second=args.batch/statistics.median(times),
                        peak_allocated_gib=peak_allocated, peak_reserved_gib=peak_reserved,
                        trajectory_train_losses=losses, fp32_validation_loss=val_loss)
