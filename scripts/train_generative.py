@@ -43,6 +43,7 @@ from graph_attention.training.data_pipeline import (
     dataset_group_ids,
     dataset_sample_ids,
     make_loader,
+    restore_training_loader_generator,
     task_batch_to_device,
 )
 from graph_attention.training.model_factory import instantiate_controlled_model
@@ -189,6 +190,7 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         shuffle=True,
         seed=seed,
     )
+    train_loader_generator = getattr(train_loader, "generator", None)
     validation_loader = make_loader(
         dataset,
         validation_indices,
@@ -263,10 +265,9 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
             training_generator.set_state(generator_state)
         loader_generator_state = checkpoint.get("train_loader_generator_state")
         if loader_generator_state is not None:
-            loader_generator = getattr(train_loader, "generator", None)
-            if loader_generator is None:
-                raise RuntimeError("train loader does not expose its saved generator")
-            loader_generator.set_state(loader_generator_state)
+            train_loader_generator = restore_training_loader_generator(
+                train_loader, loader_generator_state,
+            )
         completed_fit_wall_seconds = float(
             checkpoint.get("fit_wall_seconds_completed", 0.0)
         )
@@ -398,9 +399,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
             checkpoint["history"] = history
             checkpoint["global_step"] = global_step
             checkpoint["training_generator_state"] = training_generator.get_state()
-            loader_generator = getattr(train_loader, "generator", None)
-            if loader_generator is not None:
-                checkpoint["train_loader_generator_state"] = loader_generator.get_state()
+            if train_loader_generator is not None:
+                checkpoint["train_loader_generator_state"] = train_loader_generator.get_state()
             checkpoint["fit_wall_seconds_completed"] = (
                 completed_fit_wall_seconds + session_wall_seconds
             )

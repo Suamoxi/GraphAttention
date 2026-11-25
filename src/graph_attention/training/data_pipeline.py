@@ -123,6 +123,34 @@ def make_loader(
     )
 
 
+def restore_training_loader_generator(
+    loader: DataLoader, state: torch.Tensor,
+) -> torch.Generator:
+    """Restore shuffle RNG without consuming a second persistent-worker seed.
+
+    make_loader shares its generator with RandomSampler. On an uninterrupted
+    persistent-worker run, PyTorch draws a worker base seed only at the first
+    iterator construction. A fresh process would draw another base seed before
+    sampling. Keep the original sampler RNG (and legacy checkpoint format);
+    give the newly constructed iterator an independent worker-seeding generator.
+    Nonpersistent loaders draw a base seed every epoch already.
+
+    This preserves sample order for deterministic dataset/collator operations,
+    not arbitrary stochastic transforms relying on persistent worker RNG state.
+    """
+    generator = loader.generator
+    if generator is None:
+        raise RuntimeError("training loader does not expose its saved generator")
+    generator.set_state(state)
+    if loader.persistent_workers:
+        if getattr(loader.sampler, "generator", None) is not generator:
+            raise RuntimeError("expected shared RandomSampler and loader generator")
+        worker_generator = torch.Generator()
+        worker_generator.set_state(state)
+        loader.generator = worker_generator
+    return generator
+
+
 def dataset_sample_ids(dataset: Dataset[Sample]) -> tuple[str, ...]:
     """Return explicit sample IDs without requiring a dataset-specific attribute."""
 

@@ -256,3 +256,28 @@ A generation directory preserves:
 Generated sample IDs such as `gen_000000` are deterministic RNG keys for the generated population. Held-out test IDs are stored separately as reference identifiers. Equal list positions do **not** assert a generated-to-target pairing. The reference population is included only to support population-level post-processing with the common generation benchmark.
 
 For stochastic reverse sampling, each generated sample receives its own deterministic generator derived from the configured sampling seed and generated ID. Reordering computational batches should therefore not redefine the intended generated sample RNG stream. As elsewhere in the repository, bitwise cross-device or cross-PyTorch-version identity is not claimed until explicitly demonstrated.
+
+
+### M49 epoch-boundary restart
+
+The shuffle generator is shared by RandomSampler and the DataLoader when a
+training run starts. With persistent workers, PyTorch consumes a worker base
+seed once at initial iterator construction, not at every epoch. On resuming
+from a completed epoch, the saved generator state must therefore be restored
+to the sampler, while the newly created workers receive a separate copy for
+their base seed. This preserves the legacy uninterrupted sample ordering and
+the existing checkpoint field `train_loader_generator_state`. For
+nonpersistent loaders, the original shared RNG is retained.
+
+This applies to the deterministic CFD dataset/collator and dropout-free M49
+runs; stochastic worker transforms or mid-epoch recovery are not covered.
+The test `tests/unit/test_m49_restart_rng.py` checks repeated restarts with
+and without persistent workers. The target test
+`scripts/slurm/m49_restart.slurm` runs 4 epochs versus 2+2 on the same
+32 training and 8 validation HIT snapshots for each architecture. It checks
+saved split/scaler equality, RNG and optimizer step counters exactly and
+reports numerical deviations in loss, parameters, AdamW moments and
+continuation updates. Thresholds are smoke-test heuristics, not a claim of
+bitwise GPU determinism. Test samples are not evaluated.
+Strict resume still prohibits changing Git revisions; an already-running
+pinned legacy run needs an explicit, reviewed migration before using the fix.
