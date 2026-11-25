@@ -11,3 +11,8 @@ group_metadata_key: null
 sample_steps: 50
 solver: heun
 sampling_seed: 5678
+
+# Opt-in long-run controls; legacy runs retain their defaults.
+checkpoint_every: 0
+strict_resume: false
+evaluate_test: true

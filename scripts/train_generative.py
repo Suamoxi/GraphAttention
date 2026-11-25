@@ -68,6 +68,9 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         "generative.gradient_accumulation_steps",
     )
     resume = bool(settings.get("resume", False))
+    checkpoint_every = _positive_int(settings.get("checkpoint_every", 0), "generative.checkpoint_every", allow_zero=True)
+    strict_resume = bool(settings.get("strict_resume", False))
+    evaluate_test = bool(settings.get("evaluate_test", True))
 
     device = torch.device(str(settings.device))
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -86,6 +89,18 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[1]
     runtime_provenance = collect_runtime_provenance(repo_root)
 
+    if strict_resume and resume_existing:
+        previous = OmegaConf.load(output_dir / "resolved_config.yaml")
+        def contract(config):
+            value = OmegaConf.to_container(config, resolve=True)
+            for key in ("resume", "max_epochs", "evaluate_test"):
+                value["generative"].pop(key, None)
+            return value
+        if contract(previous) != contract(cfg):
+            raise RuntimeError("resume configuration differs from original run")
+        manifest = json.loads((output_dir / "dataset_split_manifest.json").read_text())
+        if manifest["runtime_provenance"]["git"]["sha"] != runtime_provenance["git"]["sha"]:
+            raise RuntimeError("resume Git revision differs from original run")
     dataset = instantiate(cfg.data)
     if not hasattr(dataset, "field_catalog"):
         raise TypeError("configured dataset must expose a field_catalog")
@@ -115,6 +130,10 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     validation_indices = [index_by_id[sample_id] for sample_id in split.validation_ids]
     test_indices = [index_by_id[sample_id] for sample_id in split.test_ids]
 
+    if strict_resume and resume_existing:
+        for key, ids in (("train_ids", split.train_ids), ("validation_ids", split.validation_ids), ("test_ids", split.test_ids)):
+            if manifest[key] != list(ids):
+                raise RuntimeError(f"resume split differs: {key}")
     if resume_existing:
         standardizers = _load_standardizers(output_dir / "standardizers.pt")
         if tuple(standardizers.train_sample_ids) != tuple(split.train_ids):
@@ -381,9 +400,12 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
                     torch.cuda.max_memory_reserved(device) / float(1024**3),
                 )
 
-            _atomic_torch_save(checkpoint, last_path)
             if is_best:
                 _atomic_torch_save(checkpoint, best_path)
+            if checkpoint_every and (epoch + 1) % checkpoint_every == 0:
+                milestone = output_dir / f"epoch_{epoch + 1:04d}.pt"
+                _atomic_torch_save(checkpoint, milestone)
+            _atomic_torch_save(checkpoint, last_path)
             _write_history(output_dir / "history.csv", history, metric)
 
     if device.type == "cuda":
@@ -405,14 +427,12 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
 
     best = torch.load(best_path, map_location=device, weights_only=True)
     model.load_state_dict(best["model_state_dict"])
-    test_loss = _evaluate(
-        model,
-        test_loader,
-        task=task,
-        adapter=adapter,
-        standardizers=device_standardizers,
-        device=device,
-    )
+    test_loss = None
+    if evaluate_test:
+        test_loss = _evaluate(
+            model, test_loader, task=task, adapter=adapter,
+            standardizers=device_standardizers, device=device,
+        )
     _write_history(output_dir / "history.csv", history, metric)
 
     group_by_sample = dict(zip(sample_ids, group_ids, strict=True))
@@ -787,6 +807,11 @@ def _forward_model(model: torch.nn.Module, batch: NodeRegressionBatch) -> torch.
     }
     if batch.attention_edge_indices:
         model_kwargs["attention_edge_indices"] = batch.attention_edge_indices
+    if getattr(model, "sparse_attention_backend", None) == "torch_sparse_triton":
+        model_kwargs["graph_sizes"] = (
+            (batch.inputs.shape[0],) if batch.num_graphs == 1
+            else tuple(int(n) for n in (batch.ptr[1:] - batch.ptr[:-1]).tolist())
+        )
     return model(batch.inputs, **model_kwargs)
 
 
