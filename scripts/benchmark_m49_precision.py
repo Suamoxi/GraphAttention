@@ -1,4 +1,4 @@
-"""Paired Full DiT FP32/BF16 AMP screening on actual numbered HIT snapshots.
+"""Paired Full DiT and DiNAT FP32/BF16 AMP screening on actual numbered HIT snapshots.
 
 GPU-side steps only; no long training, no test data, no precision changes to
 the production runner. Both trajectories start from identical nonzero weights
@@ -61,6 +61,7 @@ def discrepancy(ref, other):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--model", choices=("full", "dinat"), default="full")
     p.add_argument("--batch", type=int, default=8)
     p.add_argument("--repeats", type=int, default=5)
     p.add_argument("--output", type=Path, required=True)
@@ -74,12 +75,19 @@ def main():
         raise FileExistsError(args.output)
     report = {
         "status": "started", "provenance": collect_runtime_provenance(),
+        "model": args.model,
+        "backend": "sdpa" if args.model == "full" else "torch_sparse_triton",
         "batch": args.batch, "warmup_shared_fp32_steps": 3,
         "warmup_per_precision_steps": 2, "timed_steps": args.repeats,
         "matmul_precision": torch.get_float32_matmul_precision(),
         "allow_tf32_matmul": torch.backends.cuda.matmul.allow_tf32,
         "allow_tf32_cudnn": torch.backends.cudnn.allow_tf32,
-        "precision_policy": "FP32 data, parameters, optimizer and loss; BF16 autocast model forward only",
+        "precision_policy": (
+            "FP32 data, parameters, optimizer and loss; BF16 autocast model forward only"
+            if args.model == "full" else
+            "FP32 data, parameters, optimizer, loss and entire CSR geometric attention; "
+            "BF16 autocast eligible non-attention operations and BF16 attention output"
+        ),
         "snapshot_pattern": "solut_hit_*.h5",
     }
 
@@ -108,7 +116,9 @@ def main():
             physical_nondimensionalization=True, time_embedding_scale=1000.,
             validation_seed=1234,
         )
-        cfg, geo = _model_and_geometry("full")
+        cfg, geo = _model_and_geometry(args.model)
+        if args.model == "dinat":
+            cfg.sparse_attention_backend = "torch_sparse_triton"
         collate = GraphTaskCollator(task, ds.field_catalog, geo)
         scaler = fit_train_standardizers(task, (ds[lookup[i]] for i in split.train_ids),
                                         ds.field_catalog, split).to(device=device, dtype=torch.float32)
@@ -221,7 +231,7 @@ def main():
                     step(model, opt, comparison, amp)
                     torch.cuda.synchronize()
                 rec["attention_operators"] = sorted({e.key for e in prof.key_averages()
-                    if any(k in e.key.lower() for k in ("scaled_dot_product", "flash_attention", "efficient_attention", "cudnn_attention"))})
+                    if any(k in e.key.lower() for k in ("scaled_dot_product", "flash_attention", "efficient_attention", "cudnn_attention", "tritonsparsesddmm", "tritonsparsespmm", "sampled_addmm"))})
             except Exception as exc:
                 rec["profiler_error"] = repr(exc)
             report[mode] = rec

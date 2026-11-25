@@ -15,8 +15,10 @@ ROOT=${M49_ROOT:-/scratch/coop/theret/GraphAttention_runs/m49}
 cd "$REPO"
 test -z "$(git status --porcelain)" || { echo "Dirty checkout"; exit 2; }
 case "$SLURM_ARRAY_TASK_ID" in
-  0) B=1 ;;
-  1) B=8 ;;
+  0) MODEL=full; B=1 ;;
+  1) MODEL=full; B=8 ;;
+  2) MODEL=dinat; B=1 ;;
+  3) MODEL=dinat; B=8 ;;
   *) exit 2 ;;
 esac
 OUT="$ROOT/precision/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
@@ -24,5 +26,10 @@ mkdir -p "$OUT"
 run() { singularity exec --nv -B /home -B /scratch --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" "$@"; }
 git rev-parse HEAD
 nvidia-smi
-run -m pytest -q -rs tests/unit/test_m49_full_amp.py --junitxml="$OUT/tests.xml"
-run -u -m scripts.benchmark_m49_precision --batch "$B" --output "$OUT/precision.json"
+if [[ "$MODEL" == full ]]; then
+    TEST=tests/unit/test_m49_full_amp.py
+else
+    TEST=tests/unit/test_m49_dinat_amp.py
+fi
+run -m pytest -q -rs "$TEST" --junitxml="$OUT/tests.xml"
+run -u -m scripts.benchmark_m49_precision --model "$MODEL" --batch "$B" --output "$OUT/precision.json"

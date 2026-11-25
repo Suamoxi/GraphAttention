@@ -59,6 +59,29 @@ class DiNATDiTMultiheadAttention(GeometricSparseMultiheadAttention):
         sparse_adj: object | None = None,
     ) -> torch.Tensor:
         del batch_index
+        # Hybrid BF16 AMP: retain the existing FP32 CSR attention implementation
+        # (including geometric bias, QKV, softmax and output projection).
+        # This boundary is specific to DiNAT's CSR backends; no sparse kernel
+        # precision contract is relaxed, and the default FP32 path is unchanged.
+        if (
+            self.sparse_attention_backend in {"torch_sparse", "torch_sparse_triton"}
+            and inputs.device.type == "cuda"
+            and torch.is_autocast_enabled("cuda")
+            and torch.get_autocast_dtype("cuda") == torch.bfloat16
+            and self.qkv.weight.dtype == torch.float32
+            and inputs.dtype in (torch.float32, torch.bfloat16)
+            and edge_displacement.dtype == torch.float32
+        ):
+            with torch.autocast("cuda", enabled=False):
+                output = super().forward(
+                    inputs.float(),
+                    edge_index,
+                    edge_displacement,
+                    sparse_adj=sparse_adj,
+                )
+            # Return the activation in the surrounding AMP precision, not
+            # FP32, so the residual stream can retain BF16 where eligible.
+            return output.to(torch.bfloat16)
         return super().forward(
             inputs,
             edge_index,
