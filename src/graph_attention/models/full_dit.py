@@ -151,6 +151,7 @@ class FullDiTGraphTransformer(_BaseDiTGraphTransformer):
         use_sdpa: bool = True,
         qkv_bias: bool = True,
         out_proj_bias: bool = False,
+        activation_checkpointing: bool = False,
     ) -> None:
         super().__init__(
             in_channels=in_channels,
@@ -168,6 +169,7 @@ class FullDiTGraphTransformer(_BaseDiTGraphTransformer):
                 out_proj_bias=out_proj_bias,
             ),
             uses_local_edges=False,
+            activation_checkpointing=activation_checkpointing,
             mlp_ratio=mlp_ratio,
             dropout=dropout,
             conditioning_channels=conditioning_channels,

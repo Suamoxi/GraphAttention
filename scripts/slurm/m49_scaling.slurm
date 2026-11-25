@@ -21,6 +21,7 @@ case $((I/7)) in
   0) MODEL=full; BACKEND=sdpa; EXTRA=() ;;
   1) MODEL=dinat; BACKEND=torch_sparse_triton; EXTRA=() ;;
   2) MODEL=dinat; BACKEND=torch_sparse_triton; EXTRA=(--checkpointing) ;;
+  3) MODEL=full; BACKEND=sdpa; EXTRA=(--checkpointing) ;;
   *) exit 2 ;;
 esac
 OUT="$ROOT/scaling/${SLURM_ARRAY_JOB_ID}_${I}.json"

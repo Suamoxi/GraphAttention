@@ -32,8 +32,6 @@ def main():
         p.error("invalid workload")
     if (args.model == "full") != (args.backend == "sdpa"):
         p.error("backend incompatible with model")
-    if args.model == "full" and args.checkpointing:
-        p.error("checkpointing is available only for DiNAT")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.output.exists():
         raise FileExistsError(args.output)
@@ -70,7 +68,8 @@ def main():
                       num_layers=10, spatial_dim=3, mlp_ratio=4, conditioning_channels=1,
                       condition_embed_dim=128, dropout=0.0)
         if args.model == "full":
-            model = FullDiTGraphTransformer(**common, use_sdpa=True)
+            model = FullDiTGraphTransformer(**common, use_sdpa=True,
+                         activation_checkpointing=args.checkpointing)
         else:
             model = AlternatingDilatedGeometricDiT(**common, sparse_attention_backend=args.backend,
                          activation_checkpointing=args.checkpointing)

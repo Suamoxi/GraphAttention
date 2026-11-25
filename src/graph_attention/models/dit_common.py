@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from .geometric_transformer import _validate_model_coords
 from .sparse_transformer import (
@@ -141,6 +142,7 @@ class _BaseDiTGraphTransformer(nn.Module):
         *,
         attention_factory: Callable[[int, int], nn.Module],
         uses_local_edges: bool,
+        activation_checkpointing: bool = False,
         mlp_ratio: int = 4,
         dropout: float = 0.0,
         conditioning_channels: int = 0,
@@ -180,6 +182,7 @@ class _BaseDiTGraphTransformer(nn.Module):
         self.coordinate_normalization = coordinate_normalization
         self.coordinate_normalization_eps = float(coordinate_normalization_eps)
         self._uses_local_edges = bool(uses_local_edges)
+        self.activation_checkpointing = bool(activation_checkpointing)
 
         self.input_projection = nn.Linear(self.in_channels, self.hidden_dim)
         if use_coord_mlp:
@@ -289,12 +292,14 @@ class _BaseDiTGraphTransformer(nn.Module):
             )
 
         for block in self.blocks:
-            hidden = block(
-                hidden,
-                condition_embedding,
-                edge_index=model_edge_index,
-                batch_index=batch_index,
-            )
+            kwargs = dict(edge_index=model_edge_index, batch_index=batch_index)
+            if self.activation_checkpointing and self.training and torch.is_grad_enabled():
+                hidden = checkpoint(
+                    block, hidden, condition_embedding, **kwargs,
+                    use_reentrant=False, preserve_rng_state=True,
+                )
+            else:
+                hidden = block(hidden, condition_embedding, **kwargs)
 
         return self.final_layer(
             hidden,

@@ -135,7 +135,10 @@ def _instantiate_matched_dit(
     }
 
     torch.manual_seed(seed)
-    full_reference = FullDiTGraphTransformer(**common)
+    full_reference = FullDiTGraphTransformer(
+        **common,
+        activation_checkpointing=(target == _FULL_DIT_TARGET and bool(model_cfg.get("activation_checkpointing", False))),
+    )
     if target == _FULL_DIT_TARGET:
         attention_mode = "full"
     elif target == _LOCAL_DIT_TARGET:
@@ -170,6 +173,7 @@ def _instantiate_matched_dit(
         "attention_mode": attention_mode,
     }
     if target == _FULL_DIT_TARGET:
+        metadata["activation_checkpointing"] = full_reference.activation_checkpointing
         return full_reference, metadata
 
     if target == _LOCAL_DIT_TARGET:
