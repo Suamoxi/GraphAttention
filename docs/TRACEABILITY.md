@@ -1711,3 +1711,23 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   existing geometry_dilated and dinat_dit tests.
 - Nondefault schedules are not qualified for partitioned/streamed execution.
 - Target throughput and generated physical accuracy pending.
+
+### M49.4C/D depth benchmark and training
+- Real HIT benchmark: scripts/benchmark_m49_depth.py; uses original training
+  scalers and first 16 frozen train IDs only. Two warm-up and three timed
+  accumulated optimizer updates, plus production validation-mode forward.
+- Launchers: m49_depth_benchmark.slurm, m49_depth_train.slurm,
+  m49_depth_eval.slurm. Benchmark selects the fastest measured configuration
+  with allocated <=85% and reserved <=90% of GPU memory. No safe selection
+  means no training. The selected report and current runtime/revision must agree.
+- Variants: 10x12 reference, 9x123, 8x123, 20x12, 15x123; all original
+  endpoint-inclusive mesh, absolute embedding enabled, FP32, effective batch
+  16, frozen blocked split. Receptive-field comparisons use same epoch/update
+  budget and measured wall time. First stage 250 epochs; continue to 500/1000.
+- Tests: test_m49_depth_benchmark.py plus topology/schedule regressions.
+- Timings exclude full data-loader/worker overhead; short benchmark is a
+  memory qualification, not a guaranteed long-run peak or scientific result.
+  Changing computational microbatch size changes stochastic execution;
+  report it and run a matched baseline control where needed.
+- Partitioned execution guards reject nondefault hop schedules.
+- Target execution and physical evaluation pending.
