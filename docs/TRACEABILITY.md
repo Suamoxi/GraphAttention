@@ -1657,3 +1657,15 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
 - Implementation: scripts/generate_generative.py (reference_split),
   scripts/evaluate_m49_generation.py, reused M47 metrics and spectra.
 - Validation: tests/unit/test_m49_generation_split.py; cluster execution pending.
+
+### M49 archived LES format qualification
+- Inventory 518529: 93,007 HDF5 data_* files, split by train/val and three
+  case directories; archive HDF schema still unqualified.
+- Implementation: scripts/qualify_m49_hit_archive.py with explicit named
+  primitive candidate paths, representative time coverage, raw schema
+  and original setup preservation, ideal-gas EOS and exploratory Mach/
+  box Reynolds diagnostics; no inference from anonymous array shape,
+  arbitrary expression execution, data mutation or training integration.
+- Validation: tests/unit/test_m49_archive_qualification.py and target
+  audit results required. Physical units, vector/spatial axis semantics,
+  stationarity, independence and full deduplication remain open.
