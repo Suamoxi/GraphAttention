@@ -429,6 +429,13 @@ def _model_velocity(
             raise ValueError("periodic quotient requires a relative-only DiNAT")
         if length is None:
             raise ValueError("missing nondimensional periodic box length")
+        # Use the same segmented packed adaLN execution as generic training
+        # for this new policy, without changing historical sampling.
+        if getattr(model, "sparse_attention_backend", None) == "torch_sparse_triton":
+            model_kwargs["graph_sizes"] = (
+                (state.shape[0],) if batch.num_graphs == 1
+                else tuple(int(n) for n in (batch.ptr[1:] - batch.ptr[:-1]).tolist())
+            )
     if length is not None:
         model_kwargs["periodic_length"] = length
     if batch.attention_edge_indices:
