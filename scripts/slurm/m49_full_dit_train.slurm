@@ -34,7 +34,12 @@ case "$ARCH" in
         MODEL_ARGS=(geometry=dinat_exact2 model=dinat_dit model.sparse_attention_backend=torch_sparse_triton model.include_self_attention=false)
         DATA_ARGS+=(+data.periodic_endpoint_policy=drop_max)
         ;;
-    *) echo "M49_ARCH must be full, dinat or dinat_unique"; exit 2;;
+    dinat_relative)
+        DEFAULT_EPOCHS=1000
+        RUN_NAME=m49_dinat_relative_only_fp32_h128_l10_h4_b8_a2_seed42_blocked50
+        MODEL_ARGS=(geometry=dinat_exact2 model=dinat_dit model.sparse_attention_backend=torch_sparse_triton model.include_self_attention=false +model.use_absolute_coordinate_embedding=false)
+        ;;
+    *) echo "M49_ARCH must be full, dinat, dinat_unique or dinat_relative"; exit 2;;
 esac
 MAX_EPOCHS=${M49_MAX_EPOCHS:-$DEFAULT_EPOCHS}
 SPLIT=${M49_SPLIT_MANIFEST:-$REPO/configs/splits/m49_hit_les_forced_blocked50.json}
@@ -69,10 +74,15 @@ echo "RUN_DIR=$RUN_DIR cumulative_epochs=$MAX_EPOCHS resume=$RESUME"
 # New runs use a standalone checkout under /scratch (no linked worktree).
 # Preserve the old launch path for existing legacy worktrees.
 BIND=(-B /home -B /scratch)
-if [[ "$ARCH" == dinat_unique ]]; then
+if [[ "$ARCH" == dinat_unique || "$ARCH" == dinat_relative ]]; then
     test -d "$REPO/.git" || { echo "Use a standalone checkout for this ablation"; exit 2; }
     test "$(singularity exec "${BIND[@]}" "$IMAGE" git -C "$REPO" rev-parse HEAD)" = "$(git rev-parse HEAD)"
-    singularity exec "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -m pytest -q tests/unit/test_m49_periodic_endpoints.py
+    if [[ "$ARCH" == dinat_unique ]]; then
+        TEST=tests/unit/test_m49_periodic_endpoints.py
+    else
+        TEST=tests/unit/test_m49_relative_only.py
+    fi
+    singularity exec "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -m pytest -q "$TEST"
 else
     BIND+=(-B /gpfs-calypso/scratch:/gpfs-calypso/scratch)
 fi

@@ -994,3 +994,22 @@ duplicate equality as constructed. Reuse M47.9B wrap-vs-interior RMS and
 periodic centered div/curl boundary localization; the physical wrap is
 one cell apart and normally nonzero. Compare identical training budgets
 and sampling settings, not paired realizations across different meshes.
+
+### M49.3 3-D absolute-coordinate ablation (project hypothesis)
+
+Compare the existing 1000-epoch M49 DiNAT on the original endpoint-inclusive
+33^3 HIT_LES_FORCED mesh with a new run differing only in
+model.use_absolute_coordinate_embedding=false. Keep the coordinate projection
+parameters instantiated (and unused) to preserve the matched initialization
+and state-dict contract. Relative geometric attention is unchanged. The
+open one-hop/exact-two-hop graph, frozen chronological membership, physical
+references, train-only sample-balanced scaling, Gaussian training/validation/
+generation source, optimizer, seed, FP32 and 8x2 batch policy remain unchanged.
+No node removal, periodic graph, periodic source, constraint or ODE refinement
+in this ablation. Compare the same six checkpoint budgets (25,100,250,500,750,
+1000) on the original 180 validation references and Heun 50, seed 5678.
+The test population stays held out. One seed is a controlled exploratory
+comparison, not evidence of seed-robust improvement. A future periodic source
+on endpoint-inclusive storage requires one independent Gaussian per unique
+physical location, with identical copies at equivalent endpoints. It changes
+the source distribution and must be treated as a separate experiment.

@@ -1685,3 +1685,13 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
 - Existing M47.9B periodic face and divergence localization metrics reused.
 - Tests: test_m49_sampling_convergence.py, test_m49_periodic_endpoints.py.
 - Separate output directories; validation references only. Target execution pending.
+
+### M49.3 relative-only 3-D ablation
+- Reuse the existing DiNAT absolute-embedding switch and matched model factory.
+- Implementation: scripts/slurm/m49_dinat_relative_train.slurm (shared launcher
+  arm dinat_relative), scripts/slurm/m49_dinat_relative_eval.slurm.
+- Test: tests/unit/test_m49_relative_only.py (identical parameter initialization,
+  absolute projection bypass, retained geometric attention, unused projection
+  gradients). The test uses scatter on a small CPU graph; target FP32/Triton
+  training and population metrics remain to be measured.
+- Compare existing M49 endpoint-inclusive baseline; no change to original run.

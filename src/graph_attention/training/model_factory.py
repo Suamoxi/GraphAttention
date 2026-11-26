@@ -276,6 +276,10 @@ def _instantiate_matched_dit(
             "sparse_attention_backend": sparse_attention_backend,
             "activation_checkpointing": dinat_dit.activation_checkpointing,
             "absolute_coordinate_embedding": dinat_dit.use_absolute_coordinate_embedding,
+            "coordinate_conditioning": (
+                "absolute_centered_bbox" if dinat_dit.use_absolute_coordinate_embedding
+                else "relative_displacement_only"
+            ),
         }
     )
     return dinat_dit, metadata
