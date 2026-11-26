@@ -293,3 +293,20 @@ epoch. Other migrations are rejected; subsequent resumes must use the same
 target revision. A checkpoint ahead of last.pt is rejected for manual review.
 The 4-vs-2+2 target gate passed for both architectures; migration itself
 requires target execution. Grace allocations are limited to 12 hours.
+
+#### Calypso worktree path and missing legacy Git provenance
+
+Job 519416 failed at git merge-base before loading the checkpoint because
+the linked worktree points to /gpfs-calypso/scratch, absent from the
+container's /scratch-only binds. Bind both aliases and verify matching
+host/container Git revision. The original Full DiT manifest and epoch-41
+last.pt were reviewed from Drive: their Git fields are all null, not a
+recorded legacy SHA. The migration requires explicit
+M49_ACCEPT_REVIEWED_MISSING_GIT=1, matching SHA256 for the reviewed original
+checkpoint, manifest and config, and the clean expected original worktree
+at d5af49b. This provides corroborating evidence but cannot prove the
+historical execution revision. Preserve null source provenance and record
+the evidence separately, with the actual target SHA. Later resumes verify
+the original backed-up checkpoint and unchanged live manifest/config and
+require the same migration target. Do not modify the original manifest or
+fabricate a recorded source SHA.

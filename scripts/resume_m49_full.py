@@ -40,7 +40,8 @@ def verify_missing_git_evidence(run, cfg, repo, ckpt, *, accepted):
         raise RuntimeError("saved split does not point at the original worktree")
     source = run if ckpt["runtime_provenance"]["git"] == MISSING_GIT else run/"pre_rng_migration"
     for name, expected in REVIEWED_SHA256.items():
-        with (source/name).open("rb") as stream:
+        artifact = source/name if name == "last.pt" else run/name
+        with artifact.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         if digest != expected:
             raise RuntimeError(f"unreviewed legacy artifact: {name}; SHA256 {digest}")
