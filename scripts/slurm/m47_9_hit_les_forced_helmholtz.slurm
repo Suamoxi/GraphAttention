@@ -23,7 +23,11 @@ test -z "$(git status --porcelain)" || { echo "Dirty checkout" >&2; exit 2; }
 test -s "$IMAGE" && test -x "$PYTHON"
 test ! -e "$OUT" || { echo "Refusing existing output: $OUT" >&2; exit 2; }
 
-run() { singularity exec -B /home -B /scratch "$IMAGE" "$PYTHON" "$@"; }
+BIND=(-B /home:/home -B /scratch:/scratch)
+for mount in /archivenfs /archive2; do
+    if [ -d "$mount" ]; then BIND+=(-B "$mount:$mount"); fi
+done
+run() { singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" "$@"; }
 latest_generation() {
     local dir="$1"
     local match
@@ -52,7 +56,8 @@ for dir in "$M37" "$M38"; do
     done
 done
 MODELS=(--generation "M37=$M37" --generation "M38=$M38")
-if [ -d "$M40_RUN/generations" ]; then
+if [ "${M47_9_INCLUDE_M40:-0}" = "1" ]; then
+    test -d "$M40_RUN/generations" || { echo "Requested M40 generations unavailable" >&2; exit 2; }
     M40=$(latest_generation "$M40_RUN" || true)
     if [ -n "$M40" ] && [ -s "$M40/generated_test.pt" ] && \
         [ -s "$M40/summary.json" ] && [ -s "$M40/resolved_config.yaml" ]; then
