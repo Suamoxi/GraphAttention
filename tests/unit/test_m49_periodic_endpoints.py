@@ -174,9 +174,29 @@ def test_periodic_relative_only_equivariance_training_and_sampling(backend):
     x = torch.randn_like(problem.inputs)
     problem = replace(problem, inputs=x)
     with torch.no_grad():
-        expected = _forward_model(model, problem)
-        assert torch.isfinite(expected).all() and expected.abs().max() > 1e-5
-        sampled = _model_velocity(model, single, x, times, time_embedding_scale=1000.)
+        # First verify the exact call contract independently of CUDA execution
+        # repeatability. A mismatch at the output alone cannot identify a
+        # periodic-geometry or training/sampling interface bug.
+        calls = []
+        def capture(_module, args, kwargs):
+            calls.append((args, dict(kwargs)))
+        hook = model.register_forward_pre_hook(capture, with_kwargs=True)
+        try:
+            expected = _forward_model(model, problem)
+            assert torch.isfinite(expected).all() and expected.abs().max() > 1e-5
+            sampled = _model_velocity(model, single, x, times, time_embedding_scale=1000.)
+        finally:
+            hook.remove()
+        assert len(calls) == 2
+        from m49_periodic_cuda_diagnostic import assert_identical_arguments, diagnose_forward
+        assert_identical_arguments(calls[0], calls[1])
+        import os
+        if backend == "torch_sparse_triton" and (
+            os.environ.get("M49_PERIODIC_CUDA_DIAGNOSTIC") == "1"
+            or not torch.allclose(sampled, expected, rtol=1e-4, atol=3e-5)
+        ):
+            diagnose_forward(model, calls[0], expected, sampled)
+        # Keep the scientific gate unchanged. Diagnostic output is not a waiver.
         torch.testing.assert_close(sampled, expected, rtol=1e-4, atol=3e-5)
         # Translation of data on fixed torus coordinates (not a renumbering).
         ijk = (sample.mesh.coords - sample.mesh.coords.amin(0)).round().long()

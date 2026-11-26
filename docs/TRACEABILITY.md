@@ -1784,3 +1784,21 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   first stage 1000 epochs, max 12 h, strict resume. 180 unpaired validation
   samples per checkpoint, Heun 50 and seed 5678.
 - No target test or training results claimed at implementation time.
+
+
+### M49.6 CUDA forward consistency investigation (job 519737)
+- On fea94731, real native HIT mesh preflight passed (32768 nodes,
+  L*=0.9999999999999669, degrees 6/18/38), CPU scatter equivariance passed,
+  and 11 of 12 tests passed. CUDA Triton training/sampling forward comparison
+  failed: 760/2560 values outside rtol=1e-4, atol=3e-5; max abs 8.944869e-4.
+  No training started. Read-only CUDA compat warnings were not the failure.
+- The two wrappers appear to pass the same arguments. The mismatch does not
+  establish the cause, including whether cuSPARSE SDDMM, other CUDA
+  reductions, dense ops or numerical settings are responsible.
+- Add exact model-call argument comparison, repeated forwards with per-layer
+  probes, fixed-operand sparse primitive comparisons against FP64 references,
+  same-parameter scatter comparison, and an explicit deterministic-mode
+  diagnostic. Run scripts/slurm/m49_periodic_cuda_diagnostic.slurm.
+- Preserve the original equivariance/parity tolerances and production
+  computation; do not authorize training on the basis of the new diagnostic
+  alone. Target execution required to identify a corrective change.
