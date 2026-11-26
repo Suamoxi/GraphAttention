@@ -55,7 +55,7 @@ def main(cfg: DictConfig) -> None:
     run_generative_training(cfg)
 
 
-def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
+def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = False) -> dict[str, Any]:
     """Train one configured generative task without dataset-specific runner logic."""
 
     if "generative" not in cfg:
@@ -91,6 +91,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     repo_root = Path(__file__).resolve().parents[1]
     runtime_provenance = collect_runtime_provenance(repo_root)
 
+    if m49_resume_migration and not (strict_resume and resume_existing):
+        raise RuntimeError("M49 migration requires an existing strict-resume run")
     if strict_resume and resume_existing:
         previous = OmegaConf.load(output_dir / "resolved_config.yaml")
         def contract(config):
@@ -101,7 +103,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         if contract(previous) != contract(cfg):
             raise RuntimeError("resume configuration differs from original run")
         manifest = json.loads((output_dir / "dataset_split_manifest.json").read_text())
-        if manifest["runtime_provenance"]["git"]["sha"] != runtime_provenance["git"]["sha"]:
+        if (manifest["runtime_provenance"]["git"]["sha"] != runtime_provenance["git"]["sha"]
+                and not m49_resume_migration):
             raise RuntimeError("resume Git revision differs from original run")
     dataset = instantiate(cfg.data)
     if not hasattr(dataset, "field_catalog"):
@@ -234,6 +237,7 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     completed_fit_wall_seconds = 0.0
     prior_peak_allocated_gib = 0.0
     prior_peak_reserved_gib = 0.0
+    revision_migration = None
 
     if resume_existing:
         if not last_path.is_file():
@@ -245,6 +249,16 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
             raise RuntimeError(
                 "resume checkpoint model class does not match configured model"
             )
+        if m49_resume_migration:
+            from scripts.resume_m49_full import validate_migration
+            revision_migration = validate_migration(
+                manifest, checkpoint, runtime_provenance, run_name,
+            )
+            if not all(key in checkpoint for key in (
+                "training_generator_state", "train_loader_generator_state",
+                "optimizer_state_dict", "history", "global_step",
+            )):
+                raise RuntimeError("M49 migration requires complete epoch checkpoint")
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         initialization = checkpoint.get("initialization", initialization)
@@ -284,6 +298,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
         best_checkpoint = torch.load(best_path, map_location="cpu", weights_only=True)
         best_validation = float(best_checkpoint[f"validation_{metric}"])
         best_epoch = int(best_checkpoint["epoch"])
+        if m49_resume_migration and best_epoch >= start_epoch:
+            raise RuntimeError("best checkpoint is ahead of last.pt; inspect interrupted save")
         print(
             f"resuming run at epoch={start_epoch} global_step={global_step} "
             f"best_epoch={best_epoch} best_validation={best_validation:.8e}"
@@ -396,6 +412,8 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
                 noise_seed=noise_seed,
             )
             session_wall_seconds = time.perf_counter() - fit_start
+            if revision_migration is not None:
+                checkpoint["revision_migration"] = revision_migration
             checkpoint["history"] = history
             checkpoint["global_step"] = global_step
             checkpoint["training_generator_state"] = training_generator.get_state()
@@ -452,6 +470,7 @@ def run_generative_training(cfg: DictConfig) -> dict[str, Any]:
     group_by_sample = dict(zip(sample_ids, group_ids, strict=True))
     summary = {
         "run_name": run_name,
+        "revision_migration": revision_migration,
         **adapter.summary_metadata(),
         "model": type(model).__name__,
         "model_parameters": sum(parameter.numel() for parameter in model.parameters()),

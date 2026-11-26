@@ -281,3 +281,15 @@ continuation updates. Thresholds are smoke-test heuristics, not a claim of
 bitwise GPU determinism. Test samples are not evaluated.
 Strict resume still prohibits changing Git revisions; an already-running
 pinned legacy run needs an explicit, reviewed migration before using the fix.
+
+### M49 Full DiT legacy migration
+
+The original blocked run at d5af49b may be continued once on the qualified
+restart implementation using scripts/slurm/m49_full_resume.slurm.
+The saved resolved configuration and original split/scalers stay unchanged.
+The launcher holds the original run lock and preserves a pre_rng_migration
+backup; migrated checkpoints store the original and target SHA and boundary
+epoch. Other migrations are rejected; subsequent resumes must use the same
+target revision. A checkpoint ahead of last.pt is rejected for manual review.
+The 4-vs-2+2 target gate passed for both architectures; migration itself
+requires target execution. Grace allocations are limited to 12 hours.
