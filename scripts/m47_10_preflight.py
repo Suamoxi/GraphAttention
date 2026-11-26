@@ -246,8 +246,11 @@ def run_gpu(args: argparse.Namespace, expected: dict) -> None:
     n = 128 ** 3
     if host.inputs.shape != (n, 5) or host.edge_index.shape != (2, 6*n):
         raise AssertionError("A3 128^3 packed graph has the wrong support")
-    if host.attention_edge_indices["dilated"].shape != (2, 18*n):
+    dilated = host.attention_edge_indices["dilated"]
+    if dilated.shape != (2, 18*n):
         raise AssertionError("A3 exact-two-hop shell is not 18 neighbors per node")
+    if not bool(torch.all(torch.bincount(dilated[1], minlength=n) == 18)):
+        raise AssertionError("A3 exact-two-hop degree must be 18 for every node")
     topology_seconds = perf_counter() - start
     device = torch.device("cuda:0")
     torch.cuda.reset_peak_memory_stats(device)

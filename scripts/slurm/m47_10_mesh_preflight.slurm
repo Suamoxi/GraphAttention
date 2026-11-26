@@ -2,6 +2,7 @@
 #SBATCH --job-name=m47_10_mesh
 #SBATCH --partition=grace
 #SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
 #SBATCH --time=04:00:00
 #SBATCH --output=/scratch/coop/theret/GraphAttention_runs/%x_%j.out
 #SBATCH --error=/scratch/coop/theret/GraphAttention_runs/%x_%j.err
