@@ -1669,3 +1669,11 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
 - Validation: tests/unit/test_m49_archive_qualification.py and target
   audit results required. Physical units, vector/spatial axis semantics,
   stationarity, independence and full deduplication remain open.
+
+### M49.2 endpoint reduction
+- Specification: M49.2 endpoint-reduction ablation in SCIENTIFIC_SPEC.
+- Implementation: data/periodic_endpoints.py, opt-in AVBP directory policy,
+  scripts/slurm/m49_dinat_unique_train.slurm.
+- Tests: tests/unit/test_m49_periodic_endpoints.py (roundtrip, arbitrary node
+  order, induced native graph, invalid endpoint and grid rejection).
+- Target execution and physical accuracy not yet measured.

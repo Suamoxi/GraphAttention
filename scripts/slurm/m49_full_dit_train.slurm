@@ -16,6 +16,7 @@ PYTHON=${M49_PYTHON:-/scratch/coop/theret/avbpML_env/bin/python3}
 ROOT=${M49_ROOT:-/scratch/coop/theret/GraphAttention_runs/m49}
 ARCH=${M49_ARCH:-full}
 MODE=${M49_MODE:-start}
+DATA_ARGS=(data=hit_3d_avbp 'data.snapshot_pattern=solut_hit_*.h5')
 case "$ARCH" in
     full)
         DEFAULT_EPOCHS=25
@@ -27,7 +28,13 @@ case "$ARCH" in
         RUN_NAME=m49_dinat_dit_fp32_h128_l10_h4_b8_a2_seed42_blocked50
         MODEL_ARGS=(geometry=dinat_exact2 model=dinat_dit model.sparse_attention_backend=torch_sparse_triton model.include_self_attention=false)
         ;;
-    *) echo "M49_ARCH must be full or dinat"; exit 2;;
+    dinat_unique)
+        DEFAULT_EPOCHS=1000
+        RUN_NAME=m49_dinat_unique_open_fp32_h128_l10_h4_b8_a2_seed42_blocked50
+        MODEL_ARGS=(geometry=dinat_exact2 model=dinat_dit model.sparse_attention_backend=torch_sparse_triton model.include_self_attention=false)
+        DATA_ARGS+=(+data.periodic_endpoint_policy=drop_max)
+        ;;
+    *) echo "M49_ARCH must be full, dinat or dinat_unique"; exit 2;;
 esac
 MAX_EPOCHS=${M49_MAX_EPOCHS:-$DEFAULT_EPOCHS}
 SPLIT=${M49_SPLIT_MANIFEST:-$REPO/configs/splits/m49_hit_les_forced_blocked50.json}
@@ -59,9 +66,19 @@ git rev-parse HEAD
 nvidia-smi
 echo "RUN_DIR=$RUN_DIR cumulative_epochs=$MAX_EPOCHS resume=$RESUME"
 # Explicitly use this checkout's source, including in a detached worktree.
-singularity exec --nv -B /home -B /scratch -B /gpfs-calypso/scratch:/gpfs-calypso/scratch --env "PYTHONPATH=$REPO/src:$REPO" \
+# New runs use a standalone checkout under /scratch (no linked worktree).
+# Preserve the old launch path for existing legacy worktrees.
+BIND=(-B /home -B /scratch)
+if [[ "$ARCH" == dinat_unique ]]; then
+    test -d "$REPO/.git" || { echo "Use a standalone checkout for this ablation"; exit 2; }
+    test "$(singularity exec "${BIND[@]}" "$IMAGE" git -C "$REPO" rev-parse HEAD)" = "$(git rev-parse HEAD)"
+    singularity exec "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -m pytest -q tests/unit/test_m49_periodic_endpoints.py
+else
+    BIND+=(-B /gpfs-calypso/scratch:/gpfs-calypso/scratch)
+fi
+singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
     "$IMAGE" "$PYTHON" -u -m scripts.train_generative \
-    data=hit_3d_avbp 'data.snapshot_pattern=solut_hit_*.h5' \
+    "${DATA_ARGS[@]}" \
     "${MODEL_ARGS[@]}" task=hit_flow_matching \
     optimizer=adamw +generative=hit_3d_flow_matching \
     seed=42 run_name="$RUN_NAME" \

@@ -959,3 +959,22 @@ diagnostics using the 32^3 unique periodic FFT grid in physical units.
 Population curves use admissible fields; invalid samples are reported,
 not clipped or replaced. This is an exploratory model-selection diagnostic,
 not an independent trajectory validation or proof of convergence.
+
+### M49.2 endpoint-reduction ablation (project hypothesis)
+
+For the explicitly endpoint-inclusive HIT_LES_FORCED mesh, retain the native
+nodes with Cartesian indices 0..31 along each axis of the stored 33^3 lattice.
+Each discarded node maps to its representative by index modulo 32; its five
+conservative field values must match exactly before removal. Reject unqualified
+grids, unequal endpoint values and unsupported weights. Keep only native hex
+cells whose vertices are all retained (31^3 cells); graph connectivity is
+the open induced subgraph, NOT the toroidal graph. Preserve original sample
+IDs, field semantics and physical scales. Refit training-only standardizers
+on unique points; use the original blocked split, model, optimizer, sample
+batch and seed. Bounding-box coordinate normalization now uses the retained
+span, so the comparison changes endpoint weighting, positional normalization
+and boundary stencil coverage together. Same seeds do not imply matched
+physical noise across different node counts. Retrain from initialization;
+do not resume an endpoint-inclusive checkpoint. Endpoint lifting is export/
+evaluation only; zero duplicate mismatch after lifting is by construction,
+not learned periodicity. One-cell wrap increments remain a genuine metric.
