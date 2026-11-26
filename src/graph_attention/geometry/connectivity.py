@@ -41,73 +41,61 @@ def exact_two_hop_edge_index(
 
     node_count = _validated_num_nodes(num_nodes)
     _validate_edge_index(edge_index, node_count)
-    if edge_index.shape[1] == 0:
-        return torch.empty((2, 0), dtype=torch.long, device=edge_index.device)
+    candidates = _composed_nonself_keys(edge_index, edge_index, node_count)
+    direct = torch.unique(edge_index[0]*node_count+edge_index[1],sorted=True)
+    return _keys_to_edges(_subtract_keys(candidates,direct),node_count)
 
-    source, target = edge_index
 
-    # Group incoming and outgoing edges by their shared intermediate node. For
-    # each node k, every incoming i->k is paired with every outgoing k->j.
-    incoming_order = torch.argsort(target)
-    outgoing_order = torch.argsort(source)
-    incoming_sources = source[incoming_order]
-    outgoing_targets = target[outgoing_order]
+def exact_three_hop_edge_index(edge_index: torch.Tensor, num_nodes: int) -> torch.Tensor:
+    """Directed shortest-path distance exactly three, without dense adjacency."""
+    two = exact_two_hop_edge_index(edge_index,num_nodes)
+    return _exact_three_hop_from_two(edge_index,two,num_nodes)
 
-    incoming_counts = torch.bincount(target, minlength=node_count)
-    outgoing_counts = torch.bincount(source, minlength=node_count)
-    path_counts = incoming_counts * outgoing_counts
+
+def _exact_three_hop_from_two(edge_index, two_hop, num_nodes):
+    candidates = _composed_nonself_keys(two_hop,edge_index,num_nodes)
+    shorter = torch.unique(torch.cat((
+        edge_index[0]*num_nodes+edge_index[1],
+        two_hop[0]*num_nodes+two_hop[1],
+    )),sorted=True)
+    return _keys_to_edges(_subtract_keys(candidates,shorter),num_nodes)
+
+
+def _composed_nonself_keys(lhs, rhs, node_count):
+    """Sparse Boolean composition by shared intermediate node."""
+    left_source,left_target = lhs
+    right_source,right_target = rhs
+    incoming_sources = left_source[torch.argsort(left_target)]
+    outgoing_targets = right_target[torch.argsort(right_source)]
+    incoming_counts = torch.bincount(left_target,minlength=node_count)
+    outgoing_counts = torch.bincount(right_source,minlength=node_count)
+    path_counts = incoming_counts*outgoing_counts
     total_paths = int(path_counts.sum())
     if total_paths == 0:
-        return torch.empty((2, 0), dtype=torch.long, device=edge_index.device)
+        return lhs.new_empty((0,))
+    intermediate = torch.repeat_interleave(torch.arange(node_count,device=lhs.device),path_counts)
+    group_starts = torch.cumsum(path_counts,dim=0)-path_counts
+    offset = torch.arange(total_paths,device=lhs.device)-torch.repeat_interleave(group_starts,path_counts)
+    incoming_starts = torch.cumsum(incoming_counts,dim=0)-incoming_counts
+    outgoing_starts = torch.cumsum(outgoing_counts,dim=0)-outgoing_counts
+    count = outgoing_counts[intermediate]
+    source = incoming_sources[incoming_starts[intermediate]+torch.div(offset,count,rounding_mode="floor")]
+    target = outgoing_targets[outgoing_starts[intermediate]+torch.remainder(offset,count)]
+    nonself = source != target
+    return torch.unique(source[nonself]*node_count+target[nonself],sorted=True)
 
-    intermediate = torch.repeat_interleave(
-        torch.arange(node_count, device=edge_index.device),
-        path_counts,
-    )
-    group_starts = torch.cumsum(path_counts, dim=0) - path_counts
-    offset_in_group = torch.arange(total_paths, device=edge_index.device) - torch.repeat_interleave(
-        group_starts,
-        path_counts,
-    )
 
-    incoming_starts = torch.cumsum(incoming_counts, dim=0) - incoming_counts
-    outgoing_starts = torch.cumsum(outgoing_counts, dim=0) - outgoing_counts
-    outgoing_count_for_path = outgoing_counts[intermediate]
+def _subtract_keys(keys, excluded):
+    if not keys.numel() or not excluded.numel():
+        return keys
+    insertion = torch.searchsorted(excluded,keys)
+    bounded = insertion.clamp(max=excluded.numel()-1)
+    return keys[~((insertion<excluded.numel()) & (excluded[bounded]==keys))]
 
-    incoming_position = incoming_starts[intermediate] + torch.div(
-        offset_in_group,
-        outgoing_count_for_path,
-        rounding_mode="floor",
-    )
-    outgoing_position = outgoing_starts[intermediate] + torch.remainder(
-        offset_in_group,
-        outgoing_count_for_path,
-    )
 
-    path_source = incoming_sources[incoming_position]
-    path_target = outgoing_targets[outgoing_position]
-    nonself = path_source != path_target
-    if not bool(nonself.any()):
-        return torch.empty((2, 0), dtype=torch.long, device=edge_index.device)
-
-    path_keys = path_source[nonself] * node_count + path_target[nonself]
-    path_keys = torch.unique(path_keys, sorted=True)
-
-    # Exact two-hop means that direct one-hop neighbours are excluded even when
-    # another length-two path connects the same pair (for example in triangles).
-    direct_keys = torch.unique(source * node_count + target, sorted=True)
-    insertion = torch.searchsorted(direct_keys, path_keys)
-    bounded = insertion.clamp(max=direct_keys.numel() - 1)
-    is_direct = (insertion < direct_keys.numel()) & (direct_keys[bounded] == path_keys)
-    exact_keys = path_keys[~is_direct]
-
-    return torch.stack(
-        (
-            torch.div(exact_keys, node_count, rounding_mode="floor"),
-            torch.remainder(exact_keys, node_count),
-        ),
-        dim=0,
-    ).contiguous()
+def _keys_to_edges(keys, node_count):
+    return torch.stack((torch.div(keys,node_count,rounding_mode="floor"),
+                        torch.remainder(keys,node_count)),dim=0).contiguous()
 
 
 def hex_connectivity_to_edge_index(

@@ -1,0 +1,3 @@
+attention_edge_indices:
+  dilated: exact_two_hop
+  dilated_3: exact_three_hop

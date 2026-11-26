@@ -6,7 +6,7 @@ from collections.abc import Mapping
 
 import torch
 
-from .connectivity import exact_two_hop_edge_index
+from .connectivity import exact_two_hop_edge_index, _exact_three_hop_from_two
 
 
 def build_attention_edge_indices(
@@ -20,9 +20,8 @@ def build_attention_edge_indices(
     requests additional named topologies by construction rule. Models consume the
     resulting names but do not construct or sparsify connectivity themselves.
 
-    The initial M12 implementation intentionally supports only
-    ``"exact_two_hop"``. Future reduced-A^2, random-jumper, or global-node rules
-    belong here rather than in model code.
+    Exact two- and three-hop neighborhoods are shortest-path shells.
+    Reuse the two-hop shell when constructing the three-hop shell.
     """
 
     if specifications is None:
@@ -31,13 +30,21 @@ def build_attention_edge_indices(
         raise TypeError("attention topology specifications must be a mapping")
 
     result: dict[str, torch.Tensor] = {}
+    two = three = None
     for name, kind in specifications.items():
         if not isinstance(name, str) or not name.strip():
             raise ValueError("attention topology names must be non-empty strings")
         if name in result:
             raise ValueError(f"duplicate attention topology name: {name}")
-        if kind == "exact_two_hop":
-            result[name] = exact_two_hop_edge_index(edge_index, num_nodes)
+        if kind in ("exact_two_hop", "exact_three_hop"):
+            if two is None:
+                two = exact_two_hop_edge_index(edge_index,num_nodes)
+            if kind == "exact_two_hop":
+                result[name] = two
+            else:
+                if three is None:
+                    three = _exact_three_hop_from_two(edge_index,two,num_nodes)
+                result[name] = three
             continue
         raise ValueError(f"unsupported attention topology construction: {kind!r}")
     return result

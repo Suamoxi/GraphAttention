@@ -4,6 +4,7 @@ from .attention import build_attention_edge_indices
 from .cartesian import cartesian_4_neighbor_edge_index
 from .connectivity import (
     exact_two_hop_edge_index,
+    exact_three_hop_edge_index,
     hex_connectivity_to_edge_index,
     mesh_with_hex_edge_index,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "cartesian_4_neighbor_edge_index",
     "edge_relative_displacement",
     "exact_two_hop_edge_index",
+    "exact_three_hop_edge_index",
     "hex_connectivity_to_edge_index",
     "mesh_with_hex_edge_index",
 ]
