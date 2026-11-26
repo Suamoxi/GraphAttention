@@ -40,6 +40,7 @@ from graph_attention.training.data_pipeline import (
     GraphTaskCollator, task_batch_to_device,
 )
 from graph_attention.training.model_factory import instantiate_controlled_model
+from graph_attention.geometry.relative import periodic_length_from_mesh_metadata
 from graph_attention.training.m43_logging_resume import reconcile_resume_signature
 from graph_attention.training.m43_tensorboard import (
     M43TensorBoardMonitor, completed_optimizer_steps,
@@ -240,6 +241,11 @@ def _forward(
     ):
         raise ValueError("single_graph_forward requires exactly one packed physical graph")
     kwargs = {}
+    length = periodic_length_from_mesh_metadata(
+        getattr(getattr(problem, "source", None), "mesh_metadata", ())
+    )
+    if length is not None:
+        kwargs["periodic_length"] = length
     if (not single_graph_forward
             and getattr(model, "sparse_attention_backend", None) == "torch_sparse_triton"):
         # Reuse contiguous physical-graph offsets. B=1 avoids a GPU sync.
@@ -540,6 +546,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     condition_mode = getattr(args, "conditioning_mode", "none")
     if condition_mode not in CONDITION_NAMES:
         raise ValueError(f"unsupported M47 conditioning mode: {condition_mode!r}")
+    campaign_variant = getattr(args, "campaign_variant", None)
+    checkpoint_every = int(getattr(args, "checkpoint_every", 0))
+    if campaign_variant is not None:
+        if (campaign_variant not in ("a1", "a2", "a3")
+                or condition_mode != "mach_re"
+                or args.mode != "train"
+                or checkpoint_every != 10):
+            raise ValueError("M47.10 requires train, mach_re, A1/A2/A3 and checkpoint_every=10")
+    elif checkpoint_every != 0:
+        raise ValueError("periodic checkpoint milestones are reserved for M47.10")
     qualified_path = getattr(args, "qualified_manifest", None)
     provenance = None
     selected_ids = None
@@ -577,6 +593,34 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     if qualified_path is not None:
         validate_dataset_paths(dataset, qualified_path)
+    recipe = build_recipe()
+    normalization_dataset = dataset
+    if campaign_variant is not None:
+        if qualified_path is None or provenance is None:
+            raise ValueError("M47.10 requires the frozen qualified six-case sample inventory")
+        from graph_attention.data.m47_variants import M47VariantDataset
+        # Fit the SAME unique-physical-node train-only channel scaler for
+        # A1/A2/A3; stored duplicate faces must not silently change moments.
+        source_dataset = dataset
+        normalization_dataset = M47VariantDataset(source_dataset, variant="a2")
+        dataset = M47VariantDataset(source_dataset, variant=campaign_variant)
+        recipe.use_absolute_coordinate_embedding = False
+        recipe.sparse_attention_backend = "torch_sparse_triton"
+        provenance = {
+            **provenance,
+            "m47_10_campaign": {
+                "variant": campaign_variant,
+                "absolute_coordinate_embedding": False,
+                "periodic_endpoint_policy": (
+                    "keep" if campaign_variant == "a1" else "drop_max"
+                ),
+                "periodic_wrap_graph": campaign_variant == "a3",
+                "gaussian_source": "iid_unit_gaussian_on_model_nodes",
+                "train_scaler_node_policy": "unique_nodes_for_all_arms",
+                "checkpoint_every": checkpoint_every,
+                "effective_model_config": OmegaConf.to_container(recipe, resolve=True),
+            },
+        }
     destination = Path(args.run_dir).expanduser().resolve()
     if args.mode == "inspect":
         # Archive inspection needs no physical scaling or GPU and is safe
@@ -696,7 +740,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
               f"on {len(train_indices)} snapshots", flush=True)
         started = time.perf_counter()
         standardizers = fit_train_standardizers(
-            task, (dataset[i] for i in train_indices),
+            task, (normalization_dataset[i] for i in train_indices),
             dataset.field_catalog, split,
         )
         _validate_generative_standardizers(standardizers)
@@ -732,7 +776,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     probe = collator([dataset[validation_indices[0]]])
     model_probe = task.make_validation_problem(standardizers.transform(probe))
     model, initialization = instantiate_controlled_model(
-        build_recipe(), model_probe, seed=args.seed,
+        recipe, model_probe, seed=args.seed,
     )
     model = model.to(device=device, dtype=torch.float32)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.0)
@@ -752,6 +796,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         history = list(checkpoint["history"])
         if not (destination / "best.pt").exists():
             raise FileNotFoundError("resume requires saved best.pt")
+        if checkpoint_every:
+            # Reconcile an interruption after last.pt but before its milestone.
+            for completed in range(checkpoint_every, start_epoch + 1, checkpoint_every):
+                milestone = destination / f"epoch_{completed:04d}.pt"
+                if not milestone.exists():
+                    if completed != start_epoch:
+                        raise FileNotFoundError(
+                            f"missing completed checkpoint milestone {milestone}"
+                        )
+                    _atomic_torch_save(checkpoint, milestone)
         print(f"[M43-B] Resuming from epoch {start_epoch}", flush=True)
 
     by_case = _indices_by_case(split.train_ids, dataset)
@@ -825,6 +879,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "activation_checkpointing": True,
             }
             _atomic_torch_save(checkpoint, destination / "last.pt")
+            if checkpoint_every and (epoch + 1) % checkpoint_every == 0:
+                milestone = destination / f"epoch_{epoch + 1:04d}.pt"
+                if milestone.exists():
+                    raise FileExistsError(f"refusing to overwrite milestone {milestone}")
+                _atomic_torch_save(checkpoint, milestone)
             if is_best:
                 _atomic_torch_save(checkpoint, destination / "best.pt")
             print(
@@ -852,16 +911,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         ) or not torch.equal(generator.get_state(), generator_before):
             raise RuntimeError("smoke checkpoint restore changed model or RNG state")
         checkpoint_recovery_verified = True
-    # Evaluate test ONLY at best validation selection, never to select model.
+    # Leave the M47.10 test split sealed for an independent final benchmark.
+    # The historical M43/M47 output behavior is intentionally unchanged.
     best = torch.load(
         destination / "best.pt", map_location="cpu", weights_only=True,
     )
     model.load_state_dict(best["model_state_dict"])
-    test_stats = evaluate(
-        dataset, test_indices, model=model, task=task,
-        standardizers=device_standardizers, collator=collator,
-        device=device,
-    )
+    test_stats = None
+    if campaign_variant is None:
+        test_stats = evaluate(
+            dataset, test_indices, model=model, task=task,
+            standardizers=device_standardizers, collator=collator,
+            device=device,
+        )
     summary = {
         "status": "smoke_passed" if args.mode == "smoke" else "train_complete",
         "mode": args.mode,
@@ -881,6 +943,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "test_samples": len(test_indices),
         "excluded_samples": len(split_plan.excluded_ids),
         "checkpointed_m37": True,
+        "m47_10_campaign_variant": campaign_variant,
+        "m47_10_saved_milestones": (
+            [f"epoch_{e:04d}.pt" for e in range(checkpoint_every, args.max_epochs + 1, checkpoint_every)]
+            if checkpoint_every else []
+        ),
+        "m47_10_evaluated_test": campaign_variant is None,
         "checkpoint_recovery_verified": checkpoint_recovery_verified,
         "optimizer_accumulation": args.accumulation,
         "training_performance_final_epoch": {
@@ -894,7 +962,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             ],
         },
         "physical_nondimensionalization": True,
-        "scaler": "train_only_sample_balanced_M6",
+        "scaler": (
+            "train_only_sample_balanced_M6_unique_nodes"
+            if campaign_variant is not None else "train_only_sample_balanced_M6"
+        ),
         "best_epoch": int(best["epoch"]),
         "best_validation_velocity_mse": float(
             best["best_validation_velocity_mse"]
@@ -908,7 +979,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "scientific_caveats": [
             "Resolution is confounded with Reynolds number (Re54 vs Re94).",
             "Temporal index gap does not establish physical decorrelation.",
-            "AVBP periodic SOLUTBOUND mapping not yet added to graph topology.",
+            (
+                "A3 uses verified Cartesian periodic wrapping, not an AVBP "
+                "SOLUTBOUND topology mapping."
+                if campaign_variant == "a3" else
+                "AVBP periodic SOLUTBOUND mapping not yet added to graph topology."
+            ),
             "One optimizer sees both resolutions; this is not conditional SR.",
             "Smoke mode uses limited training-split statistics and is diagnostic only.",
         ],
@@ -945,6 +1021,8 @@ def main() -> None:
     parser.add_argument("--accumulation", type=int, default=6)
     parser.add_argument("--lr", type=float, default=1.0e-4)
     parser.add_argument("--max-epochs", type=int, default=2)
+    parser.add_argument("--campaign-variant", choices=("a1", "a2", "a3"), default=None)
+    parser.add_argument("--checkpoint-every", type=int, default=0)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--allow-logging-only-resume", action="store_true",

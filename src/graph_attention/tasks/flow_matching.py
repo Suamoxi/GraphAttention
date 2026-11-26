@@ -10,6 +10,8 @@ from operator import index as operator_index
 import torch
 from torch import nn
 
+from graph_attention.geometry.relative import periodic_length_from_mesh_metadata
+
 from ..objectives import SampleLossAggregate, sample_reduced_mse
 from .regression import NodeRegressionBatch, NodeRegressionTask
 
@@ -418,6 +420,11 @@ def _model_velocity(
         "batch_index": batch.batch_index,
         "conditioning": conditioning,
     }
+    length = periodic_length_from_mesh_metadata(
+        getattr(getattr(batch, "source", None), "mesh_metadata", ())
+    )
+    if length is not None:
+        model_kwargs["periodic_length"] = length
     if batch.attention_edge_indices:
         model_kwargs["attention_edge_indices"] = batch.attention_edge_indices
     velocity = model(state, **model_kwargs)

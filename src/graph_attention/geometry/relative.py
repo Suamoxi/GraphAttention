@@ -2,9 +2,36 @@
 
 from __future__ import annotations
 
-from math import isfinite
+from collections.abc import Mapping, Sequence
+from math import isclose, isfinite
 
 import torch
+
+
+def periodic_length_from_mesh_metadata(
+    metadata: Sequence[Mapping[str, object]],
+) -> float | None:
+    """Extract the shared nondimensional box length for packed periodic graphs.
+
+    Absence preserves all historical open-mesh training/generation paths.
+    Periodic batches must have the same scalar box length; no assumption is
+    made about the case's dimensional L_ref.
+    """
+    if not metadata:
+        return None
+    values = [m.get("periodic_length_nondimensional") for m in metadata]
+    if all(v is None for v in values):
+        return None
+    if any(v is None for v in values):
+        raise ValueError("mixed periodic and nonperiodic graphs in one packed batch")
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in values):
+        raise ValueError("periodic length metadata must be a finite scalar number")
+    lengths = [float(v) for v in values]
+    if any(not isfinite(v) or v <= 0 for v in lengths):
+        raise ValueError("periodic length metadata must be finite and positive")
+    if any(not isclose(v, lengths[0], rel_tol=1e-6, abs_tol=0.0) for v in lengths[1:]):
+        raise ValueError("unequal nondimensional periodic lengths in packed batch")
+    return lengths[0]
 
 
 def edge_relative_displacement(
