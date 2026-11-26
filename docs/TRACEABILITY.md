@@ -1731,3 +1731,20 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   report it and run a matched baseline control where needed.
 - Partitioned execution guards reject nondefault hop schedules.
 - Target execution and physical evaluation pending.
+
+### M49.4E effective receptive-field audit
+- Definition: M49.4E in SCIENTIFIC_SPEC.
+- Numerical core: src/graph_attention/evaluation/receptive_field.py.
+- Runner: scripts/analyze_m49_receptive_field.py; launcher:
+  scripts/slurm/m49_receptive_field.slurm (1h per checkpoint, Grace).
+- Reports: summary.json with artifact hashes/provenance/individual radii,
+  radial_sensitivity.csv (sum/mean/fraction/cumulative and momentum
+  coupling), channel_coupling.csv (25 ordered channel-pair shell sums),
+  sensitivity_maps.pt (squared Frobenius maps in native ordering).
+- Tests: tests/unit/test_m49_receptive_field.py. Local CPU checks on the
+  exact committed numerical helper (blob bbdd1c15dcacdb0c495b724565609df3ad0982ca)
+  passed analytic two-channel Jacobian and repeated VJPs, shell sums/radii,
+  channel coupling, zero total, and open graph qualification/renumbering.
+  The real DiNAT regression, complete checkpoint runner and FP32 Triton
+  VJPs are not yet executed on target hardware.
+- No claim of measured effective receptive-field size or training changes.

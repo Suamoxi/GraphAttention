@@ -1044,3 +1044,43 @@ For open 33^3 Cartesian HIT, directed counts are 209088,608058,1243828.
 A schedule's sum of hop lengths bounds one velocity evaluation's spatial
 reach; it is not a measured effective receptive field or a bound on the
 complete iterative generation process.
+
+### M49.4E effective receptive field (project diagnostic)
+
+For the fixed trained Flow Matching velocity model, with time, coordinates,
+graph and graph-level conditioning fixed, evaluate the first derivative
+J[i,j,a,b] = d v[i,a] / d x[j,b] in standardized convective conservative
+state space. Freeze model parameters and use evaluation mode, not
+inference/no-grad mode. One reverse-mode VJP per output channel at a
+selected query node returns its full input derivative. Square derivatives
+in float64 on CPU and sum over the named channel pairs to obtain
+S_i(j) = ||J_ij||_F^2. For each shortest-path distance r from the query,
+report the number of nodes, sum H(r), per-node mean G(r), and cumulative
+fraction F(r) = sum_{s<=r} H(s) / sum_s H(s). R50/R90/R95 are the first
+integer shell with cumulative fraction >=0.5/0.9/0.95; undefined if
+the total sensitivity is zero. Separate momentum diagonal and off-diagonal
+squared derivatives and retain all 25 ordered input/output channel pairs.
+These are sensitivity statistics, not physical kinetic energies, attention
+weights, signed correlations, or evidence of conservation or solenoidality.
+
+First protocol: original open 33^3 HIT_LES_FORCED graph, original frozen
+train scalers, validation positions N//4 and 3*N//4, one Gaussian per
+stored node using the existing sample-keyed sampling source (seed 5678,
+keys are reference IDs), reused at t=0,0.5,0.95 and across compatible
+checkpoints. Probe x_t=(1-t)z+t*x_data with the existing time embedding.
+Query Cartesian indices (16,16,16), (0,16,16), (0,0,0), independent of
+exporter ordering. Verify complete open axial connectivity before using
+Manhattan distance. Include all duplicated endpoints as independent input
+degrees of freedom because the source model was trained on that graph.
+Express path lengths in nondimensional units using the qualified spacing.
+Use FP32 model evaluation and VJPs, production forward call (including
+segmented graph_sizes), microbatch 1, original configured attention
+backend. Report sensitivity beyond the sum-of-hop-length upper bound,
+without masking it. One forward per sample/time is retained across
+the three query nodes; five reverse VJPs per query. Default checkpoints
+250,500,1000: 18 forwards and 270 backward evaluations across three jobs.
+No training, source change, solver differentiation, or test field access.
+The limited samples/locations/times are exploratory, not a population
+estimate. Periodic/unique-node graphs and Full DiT need separate
+qualification of distance and memory assumptions. The full ODE flow
+can propagate information further than one learned velocity evaluation.
