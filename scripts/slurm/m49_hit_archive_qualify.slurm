@@ -20,7 +20,7 @@ OUT="$ROOT/archive_qualification/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}"
 cd "$REPO"
 test -z "$(git status --porcelain)" || { echo "Dirty checkout"; exit 2; }
 mkdir -p "$OUT"
-BIND=(-B /home:/home -B /scratch:/scratch -B /archivenfs:/archivenfs)
+BIND=(-B /home:/home -B /scratch:/scratch -B /gpfs-calypso/scratch:/gpfs-calypso/scratch -B /archivenfs:/archivenfs)
 run() { singularity exec "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" "$@"; }
 run -m pytest -q tests/unit/test_m49_archive_qualification.py --junitxml="$OUT/tests.xml"
 run -u -m scripts.qualify_m49_hit_archive --root "$ARCHIVE" --case "$CASE" --output "$OUT/qualification.json"

@@ -21,7 +21,7 @@ case "$SLURM_ARRAY_TASK_ID" in
     *) exit 2 ;;
 esac
 mkdir -p "$OUT"
-run() { singularity exec --nv -B /home -B /scratch --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" "$@"; }
+run() { singularity exec --nv -B /home -B /scratch -B /gpfs-calypso/scratch:/gpfs-calypso/scratch --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" "$@"; }
 export M49_REPO="$REPO" M49_ARCH="$ARCH" M49_CHECKPOINT_EVERY=2
 export M49_SPLIT_MANIFEST="$OUT/restart_split.json"
 run -m pytest -q tests/unit/test_m49_restart_rng.py --junitxml="$OUT/rng_tests.xml"

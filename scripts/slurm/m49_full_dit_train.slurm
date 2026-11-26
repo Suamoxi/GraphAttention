@@ -59,7 +59,7 @@ git rev-parse HEAD
 nvidia-smi
 echo "RUN_DIR=$RUN_DIR cumulative_epochs=$MAX_EPOCHS resume=$RESUME"
 # Explicitly use this checkout's source, including in a detached worktree.
-singularity exec --nv -B /home -B /scratch --env "PYTHONPATH=$REPO/src:$REPO" \
+singularity exec --nv -B /home -B /scratch -B /gpfs-calypso/scratch:/gpfs-calypso/scratch --env "PYTHONPATH=$REPO/src:$REPO" \
     "$IMAGE" "$PYTHON" -u -m scripts.train_generative \
     data=hit_3d_avbp 'data.snapshot_pattern=solut_hit_*.h5' \
     "${MODEL_ARGS[@]}" task=hit_flow_matching \

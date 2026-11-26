@@ -18,4 +18,4 @@ EPOCHS=(25 100 250 500 750 1000)
 EPOCH=${EPOCHS[$SLURM_ARRAY_TASK_ID]}
 cd "$REPO"
 test -z "$(git status --porcelain)" || { echo "Dirty checkout"; exit 2; }
-singularity exec --nv -B /home -B /scratch --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -u -m scripts.evaluate_m49_generation --run-dir "$RUN" --epoch "$EPOCH"
+singularity exec --nv -B /home -B /scratch -B /gpfs-calypso/scratch:/gpfs-calypso/scratch --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -u -m scripts.evaluate_m49_generation --run-dir "$RUN" --epoch "$EPOCH"

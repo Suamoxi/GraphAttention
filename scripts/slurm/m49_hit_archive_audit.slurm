@@ -21,7 +21,7 @@ test -z "$(git status --porcelain)" || { echo "Dirty checkout"; exit 2; }
 test -d "$ARCHIVE" && test -d "$SCRATCH" || { echo "Missing archive or scratch HIT root"; exit 2; }
 OUT="$ROOT/archive_audit/$SLURM_JOB_ID"
 mkdir -p "$OUT"
-BIND=(-B /home:/home -B /scratch:/scratch)
+BIND=(-B /home:/home -B /scratch:/scratch -B /gpfs-calypso/scratch:/gpfs-calypso/scratch)
 for mount in /archivenfs /archive2; do
     if [ -d "$mount" ]; then BIND+=(-B "$mount:$mount"); fi
 done
