@@ -1826,3 +1826,23 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   using the exact captured operands, FP64 reference, and both modes.
   No production precision change, new tolerance or kernel change.
   Highest success alone does not qualify production high-mode execution.
+
+
+### M49.6: defer strict CUDA repeatability as a training gate (user decision)
+- Preserve the original strict CUDA parity/translation/renumbering/packed/
+  Heun regression and diagnostic launchers, with unchanged tolerances.
+  No inference about the unresolved precision mechanism is required.
+- M49 periodic training deselects only the strict CUDA parameterization.
+  The separate CUDA smoke parameterization exercises the same wrappers,
+  confirms identical model-call arguments and checks finite outputs for
+  translated, renumbered and packed inputs and Heun sampling, plus finite
+  input/parameter gradients and nonzero geometric-bias gradients.
+  It deliberately does not assert closeness between separate GPU forwards.
+- Retain strict CPU scientific checks, exact periodic mesh and hop-shell
+  checks, real training-snapshot preflight and periodic metadata tests.
+- This is a software-only qualification-policy change, not a numerical
+  fix or a claim of strict CUDA equivariance. Training can start only if
+  the remaining preflight checks pass. The original precision policy,
+  model, data split, iid source, loss and scientific diagnostics are
+  unchanged. M47.10 launchers retain their own existing qualification.
+- New smoke arm not yet executed on Grace.

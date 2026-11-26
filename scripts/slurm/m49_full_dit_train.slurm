@@ -108,10 +108,15 @@ if [[ "$ARCH" == dinat_unique || "$ARCH" == dinat_relative || "$ARCH" == dinat_p
     test "$(singularity exec "${BIND[@]}" "$IMAGE" git -C "$REPO" rev-parse HEAD)" = "$(git rev-parse HEAD)"
     if [[ "$ARCH" == dinat_periodic ]]; then
         # Opt-in real-mesh preflight uses one training snapshot and CUDA.
-        # The remaining tests exercise the same task/model paths on a small torus.
+        # User decision: defer strict cross-execution CUDA parity while retaining
+        # CPU equivariance, exact CUDA call contracts and the finite CUDA smoke arm.
+        # This does not change FP32/TF32 settings or the strict regression itself.
+        echo "[M49 periodic] Strict CUDA output parity deferred; geometry, CPU equivariance and CUDA smoke remain mandatory."
         singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
             --env "M49_PERIODIC_PREFLIGHT_SPLIT=$SPLIT" --env OMP_NUM_THREADS=4 \
-            "$IMAGE" "$PYTHON" -m pytest -q -rA tests/unit/test_m49_periodic_endpoints.py \
+            "$IMAGE" "$PYTHON" -m pytest -q -rA \
+            --deselect='tests/unit/test_m49_periodic_endpoints.py::test_periodic_relative_only_equivariance_training_and_sampling[torch_sparse_triton]' \
+            tests/unit/test_m49_periodic_endpoints.py \
             tests/unit/test_m47_10_periodic_forward.py tests/unit/test_m49_exact_three_hop.py
     elif [[ "$ARCH" == dinat_unique ]]; then
         TEST=tests/unit/test_m49_periodic_endpoints.py
