@@ -58,11 +58,11 @@ done
 MODELS=(--generation "M37=$M37" --generation "M38=$M38")
 if [ "${M47_9_INCLUDE_M40:-0}" = "1" ]; then
     test -d "$M40_RUN/generations" || { echo "Requested M40 generations unavailable" >&2; exit 2; }
-    M40=$(latest_generation "$M40_RUN" || true)
-    if [ -n "$M40" ] && [ -s "$M40/generated_test.pt" ] && \
-        [ -s "$M40/summary.json" ] && [ -s "$M40/resolved_config.yaml" ]; then
-        MODELS+=(--generation "M40=$M40")
-    fi
+    M40=$(latest_generation "$M40_RUN")
+    for file in generated_test.pt summary.json resolved_config.yaml; do
+        test -s "$M40/$file" || { echo "Missing M40 $M40/$file" >&2; exit 2; }
+    done
+    MODELS+=(--generation "M40=$M40")
 fi
 
 echo "[M47.9] job=$SLURM_JOB_ID host=$(hostname) git=$(git rev-parse HEAD)"
