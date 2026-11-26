@@ -1677,3 +1677,11 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
 - Tests: tests/unit/test_m49_periodic_endpoints.py (roundtrip, arbitrary node
   order, induced native graph, invalid endpoint and grid rejection).
 - Target execution and physical accuracy not yet measured.
+
+### M49.1 / M49.2 controlled generation
+- Implementation: evaluate_m49_generation.py (step parameter, lift to native
+  storage, optional boundary diagnostics), compare_m49_sampling.py,
+  m49_sampling_study.slurm, m49_dinat_unique_eval.slurm.
+- Existing M47.9B periodic face and divergence localization metrics reused.
+- Tests: test_m49_sampling_convergence.py, test_m49_periodic_endpoints.py.
+- Separate output directories; validation references only. Target execution pending.

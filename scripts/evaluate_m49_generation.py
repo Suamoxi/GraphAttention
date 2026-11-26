@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from time import perf_counter
 
 import numpy as np
 import torch
@@ -15,6 +16,7 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from graph_attention.data.case_definition import load_case_definition
+from graph_attention.data.periodic_endpoints import reduce_cartesian_endpoints, lift_periodic_endpoints
 from graph_attention.evaluation.spectra_3d import infer_cartesian_grid_3d
 from graph_attention.utils.provenance import collect_runtime_provenance
 from scripts.generate_generative import run_generative_generation
@@ -105,6 +107,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run-dir", type=Path, required=True)
     p.add_argument("--epoch", type=int, choices=EPOCHS, required=True)
+    p.add_argument("--steps", type=int, choices=(50,100,200), default=50)
+    p.add_argument("--sampling-study", action="store_true")
+    p.add_argument("--boundary", action="store_true")
     args = p.parse_args()
     run = args.run_dir.resolve()
     manifest = json.loads((run/"dataset_split_manifest.json").read_text())
@@ -118,44 +123,91 @@ def main():
     if checkpoint["model_class"] != "AlternatingDilatedGeometricDiT":
         raise ValueError("expected M49 DiNAT")
     del checkpoint
-    name = f"m49_validation_epoch_{args.epoch:04d}_heun50_seed5678"
+    unique = source.data.get("periodic_endpoint_policy", "keep") == "drop_max"
+    if args.sampling_study and (args.epoch != 1000 or unique):
+        raise ValueError("sampling study requires original endpoint-inclusive epoch 1000")
+    prefix = "m49_sampling" if args.sampling_study else "m49_validation"
+    name = f"{prefix}_epoch_{args.epoch:04d}_heun{args.steps}_seed5678"
     dest = run/"generations"/name
+    generation_seconds = None
     if not dest.exists():
+        started = perf_counter()
         cfg = OmegaConf.create(dict(run_dir=str(run), checkpoint=ckpt_name, device="cuda",
             batch_size=8, num_workers=4, overwrite=False, output_name=name,
             reference_split="validation",
-            sampling=dict(steps=50, method="flow_ode", solver="heun",
+            sampling=dict(steps=args.steps, method="flow_ode", solver="heun",
                           sampling_eps=0.0, final_denoise=False, seed=5678)))
         run_generative_generation(cfg)
+        generation_seconds = perf_counter()-started
     # If metrics fail after generation, reuse completed generation only.
     generation = json.loads((dest/"summary.json").read_text())
-    if generation["source_checkpoint"] != ckpt_name or generation["reference_population"] != "validation" or generation["sampling_seed"] != 5678 or generation["sampling_steps"] != 50:
+    if generation["source_checkpoint"] != ckpt_name or generation["reference_population"] != "validation" or generation["sampling_seed"] != 5678 or generation["sampling_steps"] != args.steps or generation["sampling_solver"] != "heun":
         raise ValueError("generation artifact protocol mismatch")
     artifact = torch.load(dest/"generated_validation.pt", map_location="cpu", weights_only=True)
     if tuple(artifact["reference_ids"]) != tuple(manifest["validation_ids"]):
         raise ValueError("reference sample IDs differ")
+    if tuple(artifact["generated_ids"]) != tuple(f"gen_{i:06d}" for i in range(180)):
+        raise ValueError("unexpected Gaussian sampling keys")
+    if artifact["sampling_steps"] != args.steps or artifact["sampling_seed"] != 5678 or artifact["sampling_solver"] != "heun":
+        raise ValueError("generation tensor protocol mismatch")
     channels = tuple(artifact["channel_names"])
     if tuple(c.split(".")[0] for c in channels) != CHANNELS:
         raise ValueError("unexpected field semantics")
     dataset = instantiate(source.data)
     idx = {sid:i for i,sid in enumerate(dataset.sample_ids)}
-    mesh = dataset[idx[artifact["reference_ids"][0]]].mesh
-    grid = infer_cartesian_grid_3d(mesh.coords.cpu().numpy(), periodic_endpoint_mode="drop_max")
-    if grid.source_shape != (33,33,33) or set(artifact["node_counts"]) != {35937}:
+    sid = artifact["reference_ids"][0]
+    mesh = dataset[idx[sid]].mesh
+    n = 32768 if unique else 35937
+    if mesh.num_nodes != n or tuple(artifact["node_counts"]) != (n,)*180:
         raise ValueError("unexpected fixed HIT mesh")
+    reference = artifact["target_nondimensional"].reshape(180,n,5)
+    generated = artifact["generated_nondimensional"].reshape(180,n,5)
+    if unique:
+        # Use original native mesh ordering and the same FFT/diagnostics.
+        # Lifting duplicates is evaluation only, not a model constraint.
+        original_cfg = OmegaConf.create(OmegaConf.to_container(source.data,resolve=True))
+        original_cfg.periodic_endpoint_policy = "keep"
+        original = instantiate(original_cfg)
+        if tuple(original.sample_ids) != tuple(dataset.sample_ids):
+            raise ValueError("source inventory differs after endpoint reduction")
+        full_mesh = original[idx[sid]].mesh
+        reduction = reduce_cartesian_endpoints(full_mesh,side=33)
+        if not torch.equal(reduction.mesh.coords,mesh.coords):
+            raise ValueError("retained node order differs from native map")
+        reference = lift_periodic_endpoints(reference,reduction)
+        generated = lift_periodic_endpoints(generated,reduction)
+        mesh = full_mesh
+    grid = infer_cartesian_grid_3d(mesh.coords.cpu().numpy(), periodic_endpoint_mode="drop_max")
+    if grid.source_shape != (33,33,33):
+        raise ValueError("unexpected original HIT mesh")
     case = load_case_definition(source.data.case_file)
     u_ref = float(case.reference_scales["U_ref"].value)
-    reference = artifact["target_nondimensional"].reshape(-1,35937,5).numpy()
-    generated = artifact["generated_nondimensional"].reshape(-1,35937,5).numpy()
+    reference = reference.numpy()
+    generated = generated.numpy()
     ref, rn = population(reference, artifact["reference_ids"], grid, channels, u_ref)
     gen, gn = population(generated, artifact["generated_ids"], grid, channels, u_ref)
     result = dict(protocol="m49_validation_checkpoint_v1", epoch=args.epoch,
                   reference_split="validation", comparison_mode="unpaired_population",
                   provenance=collect_runtime_provenance(), sampling_seed=5678,
-                  sampling_steps=50, source_checkpoint=ckpt_name,
+                  sampling_steps=args.steps, source_checkpoint=ckpt_name,
+                  generation_wall_seconds=generation_seconds,
+                  model_node_count=n, endpoint_values_lifted_for_diagnostics=unique,
+                  endpoint_mismatch_interpretation=("zero by construction, not a learned property" if unique else "independent stored-node predictions"),
                   reference=ref, generated=gen,
                   one_point_wasserstein=population_wasserstein(rn,gn) if rn and gn else None,
                   relative_spectrum_l1=relative_spectrum_l1(ref["velocity_energy_spectrum"],gen["velocity_energy_spectrum"]))
+    if args.boundary or args.sampling_study or unique:
+        from scripts.m47_9b_periodic_boundary_audit import _population as boundary_population
+        for label, values, ids in (
+            ("reference",reference,artifact["reference_ids"]),
+            ("generated",generated,artifact["generated_ids"]),
+        ):
+            # Existing audit separates identical-location endpoint jumps
+            # from true one-cell wrap increments and interior divergence.
+            audit = boundary_population(values,ids,channels,grid,u_ref,4)
+            result.setdefault("boundary_diagnostics",{})[label] = {
+                k:v for k,v in audit.items() if k != "per_sample"
+            }
     write(dest/"physical_metrics.json",result)
     print(f"Metrics={dest/'physical_metrics.json'}", flush=True)
 

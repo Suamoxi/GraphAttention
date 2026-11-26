@@ -978,3 +978,19 @@ physical noise across different node counts. Retrain from initialization;
 do not resume an endpoint-inclusive checkpoint. Endpoint lifting is export/
 evaluation only; zero duplicate mismatch after lifting is by construction,
 not learned periodicity. One-cell wrap increments remain a genuine metric.
+
+### M49.1 Heun refinement and M49.2 evaluation
+
+At the fixed original epoch-1000 checkpoint, evaluate Heun 50, 100 and 200
+steps using identical sample-keyed Gaussian draws, reference membership,
+batch size, device and FP32 configuration. Report the existing M49 physical
+metrics and matched per-channel standardized L2/RMSE on unique nodes. The
+200-step solution is a numerical reference, not an exact solution; lower
+step-to-step difference does not imply improved physical accuracy. Repeat
+50 steps in a new output directory and compare with historical tensors if
+available. For the endpoint-reduction ablation, lift unique predictions
+to the original node order for comparable existing diagnostics, but label
+duplicate equality as constructed. Reuse M47.9B wrap-vs-interior RMS and
+periodic centered div/curl boundary localization; the physical wrap is
+one cell apart and normally nonzero. Compare identical training budgets
+and sampling settings, not paired realizations across different meshes.
