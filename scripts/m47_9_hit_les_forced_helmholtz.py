@@ -112,7 +112,7 @@ def _load(generation, benchmark_cfg):
     generated, reference, generation_ids, reference_ids, channels = _fixed_mesh_samples(artifact)
     if generated.shape[1] != int(np.prod(grid.source_shape)):
         raise ValueError("saved nodal field count differs from source mesh grid")
-    if not len(generated_ids) == len(reference_ids) == generated.shape[0]:
+    if not len(generation_ids) == len(reference_ids) == generated.shape[0]:
         raise ValueError("generated and reference populations not aligned")
     return generated, reference, generation_ids, reference_ids, channels, grid, mesh
 
