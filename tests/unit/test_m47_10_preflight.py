@@ -1,6 +1,7 @@
 """Pure CPU regression gates for M47.10 preflight arithmetic and manifests."""
 from dataclasses import replace
 from itertools import product
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -8,7 +9,7 @@ import torch
 from graph_attention.data.contracts import Mesh
 from graph_attention.data.m47_variants import periodic_edges_in_native_order
 from graph_attention.geometry.connectivity import exact_two_hop_edge_index
-from scripts.m47_10_preflight import atomic_write, inspect_one_hop, require_report
+from scripts.m47_10_preflight import atomic_write, inspect_one_hop, require_report, verify, sha256
 
 
 def periodic_mesh(side: int = 8):
@@ -61,3 +62,22 @@ def test_report_gate_checks_revision_and_integrity(tmp_path):
         require_report(path, {**baseline, "git_sha": "changed"}, "mesh")
     with pytest.raises(RuntimeError, match="did not pass"):
         require_report(path, baseline, "gpu")
+
+def test_mesh_only_gate_independent_of_gpu_precision_checks(tmp_path):
+    identity = {"git_sha": "frozen", "qualified_manifest_sha256": "unchanged"}
+    root = tmp_path / "preflight"
+    atomic_write(root / "mesh.json", {"stage": "mesh", "status": "passed", "identity": identity})
+    verify(SimpleNamespace(output_root=tmp_path, verify_scope="mesh"), identity)
+    with pytest.raises(FileNotFoundError):
+        verify(SimpleNamespace(output_root=tmp_path, verify_scope="full"), identity)
+    atomic_write(root / "gpu.json", {"stage": "gpu", "status": "passed", "identity": identity})
+    atomic_write(root / "ready.json", {
+        "stage": "ready", "status": "passed", "identity": identity,
+        "mesh_report_sha256": sha256(root / "mesh.json"),
+        "gpu_report_sha256": sha256(root / "gpu.json"),
+    })
+    verify(SimpleNamespace(output_root=tmp_path, verify_scope="full"), identity)
+    with pytest.raises(RuntimeError, match="identity differs"):
+        verify(SimpleNamespace(output_root=tmp_path, verify_scope="mesh"), {
+            **identity, "git_sha": "different",
+        })

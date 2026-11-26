@@ -7,7 +7,7 @@
 #SBATCH --output=/scratch/coop/theret/GraphAttention_runs/%x_%j.out
 #SBATCH --error=/scratch/coop/theret/GraphAttention_runs/%x_%j.err
 
-# Run only after an approved M47.10 GPU preflight.
+# Requires real-mesh qualification; does not depend on A3 GPU diagnostics.
 set -euo pipefail
 REPO=${M47_10_REPO:-/scratch/coop/theret/GraphAttention}
 exec bash "$REPO/scripts/slurm/m47_10_train_common.sh" a1

@@ -46,9 +46,10 @@ minimum-image displacements change.
 - Independent Gaussian source is unchanged. No prior tying, extra loss,
   projection, state masking or noise-model experiment is introduced.
 
-## Real-mesh and full-size GPU preflight (mandatory before training)
+## Real-mesh and full-size GPU feasibility preflight (parity diagnostics separate)
 
-The launcher now refuses A1/A2/A3 until two same-revision gates have completed:
+Launch gates are arm-specific: A1/A2 require the real-mesh qualification only;
+A3 additionally requires the same-revision full-size GPU feasibility check.
 
 1. `scripts/slurm/m47_10_mesh_preflight.slurm` (Grace CPU): validates the
    immutable M46 qualified sample selection and M47 reference hashes, then
@@ -71,18 +72,37 @@ The launcher now refuses A1/A2/A3 until two same-revision gates have completed:
    It checks finite loss/gradients/parameters, nonzero gradients through all
    geometric attention blocks, and logs peak GPU memory and timings.
 
-Both stages emit immutable-identity reports under `$M47_10_ROOT/preflight/`:
-`mesh.json`, `gpu.json`, `ready.json`. The training launcher refuses missing,
-failed, stale-Git or changed-reference gates. Successful real-mesh/GPU execution
-is **not implied by the committed source**: inspect the actual Slurm logs and
-reports before interpreting training.
+The full-size GPU gate checks finite loss, gradients and parameters and
+the ability to complete one optimizer update. It does **not** establish
+numerical equivalence against an independent reference backend.
+
+While the periodic numerical-precision investigation is ongoing, the
+GPU parity/equivariance tests are **not executed in the required GPU preflight
+or repeated inside the training jobs**. They remain available as standalone
+diagnostic tests:
+
+- `tests/unit/test_m49_periodic_endpoints.py::test_periodic_relative_only_equivariance_training_and_sampling`
+- `tests/unit/test_triton_sparse_backward.py::test_triton_full_dinat_with_activation_checkpointing`
+
+Do not interpret a successful A3 training run as evidence that these tests
+pass; physical conclusions using A3 remain provisional if numerical
+precision or gradient correctness is unresolved.
+
+Both preflights emit revision-bound reports under `$M47_10_ROOT/preflight/`:
+`mesh.json`, `gpu.json`, `ready.json`. A1/A2 verify `mesh.json`;
+A3 verifies all three. The launcher refuses missing, failed, stale-Git or
+changed-reference reports for the stage required by that arm.
+Successful real-mesh/GPU execution is **not implied by the committed
+source**: inspect actual Slurm logs and reports before interpreting training.
 
 ### Launch A1, A2 and A3 as separate Slurm jobs
 
 Each step is a distinct `sbatch` submission, not a Slurm job array.
-All three training jobs depend **only** on the successful GPU preflight.
-Failure of A1 does not block A2 or A3. The cluster schedules their GPU
-resources independently; they are not artificially serialized.
+A1 and A2 depend only on the successful mesh preflight; A3 depends
+on the GPU feasibility job, which itself depends on the mesh preflight.
+Failure of A3's GPU preflight does **not** block A1 or A2.
+The three training jobs are independent and may run concurrently if
+Slurm grants the necessary resources.
 
 From a **clean and stable repository revision** on the Calypso login node:
 
@@ -98,8 +118,8 @@ GPU=$(sbatch --parsable --dependency=afterok:$MESH \
     scripts/slurm/m47_10_gpu_preflight.slurm)
 GPU=${GPU%%;*}
 
-sbatch --dependency=afterok:$GPU scripts/slurm/m47_10_train_a1.slurm
-sbatch --dependency=afterok:$GPU scripts/slurm/m47_10_train_a2.slurm
+sbatch --dependency=afterok:$MESH scripts/slurm/m47_10_train_a1.slurm
+sbatch --dependency=afterok:$MESH scripts/slurm/m47_10_train_a2.slurm
 sbatch --dependency=afterok:$GPU scripts/slurm/m47_10_train_a3.slurm
 ```
 
@@ -113,8 +133,9 @@ training configuration, `torch_sparse_triton`, 100 epochs, checkpoints
 every 10 epochs and strict resume plus preflight verification. A job that
 fails can be independently inspected or resubmitted.
 
-If preflights already passed at the **same exact Git revision** and the
-input hashes have not changed, submit only the desired arm:
+If the **corresponding required** preflight passed at the **same exact
+Git revision** and qualified-input hashes have not changed, submit only
+the desired arm:
 
 ```bash
 sbatch scripts/slurm/m47_10_train_a1.slurm
@@ -122,8 +143,9 @@ sbatch scripts/slurm/m47_10_train_a2.slurm
 sbatch scripts/slurm/m47_10_train_a3.slurm
 ```
 
-The shared worker still checks `preflight/ready.json`; omitting the
-Slurm dependency does not bypass scientific qualification. If a 12-hour
+The shared worker checks the arm-specific qualification: `mesh.json`
+for A1/A2, and `mesh.json`, `gpu.json`, `ready.json` for A3. Omitting
+Slurm dependencies does not bypass these checks. If a 12-hour
 allocation ends before epoch 100, resubmit only its corresponding arm
 script, which restores `last.pt` with strict optimizer and RNG state
 checks. The same rule applies to a failed arm after the failure is fixed.

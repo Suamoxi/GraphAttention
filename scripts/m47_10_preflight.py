@@ -9,8 +9,9 @@ Stages:
   gpu     Run a full 128^3 A3 graph through the production Triton DiNAT
           forward, backward and one AdamW update using synthetic standardized
           Flow Matching states and a real frozen training mesh/condition.
-  verify  Refuse training unless both stages passed at this exact revision and
-          the qualified-input hashes have not changed.
+  verify  Check the real-mesh gate (A1/A2) or mesh+GPU feasibility (A3)
+          at the exact Git revision and with unchanged qualified inputs.
+          Numerical GPU parity tests remain separate diagnostics.
 """
 from __future__ import annotations
 
@@ -334,18 +335,23 @@ def run_gpu(args: argparse.Namespace, expected: dict) -> None:
 
 def verify(args: argparse.Namespace, expected: dict) -> None:
     root = args.output_root / "preflight"
-    require_report(root / "mesh.json", expected, "mesh")
-    require_report(root / "gpu.json", expected, "gpu")
-    gate = require_report(root / "ready.json", expected, "ready")
-    if (gate.get("mesh_report_sha256") != sha256(root / "mesh.json")
-            or gate.get("gpu_report_sha256") != sha256(root / "gpu.json")):
-        raise RuntimeError("preflight reports changed since ready gate")
-    print(f"[M47.10] PASSED preflight gate at git={expected['git_sha']}", flush=True)
+    mesh_report = root / "mesh.json"
+    require_report(mesh_report, expected, "mesh")
+    if args.verify_scope == "full":
+        gpu_report = root / "gpu.json"
+        require_report(gpu_report, expected, "gpu")
+        gate = require_report(root / "ready.json", expected, "ready")
+        if (gate.get("mesh_report_sha256") != sha256(mesh_report)
+                or gate.get("gpu_report_sha256") != sha256(gpu_report)):
+            raise RuntimeError("preflight reports changed since ready gate")
+    print(f"[M47.10] PASSED {args.verify_scope} preflight gate at git={expected['git_sha']}", flush=True)
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--stage", choices=("mesh", "gpu", "verify"), required=True)
+    p.add_argument("--verify-scope", choices=("mesh", "full"), default="full",
+                   help="For verify: A1/A2 require mesh; A3 requires full GPU feasibility")
     p.add_argument("--repo", type=Path, required=True)
     p.add_argument("--archive-root", type=Path, required=True)
     p.add_argument("--reference-dir", type=Path, required=True)

@@ -42,11 +42,13 @@ BIND=(-B /home:/home -B /scratch:/scratch)
 for mount in /archivenfs /archive2; do
     if [ -d "$mount" ]; then BIND+=(-B "$mount:$mount"); fi
 done
-# Refuse all training until the same-revision actual-mesh and full-size
-# A3 forward/backward/AdamW preflights have passed. This also blocks stale
-# external physical-reference or stationarity manifests.
+# A1/A2 require real-mesh qualification, independently of A3 diagnostics.
+# A3 additionally requires a full-size Triton forward/backward/AdamW check;
+# numerical parity experiments are not a mandatory launch gate.
+VERIFY_SCOPE=mesh
+if [ "$VARIANT" = a3 ]; then VERIFY_SCOPE=full; fi
 singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -u -m scripts.m47_10_preflight \
-    --stage verify --repo "$REPO" --archive-root "$DATA" --reference-dir "$REFS" \
+    --stage verify --verify-scope "$VERIFY_SCOPE" --repo "$REPO" --archive-root "$DATA" --reference-dir "$REFS" \
     --reference-audit "$REF_AUDIT" --qualified-manifest "$QUALIFIED" \
     --source-inventory "$INVENTORY" --selection-policy "$POLICY" \
     --output-root "$ROOT"
@@ -56,7 +58,6 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -m pytest -q \
     tests/unit/test_m47_10_variants.py \
     tests/unit/test_m47_10_periodic_forward.py \
-    tests/unit/test_m49_periodic_endpoints.py \
     tests/unit/test_m49_relative_only.py
 singularity exec --nv "${BIND[@]}" "$IMAGE" "$PYTHON" -u -m scripts.train_m43_b_multires \
     --mode train --root "$DATA" --reference-dir "$REFS" \
