@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import torch
 
@@ -106,6 +106,19 @@ class NodeRegressionTask:
 
         specs = self._require_node_specs(catalog)
         fields, coords = self._preprocess_physical(packed)
+        if any(m.get("periodic_endpoint_policy") == "periodic_quotient" for m in packed.mesh_metadata):
+            # Convert the original box length with the same reference as
+            # coordinates, never the bounding box of retained nodes.
+            if not self.physical_nondimensionalization:
+                raise ValueError("periodic quotient requires convective nondimensionalization")
+            metadata = []
+            for m, references in zip(packed.mesh_metadata, packed.reference_scales, strict=True):
+                if m.get("periodic_endpoint_policy") != "periodic_quotient":
+                    raise ValueError("mixed periodic quotient and ordinary meshes are not qualified")
+                length = float(m["periodic_box_lengths"][0])
+                scale = ConvectiveNondimensionalizer(references).coordinate_scale()
+                metadata.append(dict(m, periodic_length_nondimensional=length/scale))
+            packed = replace(packed, mesh_metadata=tuple(metadata))
 
         inputs, input_channels = _concatenate_fields(
             self.input_fields,

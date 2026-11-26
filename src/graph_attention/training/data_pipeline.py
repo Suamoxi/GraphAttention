@@ -16,6 +16,7 @@ from graph_attention.geometry import (
     hex_connectivity_to_edge_index,
 )
 from graph_attention.tasks import NodeRegressionBatch, NodeRegressionTask
+from graph_attention.geometry.relative import edge_relative_displacement
 
 
 class GraphTaskCollator:
@@ -261,6 +262,21 @@ def _sample_with_graph_connectivity(sample: Sample) -> Sample:
             "connectivity from which to construct them"
         )
 
+    if mesh.metadata.get("periodic_endpoint_policy") == "periodic_quotient":
+        # Native hex remapping must produce the full axial torus, not
+        # diagonals, missing wrap edges or a numbering-dependent topology.
+        side = int(mesh.metadata["unique_grid_shape"][0])
+        n = mesh.num_nodes
+        if n != side**3 or edge_index.shape != (2, 6*n):
+            raise ValueError("periodic Cartesian graph must have six directed neighbors per node")
+        if not torch.equal(torch.bincount(edge_index[1], minlength=n), torch.full((n,),6)):
+            raise ValueError("nonuniform periodic one-hop degree")
+        length = float(mesh.metadata["periodic_box_lengths"][0])
+        offsets = edge_relative_displacement(mesh.coords.double(), edge_index, periodic_length=length) / (length/side)
+        rounded = offsets.round()
+        if (not torch.allclose(offsets, rounded, rtol=0., atol=5e-4)
+                or not torch.all(rounded.abs().sum(dim=1) == 1)):
+            raise ValueError("periodic one-hop edges must have one axial unit displacement")
     return replace(sample, mesh=replace(mesh, edge_index=edge_index))
 
 

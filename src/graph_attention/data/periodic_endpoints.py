@@ -1,8 +1,9 @@
-"""Explicit endpoint-inclusive Cartesian HIT storage reduction (M49.2).
+"""Qualified Cartesian HIT endpoint identification and native mesh reduction.
 
-This is a data representation transform, not periodic attention topology.
-Only the declared duplicate maximum planes are removed. Preserve the native
-node ordering and the subset of original hexahedra entirely on retained nodes.
+Keep native retained node order. The historical drop_max policy keeps the
+induced open mesh; periodic_quotient identifies every native hex vertex with
+its physical representative, including cells crossing periodic faces.
+Attention topology is constructed later by the geometry layer.
 """
 from __future__ import annotations
 
@@ -21,8 +22,14 @@ class EndpointReduction:
     source_shape: tuple[int, int, int]
 
 
-def reduce_cartesian_endpoints(mesh: Mesh, *, side: int) -> EndpointReduction:
-    """Qualify a complete (side)^3 lattice; construct its induced open submesh."""
+def reduce_cartesian_endpoints(
+    mesh: Mesh, *, side: int, policy: str = "drop_max",
+) -> EndpointReduction:
+    """Qualify the stored lattice; return an open or periodic unique-node mesh."""
+    if policy not in ("drop_max", "periodic_quotient"):
+        raise ValueError("unknown endpoint reduction policy")
+    if policy == "periodic_quotient" and side < 8:
+        raise ValueError("periodic quotient needs at least seven unique points per axis")
     if side < 3 or mesh.coords.shape != (side**3, 3):
         raise ValueError("expected complete endpoint-inclusive cubic mesh")
     if mesh.num_edges or mesh.node_weights is not None:
@@ -59,13 +66,30 @@ def reduce_cartesian_endpoints(mesh: Mesh, *, side: int) -> EndpointReduction:
     full_to_unique = old_to_new[inverse[canonical]]
     if torch.any(full_to_unique < 0) or not torch.equal(full_to_unique[retained], torch.arange(retained.numel())):
         raise ValueError("invalid canonical representative map")
-    metadata = dict(mesh.metadata, periodic_endpoint_policy="drop_max",
+    periodic = policy == "periodic_quotient"
+    if periodic:
+        # Each native cell must be an elementary Cartesian hex and each
+        # anchor must occur exactly once.
+        if not torch.allclose(spacing, spacing[0].expand_as(spacing), rtol=1e-6, atol=0.):
+            raise ValueError("periodic quotient is qualified only for a cubic box")
+        corners = ijk[cells]
+        anchors = corners.amin(dim=1)
+        offsets = corners - anchors[:, None, :]
+        codes = (offsets[..., 0]*2+offsets[..., 1])*2+offsets[..., 2]
+        if (torch.any(offsets > 1)
+                or not torch.equal(codes.sort(dim=1).values, torch.arange(8).expand_as(codes))
+                or torch.unique(anchors, dim=0).shape[0] != len(cells)):
+            raise ValueError("native cells must be distinct elementary Cartesian hexahedra")
+        reduced_cells = full_to_unique[cells]
+        if torch.any(reduced_cells.sort(dim=1).values.diff(dim=1) == 0):
+            raise ValueError("periodic identification collapsed a cell")
+    metadata = dict(mesh.metadata, periodic_endpoint_policy=policy,
                     original_mesh_id=mesh.mesh_id, source_grid_shape=(side,)*3,
                     unique_grid_shape=(side-1,)*3,
                     periodic_box_lengths=tuple(float(x) for x in hi-lo),
-                    periodic_wrap_edges=False)
+                    periodic_wrap_edges=periodic)
     reduced = Mesh(coords=mesh.coords[retained], edge_index=mesh.edge_index,
-                   mesh_id=f"{mesh.mesh_id}:unique_open",
+                   mesh_id=f"{mesh.mesh_id}:{'unique_periodic' if periodic else 'unique_open'}",
                    cell_connectivity=reduced_cells, metadata=metadata)
     return EndpointReduction(reduced, retained, full_to_unique, (side,)*3)
 
@@ -83,7 +107,7 @@ def reduce_sample(sample: Sample, reduction: EndpointReduction) -> Sample:
         fields[name] = unique
     return replace(sample, mesh=reduction.mesh, fields=fields,
                    metadata=dict(sample.metadata, mesh_id=reduction.mesh.mesh_id,
-                                 periodic_endpoint_policy="drop_max"))
+                                 periodic_endpoint_policy=reduction.mesh.metadata["periodic_endpoint_policy"]))
 
 
 def lift_periodic_endpoints(values: torch.Tensor, reduction: EndpointReduction) -> torch.Tensor:

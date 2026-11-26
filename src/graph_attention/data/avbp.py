@@ -302,10 +302,10 @@ class AVBPDirectoryHDF5Dataset(AVBPHDF5Dataset):
         catalog: FieldCatalog | None = None,
         periodic_endpoint_policy: str = "keep",
     ) -> None:
-        if periodic_endpoint_policy not in ("keep", "drop_max"):
-            raise ValueError("periodic_endpoint_policy must be keep or drop_max")
-        if periodic_endpoint_policy == "drop_max" and case_id != "HIT_LES_FORCED":
-            raise ValueError("drop_max is qualified only for HIT_LES_FORCED")
+        if periodic_endpoint_policy not in ("keep", "drop_max", "periodic_quotient"):
+            raise ValueError("periodic_endpoint_policy must be keep, drop_max or periodic_quotient")
+        if periodic_endpoint_policy != "keep" and case_id != "HIT_LES_FORCED":
+            raise ValueError("endpoint reduction is qualified only for HIT_LES_FORCED")
         self.periodic_endpoint_policy = periodic_endpoint_policy
         self._endpoint_reduction = None
         directory = Path(snapshot_dir).expanduser().resolve()
@@ -378,7 +378,9 @@ class AVBPDirectoryHDF5Dataset(AVBPHDF5Dataset):
             return sample
         from .periodic_endpoints import reduce_cartesian_endpoints, reduce_sample
         if self._endpoint_reduction is None:
-            self._endpoint_reduction = reduce_cartesian_endpoints(sample.mesh, side=33)
+            self._endpoint_reduction = reduce_cartesian_endpoints(
+                sample.mesh, side=33, policy=self.periodic_endpoint_policy,
+            )
         reduced = reduce_sample(sample, self._endpoint_reduction)
         reduced.validate_against(self.field_catalog)
         return reduced
