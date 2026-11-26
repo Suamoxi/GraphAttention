@@ -10,7 +10,8 @@ from scripts.m47_9_hit_les_forced_helmholtz import (
 
 
 def _sample(mode):
-    n = 8
+    # The audit checks trim=4, so the unique test grid must have n > 8.
+    n = 12
     xyz = np.indices((n + 1,) * 3)
     phase = 2 * np.pi * (xyz[0] + xyz[1]) / n
     p = np.cos(phase)
