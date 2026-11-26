@@ -49,6 +49,10 @@ cd /scratch/coop/theret/GraphAttention
 git pull --ff-only origin main
 git status --short
 sbatch scripts/slurm/m47_9_hit_les_forced_helmholtz.slurm
+
+# Optional only after the M37/M38 comparison completes successfully:
+sbatch --export=ALL,M47_9_INCLUDE_M40=1 \
+  scripts/slurm/m47_9_hit_les_forced_helmholtz.slurm
 ```
 
 Sources:
