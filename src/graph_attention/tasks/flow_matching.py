@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from operator import index as operator_index
 
@@ -169,11 +169,16 @@ class FlowMatchingTask(NodeRegressionTask):
         sampling_seed: int = 5678,
         sampling_keys: Iterable[str] | None = None,
         state_mask: torch.Tensor | None = None,
+        initial_source_index: torch.Tensor | None = None,
+        step_observer: Callable[[int, torch.Tensor], None] | None = None,
     ) -> torch.Tensor:
         """Integrate the Flow Matching ODE, optionally in a fixed coordinate subspace.
 
         The Boolean mask acts on the INITIAL Gaussian and every velocity.
         None preserves the exact historical M11 behavior and random draws.
+        initial_source_index optionally copies the original sample-keyed draws
+        between equivalent nodes at t=0 only. This diagnostic does not constrain
+        the learned velocity. The observer reads accepted states, including t=0.
         """
 
         _validate_state_batch(batch)
@@ -201,8 +206,20 @@ class FlowMatchingTask(NodeRegressionTask):
                 raise ValueError("state_mask must have shape [N,1] or [N,C]")
 
         state = _deterministic_sampling_source(batch, seed, keys)
+        if initial_source_index is not None:
+            index = initial_source_index
+            if (index.dtype != torch.long or index.device != state.device
+                    or index.shape != (state.shape[0],)):
+                raise ValueError("initial_source_index must be long [N] on the state device")
+            if (int(index.min()) < 0 or int(index.max()) >= len(state)
+                    or not torch.equal(batch.batch_index[index], batch.batch_index)
+                    or not torch.equal(index[index], index)):
+                raise ValueError("source representatives must be idempotent and within each graph")
+            state = state.index_select(0, index)
         if state_mask is not None:
             state = state.masked_fill(~state_mask, 0.0)
+        if step_observer is not None:
+            step_observer(0, state)
         dt = 1.0 / step_count
         for step in range(step_count):
             t_value = step / step_count
@@ -223,6 +240,8 @@ class FlowMatchingTask(NodeRegressionTask):
                 k1 = k1.masked_fill(~state_mask, 0.0)
             if solver_name == "euler":
                 state = state + dt * k1
+                if step_observer is not None:
+                    step_observer(step + 1, state)
                 continue
 
             predictor = state + dt * k1
@@ -242,6 +261,8 @@ class FlowMatchingTask(NodeRegressionTask):
             if state_mask is not None:
                 k2 = k2.masked_fill(~state_mask, 0.0)
             state = state + 0.5 * dt * (k1 + k2)
+            if step_observer is not None:
+                step_observer(step + 1, state)
 
         if not torch.isfinite(state).all():
             raise ValueError("flow-matching sampler produced NaN or Inf values")

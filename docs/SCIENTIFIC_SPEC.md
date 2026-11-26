@@ -1013,3 +1013,16 @@ comparison, not evidence of seed-robust improvement. A future periodic source
 on endpoint-inclusive storage requires one independent Gaussian per unique
 physical location, with identical copies at equivalent endpoints. It changes
 the source distribution and must be treated as a separate experiment.
+
+### M49.5A periodic-source inference diagnostic
+
+On the original endpoint-inclusive 33^3 HIT mesh, draw exactly the historical
+sample-keyed Gaussian in both arms. The tied arm copies each discarded
+endpoint from its coordinate-derived unique representative at t=0 only.
+Its covariance is P P^T with unit marginal variance; distinct physical
+locations remain independent. Training, learned velocity, graph, Heun 50
+solver, reference IDs and seed 5678 are unchanged. Observe accepted states
+at steps 0,5,10,25,40,45,49,50, reporting pooled standardized endpoint-to-
+representative RMS by channel, and final existing M49 physical metrics.
+Do not interpret tied-source inference as in-distribution or as enforced
+periodicity: the velocity can immediately break endpoint equality.

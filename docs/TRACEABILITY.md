@@ -1695,3 +1695,10 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   gradients). The test uses scatter on a small CPU graph; target FP32/Triton
   training and population metrics remain to be measured.
 - Compare existing M49 endpoint-inclusive baseline; no change to original run.
+
+### M49.5A periodic source
+- Implementation: FlowMatchingTask.sample_standardized optional initial_source_index
+  and step_observer; generate_generative diagnostic callback; diagnose_m49_periodic_noise.py.
+- Launcher: m49_periodic_noise.slurm; validation only; separate job-tagged outputs.
+- Tests: test_m49_periodic_noise.py and test_flow_matching_generation.py.
+- No target result yet.

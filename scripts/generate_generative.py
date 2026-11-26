@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import hydra
 import torch
@@ -39,7 +39,10 @@ def main(cfg: DictConfig) -> None:
     run_generative_generation(cfg)
 
 
-def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
+def run_generative_generation(
+    cfg: DictConfig, *, diagnostic_sampler: Callable[..., torch.Tensor] | None = None,
+    diagnostic_source_distribution: str | None = None,
+) -> dict[str, Any]:
     """Generate an unpaired population using a frozen validation or test split."""
 
     run_dir = _existing_directory(cfg.run_dir, "run_dir")
@@ -75,6 +78,12 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
     batch_size = _positive_int(cfg.batch_size, "batch_size")
     num_workers = _nonnegative_int(cfg.num_workers, "num_workers")
     sampling = _sampling_settings(cfg.sampling)
+    if (diagnostic_sampler is None) != (diagnostic_source_distribution is None):
+        raise ValueError("diagnostic sampler and explicit source label must be supplied together")
+    if diagnostic_sampler is not None and (reference_split := str(cfg.get("reference_split", "test"))) != "validation":
+        raise ValueError("diagnostic sampling must use the validation population")
+    if diagnostic_sampler is not None and (not cfg.output_name or cfg.overwrite):
+        raise ValueError("diagnostic sampling requires a separate non-overwriting output name")
 
     dataset = instantiate(source_cfg.data)
     if not hasattr(dataset, "field_catalog"):
@@ -161,7 +170,12 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
         device=device,
         sampling=sampling,
         sampler=sampler,
+        diagnostic_sampler=diagnostic_sampler,
     )
+    if diagnostic_source_distribution is not None:
+        artifact["initial_state_distribution"] = diagnostic_source_distribution
+        generation["initial_state_distribution"] = diagnostic_source_distribution
+        generation["inference_only_diagnostic"] = True
 
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -177,7 +191,7 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
 
     grid_shape = source_summary.get("grid_shape_2d")
     nodes_per_sample = source_summary.get("nodes_per_slice")
-    initial_state_distribution = _initial_state_distribution(sampling["method"])
+    initial_state_distribution = diagnostic_source_distribution or _initial_state_distribution(sampling["method"])
     summary = {
         "run_name": generation_name,
         "benchmark_run_name": f"{run_dir.name}__{generation_name}",
@@ -230,6 +244,7 @@ def _generate_test_population(
     device: torch.device,
     sampling: dict[str, Any],
     sampler: str,
+    diagnostic_sampler: Callable[..., torch.Tensor] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     model.eval()
     generated_standardized_parts: list[torch.Tensor] = []
@@ -249,9 +264,12 @@ def _generate_test_population(
                 f"gen_{generated_count + index:06d}" for index in range(scaled.num_graphs)
             )
             generated_count += scaled.num_graphs
-            generated_standardized = task.sample_standardized(
+            sampler_fn = task.sample_standardized if diagnostic_sampler is None else diagnostic_sampler
+            diagnostic_kwargs = {} if diagnostic_sampler is None else {"task": task}
+            generated_standardized = sampler_fn(
                 model,
                 scaled,
+                **diagnostic_kwargs,
                 steps=sampling["steps"],
                 method=sampling["method"],
                 solver=sampling["solver"],
