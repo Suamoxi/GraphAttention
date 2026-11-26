@@ -944,3 +944,18 @@ distribution shift. Train-only statistical scaling and equal-sample loss are
 unchanged. The nominal optimizer batch is 16 (microbatch 8, accumulation 2),
 with 50 complete optimizer updates per training epoch. The held-out test is not
 evaluated during training. No architecture or Flow Matching equation changes.
+
+### M49 checkpoint generation diagnostics
+
+At completed epochs 25, 100, 250, 500, 750 and 1000, generate 180 unpaired
+HIT fields using identical sample-keyed Gaussian streams (seed 5678),
+50-step Heun Flow Matching, frozen training scalers, and all 180 original
+validation reference fields. No held-out test field is evaluated.
+The generic generator supports explicit validation reference membership.
+Report marginal W1 on 4096 deterministic unique nodes per finite field,
+all-stored-node admissibility, endpoint seams, velocity spectra, spatial
+correlation, TKE, velocity covariance and Helmholtz/spectral tensor
+diagnostics using the 32^3 unique periodic FFT grid in physical units.
+Population curves use admissible fields; invalid samples are reported,
+not clipped or replaced. This is an exploratory model-selection diagnostic,
+not an independent trajectory validation or proof of convergence.

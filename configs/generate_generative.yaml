@@ -1,5 +1,7 @@
 run_dir: ???
 checkpoint: best.pt
+# Intermediate checkpoint selection uses validation, not final test data.
+reference_split: test
 device: cuda
 batch_size: 128
 num_workers: 4

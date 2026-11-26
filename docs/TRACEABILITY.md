@@ -1651,3 +1651,9 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   training/restart validation pending.
 - Classification: experimental data selection / anti-leakage convention, not an
   independence guarantee or change to the generative objective.
+
+### M49 validation generation at checkpoints
+- Specification: M49 checkpoint generation diagnostics in SCIENTIFIC_SPEC.
+- Implementation: scripts/generate_generative.py (reference_split),
+  scripts/evaluate_m49_generation.py, reused M47 metrics and spectra.
+- Validation: tests/unit/test_m49_generation_split.py; cluster execution pending.

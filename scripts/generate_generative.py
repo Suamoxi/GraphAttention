@@ -40,7 +40,7 @@ def main(cfg: DictConfig) -> None:
 
 
 def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
-    """Generate one unpaired test-sized population from a trained generative run."""
+    """Generate an unpaired population using a frozen validation or test split."""
 
     run_dir = _existing_directory(cfg.run_dir, "run_dir")
     source_config_path = run_dir / "resolved_config.yaml"
@@ -92,7 +92,10 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
         raise ValueError("saved standardizers and source task disagree on nondimensionalization")
     device_standardizers = standardizers.to(device=device, dtype=torch.float32)
 
-    test_ids = _manifest_test_ids(manifest)
+    reference_split = str(cfg.get("reference_split", "test"))
+    test_ids = _manifest_reference_ids(manifest, reference_split)
+    if tuple(standardizers.train_sample_ids) != tuple(manifest["train_ids"]):
+        raise ValueError("saved scaler and training manifest disagree")
     sample_ids = dataset_sample_ids(dataset)
     index_by_id = {sample_id: index for index, sample_id in enumerate(sample_ids)}
     missing_test_ids = [sample_id for sample_id in test_ids if sample_id not in index_by_id]
@@ -127,7 +130,7 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
     if not isinstance(checkpoint, dict) or "model_state_dict" not in checkpoint:
         raise ValueError("generative checkpoint does not contain model_state_dict")
     checkpoint_epoch = checkpoint.get("epoch")
-    checkpoint_validation = checkpoint.get("validation_loss")
+    checkpoint_validation = checkpoint.get("validation_loss", checkpoint.get("validation_flow_velocity_mse"))
     model.load_state_dict(checkpoint["model_state_dict"], strict=True)
 
     sampler = task.sampler_name(
@@ -142,6 +145,8 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
         seed=sampling["seed"],
         override=cfg.output_name,
     )
+    if reference_split != "test" and cfg.output_name is None:
+        generation_name = f"{reference_split}_{generation_name}"
     output_dir = run_dir / "generations" / generation_name
     if output_dir.exists() and not bool(cfg.overwrite):
         raise FileExistsError(
@@ -161,7 +166,11 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
     if output_dir.exists():
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
-    torch.save(artifact, output_dir / "generated_test.pt")
+    artifact["reference_population"] = reference_split
+    artifact_name = f"generated_{reference_split}.pt"
+    generation["artifact"] = artifact_name
+    generation["reference_ids"] = f"held_out_{reference_split}_sample_ids"
+    torch.save(artifact, output_dir / artifact_name)
     OmegaConf.save(source_cfg, output_dir / "resolved_config.yaml", resolve=True)
     OmegaConf.save(cfg, output_dir / "generation_config.yaml", resolve=True)
     shutil.copy2(manifest_path, output_dir / "dataset_split_manifest.json")
@@ -200,7 +209,7 @@ def run_generative_generation(cfg: DictConfig) -> dict[str, Any]:
         "sampling_random_stream": "task_owned_deterministic_stream",
         "grid_shape_2d": grid_shape,
         "nodes_per_slice": nodes_per_sample,
-        "reference_population": "test",
+        "reference_population": reference_split,
         "comparison_mode": "unpaired_population",
         "generated_reference_pairing": False,
         "generation": generation,
@@ -431,14 +440,24 @@ def _validate_generative_standardizers(standardizers: TaskStandardizers) -> None
 
 
 def _manifest_test_ids(manifest: dict[str, Any]) -> tuple[str, ...]:
-    values = manifest.get("test_ids")
+    return _manifest_reference_ids(manifest, "test")
+
+
+def _manifest_reference_ids(manifest: dict[str, Any], split: str) -> tuple[str, ...]:
+    if split not in ("validation", "test"):
+        raise ValueError("reference_split must be validation or test")
+    values = manifest.get(f"{split}_ids")
     if not isinstance(values, list) or not values:
-        raise ValueError("dataset split manifest must contain a non-empty test_ids list")
+        raise ValueError(f"dataset split manifest must contain a non-empty {split}_ids list")
     test_ids = tuple(values)
     if any(not isinstance(value, str) or not value for value in test_ids):
         raise ValueError("dataset split manifest test_ids must be non-empty strings")
     if len(set(test_ids)) != len(test_ids):
         raise ValueError("dataset split manifest test_ids must be unique")
+    if set(test_ids) & set(manifest.get("train_ids", [])):
+        raise ValueError("reference split overlaps training")
+    if split == "validation" and set(test_ids) & set(manifest.get("test_ids", [])):
+        raise ValueError("validation split overlaps test")
     return test_ids
 
 
