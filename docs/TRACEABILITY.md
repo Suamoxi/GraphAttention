@@ -1759,3 +1759,28 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   concatenation routine. No change to the derivatives, weights, training
   or noise. New target execution pending; previous jobs produced no ERF
   measurements.
+
+
+### M49.6 periodic quotient mesh and model
+- Data: periodic_endpoints.py / AVBPDirectoryHDF5Dataset opt-in policy;
+  all native hex cells remapped, exact duplicate field equality enforced.
+- Geometry: existing hex connectivity and exact-hop construction;
+  data_pipeline.py validates the generated axial torus once per cached mesh.
+- Task: regression.py converts original box length using coordinate scale;
+  train_generative.py and flow_matching.py pass identical model units.
+- DiNAT: original relative minimum-image geometry; absolute projection
+  bypassed and its unused bbox normalization skipped.
+- Evaluation: evaluate_m49_generation.py accepts both unique-node policies,
+  records topology, and lifts only for like-for-like physical diagnostics.
+- Qualification: test_m49_periodic_endpoints.py includes quotient edge and
+  cell equivalence, exact 1/2/3-hop shell counts and displacements,
+  nontrivial relative-only cyclic translation and renumbering equivariance,
+  packed vs individual predictions and Heun states, finite gradients,
+  and real native HIT geometry on one training snapshot. CPU scatter and
+  CUDA Triton small-model checks (FP32 tolerance) run before training;
+  real-data geometry qualification is opt-in via launcher.
+- Launchers: m49_dinat_periodic_train.slurm, m49_dinat_periodic_eval.slurm.
+  Same frozen training settings as relative-only except graph and scalers;
+  first stage 1000 epochs, max 12 h, strict resume. 180 unpaired validation
+  samples per checkpoint, Heun 50 and seed 5678.
+- No target test or training results claimed at implementation time.

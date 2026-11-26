@@ -46,6 +46,12 @@ case "$ARCH" in
         RUN_NAME=m49_dinat_relative_only_fp32_h128_l10_h4_b8_a2_seed42_blocked50
         MODEL_ARGS=(geometry=dinat_exact2 model=dinat_dit model.sparse_attention_backend=torch_sparse_triton model.include_self_attention=false +model.use_absolute_coordinate_embedding=false)
         ;;
+    dinat_periodic)
+        DEFAULT_EPOCHS=1000
+        RUN_NAME=m49_dinat_periodic_relative_fp32_h128_l10_h4_b8_a2_seed42_blocked50
+        MODEL_ARGS=(geometry=dinat_exact2 model=dinat_dit model.sparse_attention_backend=torch_sparse_triton model.include_self_attention=false +model.use_absolute_coordinate_embedding=false)
+        DATA_ARGS+=(+data.periodic_endpoint_policy=periodic_quotient)
+        ;;
     dinat_depth)
         DEFAULT_EPOCHS=250
         : "${M49_DEPTH_VARIANT:?Missing depth variant}"
@@ -63,7 +69,7 @@ case "$ARCH" in
         MODEL_ARGS=(geometry="$GEO" model=dinat_dit model.sparse_attention_backend=torch_sparse_triton model.include_self_attention=false +model.use_absolute_coordinate_embedding=true "+model.attention_hop_schedule=$HOPS")
         echo "BENCHMARK_REPORT=$M49_DEPTH_REPORT SELECTED=$SELECTION"
         ;;
-    *) echo "M49_ARCH must be full, dinat, dinat_unique, dinat_relative or dinat_depth"; exit 2;;
+    *) echo "M49_ARCH must be full, dinat, dinat_unique, dinat_relative, dinat_periodic or dinat_depth"; exit 2;;
 esac
 MAX_EPOCHS=${M49_MAX_EPOCHS:-$DEFAULT_EPOCHS}
 SPLIT=${M49_SPLIT_MANIFEST:-$REPO/configs/splits/m49_hit_les_forced_blocked50.json}
@@ -97,17 +103,26 @@ echo "RUN_DIR=$RUN_DIR cumulative_epochs=$MAX_EPOCHS resume=$RESUME"
 # Explicitly use this checkout's source, including in a detached worktree.
 # New runs use a standalone checkout under /scratch (no linked worktree).
 # Preserve the old launch path for existing legacy worktrees.
-if [[ "$ARCH" == dinat_unique || "$ARCH" == dinat_relative || "$ARCH" == dinat_depth ]]; then
+if [[ "$ARCH" == dinat_unique || "$ARCH" == dinat_relative || "$ARCH" == dinat_periodic || "$ARCH" == dinat_depth ]]; then
     test -d "$REPO/.git" || { echo "Use a standalone checkout for this ablation"; exit 2; }
     test "$(singularity exec "${BIND[@]}" "$IMAGE" git -C "$REPO" rev-parse HEAD)" = "$(git rev-parse HEAD)"
-    if [[ "$ARCH" == dinat_unique ]]; then
+    if [[ "$ARCH" == dinat_periodic ]]; then
+        # Opt-in real-mesh preflight uses one training snapshot and CUDA.
+        # The remaining tests exercise the same task/model paths on a small torus.
+        singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
+            --env "M49_PERIODIC_PREFLIGHT_SPLIT=$SPLIT" --env OMP_NUM_THREADS=4 \
+            "$IMAGE" "$PYTHON" -m pytest -q -rA tests/unit/test_m49_periodic_endpoints.py \
+            tests/unit/test_m47_10_periodic_forward.py tests/unit/test_m49_exact_three_hop.py
+    elif [[ "$ARCH" == dinat_unique ]]; then
         TEST=tests/unit/test_m49_periodic_endpoints.py
     elif [[ "$ARCH" == dinat_relative ]]; then
         TEST=tests/unit/test_m49_relative_only.py
     else
         TEST=tests/unit/test_m49_hop_schedule.py
     fi
-    singularity exec "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -m pytest -q "$TEST"
+    if [[ "$ARCH" != dinat_periodic ]]; then
+        singularity exec "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -m pytest -q "$TEST"
+    fi
 else
     BIND+=(-B /gpfs-calypso/scratch:/gpfs-calypso/scratch)
 fi

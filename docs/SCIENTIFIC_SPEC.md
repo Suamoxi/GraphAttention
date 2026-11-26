@@ -1084,3 +1084,38 @@ The limited samples/locations/times are exploratory, not a population
 estimate. Periodic/unique-node graphs and Full DiT need separate
 qualification of distance and memory assumptions. The full ODE flow
 can propagate information further than one learned velocity evaluation.
+
+
+### M49.6 periodic quotient DiNAT (project adaptation)
+
+Opt-in periodic_endpoint_policy=periodic_quotient, qualified only on native
+endpoint-inclusive cubic HIT_LES_FORCED. Retain coordinate-derived canonical
+representatives in native order; remap all original hexahedron vertices
+through the existing endpoint correspondence (not the induced open submesh).
+The geometry layer constructs and deduplicates native edges on these quotient
+cells. Validate elementary native cells, cubic spacing, complete periodic
+axial degree and minimum-image one-hop displacement. Exact-hop shells are
+computed from that graph. On 33^3 stored / 32^3 physical locations: 32768
+nodes, 32768 hex cells, 196608 directed one-hop edges, 589824 exact-two-hop
+and 1245184 exact-three-hop edges.
+
+All duplicate field values must agree exactly; no averaging, raw file
+changes, or invented physical correspondence. Original box length L,
+not the retained bounding box 31*dx, is divided by the same reference
+coordinate length as the inputs. Metadata supplies the scalar length to
+both training and generation. The original minimum-image function uses
+target-to-source wrapped displacements in [-L*/2,L*/2). Both training and
+sampling use segmented packed adaLN for this new policy.
+
+Initial experiment: 10 layers, (1,2), relative-only embedding, iid Gaussian
+on the unique physical nodes, FP32, same original effective batch 16,
+frozen blocked membership, re-fit train-only scalers on the unique mesh.
+No conservation projection, covariance prior, weighted loss, hop expansion
+or solver change. Reconstruct stored endpoints only for existing metrics
+and export. Zero endpoint jump is tautological; assess actual periodic
+wrap increments, bulk divergence and spectra separately. Translation
+equivariance is expected for cyclic shifts on this cubic lattice (up to
+floating point), not rotational isotropy or divergence/conservation.
+Full-mesh only; mixed periodic/open batches, unequal scalar lengths,
+non-cubic/partially periodic meshes, weighted meshes and partitioned
+execution are not qualified.
