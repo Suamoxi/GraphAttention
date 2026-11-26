@@ -77,45 +77,66 @@ failed, stale-Git or changed-reference gates. Successful real-mesh/GPU execution
 is **not implied by the committed source**: inspect the actual Slurm logs and
 reports before interpreting training.
 
-### Launch all three arms with dependencies
+### Launch A1, A2 and A3 as separate Slurm jobs
 
-Use only shell and Slurm commands on the Calypso login node:
+Each step is a distinct `sbatch` submission, not a Slurm job array.
+All three training jobs depend **only** on the successful GPU preflight.
+Failure of A1 does not block A2 or A3. The cluster schedules their GPU
+resources independently; they are not artificially serialized.
+
+From a **clean and stable repository revision** on the Calypso login node:
 
 ```bash
 cd /scratch/coop/theret/GraphAttention
 git pull --ff-only origin main
 git status --short
-bash scripts/slurm/m47_10_submit_all.sh
-```
 
-The wrapper submits **mesh -> GPU -> training** through Slurm `afterok`
-dependencies. Array task indices are `0=A1`, `1=A2`, `2=A3`, and the training
-array is `%1` (one arm at a time). The training array is not allowed to start
-when either preflight fails. Inspect its printed job IDs with `squeue` and
-`sacct`; logs are under `/scratch/coop/theret/GraphAttention_runs/`.
-
-For manually controlled submissions:
-
-```bash
+# Each command creates a new Slurm job and returns a distinct job ID.
 MESH=$(sbatch --parsable scripts/slurm/m47_10_mesh_preflight.slurm)
-GPU=$(sbatch --parsable --dependency=afterok:${MESH%%;*} scripts/slurm/m47_10_gpu_preflight.slurm)
-sbatch --dependency=afterok:${GPU%%;*} --array=0-2%1 scripts/slurm/m47_10_ablation_train.slurm
+MESH=${MESH%%;*}
+GPU=$(sbatch --parsable --dependency=afterok:$MESH \
+    scripts/slurm/m47_10_gpu_preflight.slurm)
+GPU=${GPU%%;*}
+
+sbatch --dependency=afterok:$GPU scripts/slurm/m47_10_train_a1.slurm
+sbatch --dependency=afterok:$GPU scripts/slurm/m47_10_train_a2.slurm
+sbatch --dependency=afterok:$GPU scripts/slurm/m47_10_train_a3.slurm
 ```
 
-If a 12-hour allocation ends before epoch 100, **resubmit the same array task**
-after ensuring the preflight gate still matches this exact Git revision:
+Alternatively, `bash scripts/slurm/m47_10_submit_all.sh` performs these
+same five **individual** `sbatch` submissions and prints their IDs. It
+does not use `--array`.
+
+The training scripts call `m47_10_train_common.sh` with their fixed
+variant. The shared worker retains the actual six-case `mach_re`
+training configuration, `torch_sparse_triton`, 100 epochs, checkpoints
+every 10 epochs and strict resume plus preflight verification. A job that
+fails can be independently inspected or resubmitted.
+
+If preflights already passed at the **same exact Git revision** and the
+input hashes have not changed, submit only the desired arm:
 
 ```bash
-sbatch --array=0 scripts/slurm/m47_10_ablation_train.slurm  # A1
-sbatch --array=1 scripts/slurm/m47_10_ablation_train.slurm  # A2
-sbatch --array=2 scripts/slurm/m47_10_ablation_train.slurm  # A3
+sbatch scripts/slurm/m47_10_train_a1.slurm
+sbatch scripts/slurm/m47_10_train_a2.slurm
+sbatch scripts/slurm/m47_10_train_a3.slurm
 ```
 
-The launcher detects a completed `last.pt` and uses strict checkpoint,
-optimizer and Flow Matching RNG restoration. An interrupted incomplete epoch
-is replayed. Concurrent writers to the same arm are blocked. **Do not update
-Git while a campaign or its resumed jobs are in progress:** this invalidates
-the locked training signatures and the preflight report.
+The shared worker still checks `preflight/ready.json`; omitting the
+Slurm dependency does not bypass scientific qualification. If a 12-hour
+allocation ends before epoch 100, resubmit only its corresponding arm
+script, which restores `last.pt` with strict optimizer and RNG state
+checks. The same rule applies to a failed arm after the failure is fixed.
+
+Check each job independently with `squeue` or `sacct` and inspect
+`m47_10_<arm>_<jobid>.out/.err` or the `m47_10_mesh` and
+`m47_10_gpu` preflight logs under
+`/scratch/coop/theret/GraphAttention_runs/`.
+
+**Important:** Because the scientific manifests and preflight reports
+are tied to the Git revision, do not update `main` in this checkout
+during the campaign. Run it from a dedicated clean checkout if other
+development must continue concurrently.
 
 Outputs:
 

@@ -1,22 +1,30 @@
-#!/bin/bash
-# Submit mesh qualification -> full 128^3 A3 GPU test -> 100-epoch A1/A2/A3.
-# Run this shell script on the Calypso login node. Do not execute Python there.
+#!/usr/bin/env bash
+# Submit five independently visible Slurm jobs:
+# mesh preflight -> GPU preflight -> A1, A2, A3 (each depending on GPU only).
 set -euo pipefail
 REPO=${M47_10_REPO:-/scratch/coop/theret/GraphAttention}
 cd "$REPO"
-test -z "$(git status --porcelain)" || { echo "Dirty repository: refusing submission" >&2; exit 2; }
-for cmd in sbatch git; do command -v "$cmd" >/dev/null; done
+test -z "$(git status --porcelain)" || {
+    echo "Dirty repository: refusing submission" >&2; exit 2;
+}
+command -v sbatch >/dev/null
+command -v git >/dev/null
+submit_id() {
+    local id
+    id=$(sbatch --parsable "$@")
+    id=${id%%;*}
+    [[ "$id" =~ ^[0-9]+$ ]] || {
+        echo "Unexpected Slurm job ID: $id" >&2; return 2;
+    }
+    printf '%s\n' "$id"
+}
 rev=$(git rev-parse HEAD)
-mesh=$(sbatch --parsable scripts/slurm/m47_10_mesh_preflight.slurm)
-mesh=${mesh%%;*}
-[[ "$mesh" =~ ^[0-9]+$ ]] || { echo "Unexpected mesh job ID $mesh" >&2; exit 2; }
-gpu=$(sbatch --parsable --dependency="afterok:$mesh" scripts/slurm/m47_10_gpu_preflight.slurm)
-gpu=${gpu%%;*}
-[[ "$gpu" =~ ^[0-9]+$ ]] || { echo "Unexpected GPU job ID $gpu" >&2; exit 2; }
-train=$(sbatch --parsable --dependency="afterok:$gpu" --array=0-2%1 \
-    scripts/slurm/m47_10_ablation_train.slurm)
-train=${train%%;*}
-[[ "$train" =~ ^[0-9]+$ ]] || { echo "Unexpected training array job ID $train" >&2; exit 2; }
-printf 'Revision: %s\nMesh preflight: %s\nA3 full-size GPU gate: %s\nA1/A2/A3 training array: %s (0=A1, 1=A2, 2=A3)\n' \
-    "$rev" "$mesh" "$gpu" "$train"
-echo 'Training is contingent on both preflights passing. Check sacct/logs before resubmitting interrupted arms.'
+mesh=$(submit_id scripts/slurm/m47_10_mesh_preflight.slurm)
+gpu=$(submit_id "--dependency=afterok:$mesh" scripts/slurm/m47_10_gpu_preflight.slurm)
+a1=$(submit_id "--dependency=afterok:$gpu" scripts/slurm/m47_10_train_a1.slurm)
+a2=$(submit_id "--dependency=afterok:$gpu" scripts/slurm/m47_10_train_a2.slurm)
+a3=$(submit_id "--dependency=afterok:$gpu" scripts/slurm/m47_10_train_a3.slurm)
+printf 'Revision: %s\nMesh preflight: %s\nGPU preflight: %s\nA1 training: %s\nA2 training: %s\nA3 training: %s\n' \
+    "$rev" "$mesh" "$gpu" "$a1" "$a2" "$a3"
+echo 'A1, A2 and A3 are independent Slurm jobs; each requires the GPU preflight to succeed.'
+echo 'Monitor: sacct -j <jobID> -o JobID,JobName,State,ExitCode,Reason'
