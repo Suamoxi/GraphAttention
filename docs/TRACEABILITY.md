@@ -1802,3 +1802,27 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
 - Preserve the original equivariance/parity tolerances and production
   computation; do not authorize training on the basis of the new diagnostic
   alone. Target execution required to identify a corrective change.
+
+
+### M49.6 CUDA diagnostic 519756: precision amplification investigation
+- Target GH200, PyTorch 2.7.0a0+7c8ec84dab.nv25.03, CUDA 12.8:
+  float32 matmul precision high, allow_tf32=True, nondeterministic.
+  Exact training/sampling call arguments identical. Initial forward
+  max abs 8.944869e-4, relative L2 1.323046e-4, 663/2560 elements
+  outside the original gate. Same-backend repeated max abs 9.104013e-4;
+  CUDA scatter repeated max abs 9.722710e-4.
+- Fixed operands: SDDMM bitwise repeatable in all three layers and
+  <=3.37e-7 max abs versus FP64; SpMM <=2.56e-7 versus FP64; softmax
+  denominator <=7.30e-6 versus FP64 (relative L2 <=9.36e-8).
+  The first QKV and geometry outputs are bitwise repeatable; first
+  pre-output projection varies by <=3.58e-7, but its output varies
+  by <=7.46e-5. This supports, but does not yet establish, TF32/
+  reduced-precision dense amplification of sparse FP32 reduction noise.
+  The test stopped before cyclic/packed/backward checks. Deterministic
+  diagnostic was unavailable without CUBLAS_WORKSPACE_CONFIG.
+- M49_DIAG_PRECISION_SWEEP=1 runs the unchanged full strict test under
+  high and highest on the same GPU in separate processes, and reports
+  both exit codes; adds a fixed-first-output-projection comparison
+  using the exact captured operands, FP64 reference, and both modes.
+  No production precision change, new tolerance or kernel change.
+  Highest success alone does not qualify production high-mode execution.

@@ -109,6 +109,30 @@ def diagnose_forward(model, call, original, sampled):
           versus_original=[_error(v, original) for v in outs],
           layer_repeats={k:_repeat([r[k] for r in records]) for k in records[0]})
 
+    # Test whether the first dense output projection amplifies tiny sparse
+    # reduction differences. Hold the actual captured operands and weights
+    # fixed across the precision arms, and use FP64 as a numerical reference.
+    projection = model.blocks[0].attention.out_proj
+    inputs = [r["0.pre_output_projection"] for r in records]
+    weight = projection.weight.detach()
+    bias = projection.bias.detach() if projection.bias is not None else None
+    refs = [torch.nn.functional.linear(x.double(), weight.double(),
+                                     None if bias is None else bias.double())
+            for x in inputs]
+    previous_precision = torch.get_float32_matmul_precision()
+    try:
+        for precision in ("high", "highest"):
+            torch.set_float32_matmul_precision(precision)
+            outputs = [torch.nn.functional.linear(x, weight, bias) for x in inputs]
+            _emit("fixed_dense_projection", precision=precision,
+                  allow_tf32=torch.backends.cuda.matmul.allow_tf32,
+                  input_repeats=_repeat(inputs),
+                  fp64_output_repeats=_repeat(refs),
+                  output_repeats=_repeat(outputs),
+                  output_vs_fp64=[_error(a,b) for a,b in zip(outputs,refs,strict=True)])
+    finally:
+        torch.set_float32_matmul_precision(previous_precision)
+
     # Both torch_sparse variants share the cuSPARSE SDDMM and bounded
     # index_add_ SpMM forward. Freeze Q/K/V to remove upstream variations.
     edge_names = {1: "local", 2: "dilated", 3: "dilated_3"}

@@ -24,8 +24,30 @@ EXTRA_ENV=()
 if [[ -n "${M49_DIAG_CUBLAS_WORKSPACE_CONFIG:-}" ]]; then
     EXTRA_ENV+=(--env "CUBLAS_WORKSPACE_CONFIG=$M49_DIAG_CUBLAS_WORKSPACE_CONFIG")
 fi
-singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
-    --env M49_PERIODIC_CUDA_DIAGNOSTIC=1 --env OMP_NUM_THREADS=4 \
-    "${EXTRA_ENV[@]}" \
-    "$IMAGE" "$PYTHON" -m pytest -q -s -rA \
-    'tests/unit/test_m49_periodic_endpoints.py::test_periodic_relative_only_equivariance_training_and_sampling[torch_sparse_triton]'
+TEST='tests/unit/test_m49_periodic_endpoints.py::test_periodic_relative_only_equivariance_training_and_sampling[torch_sparse_triton]'
+run_test() {
+    singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
+        --env M49_PERIODIC_CUDA_DIAGNOSTIC=1 --env OMP_NUM_THREADS=4 \
+        "${EXTRA_ENV[@]}" "$IMAGE" "$PYTHON" "$@"
+}
+if [[ "${M49_DIAG_PRECISION_SWEEP:-0}" == 1 ]]; then
+    # Same GPU, seed, model, data and original scientific tolerance.
+    # Separate Python processes prevent residual precision/cache state.
+    # Complete both arms even if the known high-precision-mode gate fails.
+    HIGH_STATUS=0
+    HIGHEST_STATUS=0
+    for PRECISION in high highest; do
+        echo "[M49 PRECISION SWEEP] precision=$PRECISION"
+        STATUS=0
+        run_test -c 'import sys, torch, pytest; torch.set_float32_matmul_precision(sys.argv[1]); print("matmul_precision="+torch.get_float32_matmul_precision(), flush=True); sys.exit(pytest.main(sys.argv[2:]))' \
+            "$PRECISION" -q -s -rA "$TEST" || STATUS=$?
+        echo "[M49 PRECISION SWEEP] precision=$PRECISION pytest_exit=$STATUS"
+        if [[ "$PRECISION" == high ]]; then HIGH_STATUS=$STATUS; else HIGHEST_STATUS=$STATUS; fi
+    done
+    echo "[M49 PRECISION SWEEP] high=$HIGH_STATUS highest=$HIGHEST_STATUS"
+    # Diagnostic success requires the full highest arm to pass, not just
+    # the initial forward. This does not authorize production training.
+    exit "$HIGHEST_STATUS"
+else
+    run_test -m pytest -q -s -rA "$TEST"
+fi
