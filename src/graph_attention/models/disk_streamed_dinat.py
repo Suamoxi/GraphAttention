@@ -177,6 +177,8 @@ def build_disk_streamed_dinat_plan(
     """
     if not isinstance(model, AlternatingDilatedGeometricDiT):
         raise TypeError("expected M37 AlternatingDilatedGeometricDiT")
+    if model.attention_hop_schedule != (1, 2):
+        raise ValueError("partitioned execution supports only the historical (1,2) hop schedule")
     if model.sparse_attention_backend != "torch_sparse":
         raise ValueError("only torch_sparse backend is currently supported")
     if model.training:

@@ -108,6 +108,8 @@ def build_dinat_partition_plan(
     """
     if not isinstance(model, AlternatingDilatedGeometricDiT):
         raise TypeError("M41.1 supports AlternatingDilatedGeometricDiT only")
+    if model.attention_hop_schedule != (1, 2):
+        raise ValueError("partitioned execution supports only the historical (1,2) hop schedule")
     if coords.ndim != 2 or coords.shape[1] != model.spatial_dim:
         raise ValueError("coords have the wrong spatial shape")
     if not coords.is_floating_point() or not bool(torch.isfinite(coords).all()):
@@ -210,6 +212,8 @@ def forward_partitioned_dinat(
     """
     if not isinstance(model, AlternatingDilatedGeometricDiT):
         raise TypeError("M41.1 supports AlternatingDilatedGeometricDiT only")
+    if model.attention_hop_schedule != (1, 2):
+        raise ValueError("partitioned execution supports only the historical (1,2) hop schedule")
     if model.training:
         raise ValueError("M41.1 is inference-only; call model.eval()")
     if (

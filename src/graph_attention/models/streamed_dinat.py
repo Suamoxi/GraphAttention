@@ -73,6 +73,8 @@ def build_streamed_dinat_plan(
     """
     if not isinstance(model, AlternatingDilatedGeometricDiT):
         raise TypeError("M41.3 requires AlternatingDilatedGeometricDiT")
+    if model.attention_hop_schedule != (1, 2):
+        raise ValueError("partitioned execution supports only the historical (1,2) hop schedule")
     if model.sparse_attention_backend != "torch_sparse":
         raise ValueError("M41.3 requires torch_sparse")
     if coords.device.type != "cpu" or edge_index.device.type != "cpu":
@@ -273,6 +275,8 @@ def forward_streamed_dinat(
     """
     if not isinstance(model, AlternatingDilatedGeometricDiT):
         raise TypeError("M41.3 requires AlternatingDilatedGeometricDiT")
+    if model.attention_hop_schedule != (1, 2):
+        raise ValueError("partitioned execution supports only the historical (1,2) hop schedule")
     if model.training:
         raise ValueError("M41.3 is inference-only; call model.eval()")
     if (

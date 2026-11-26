@@ -232,6 +232,8 @@ def forward_owned_query_dinat(
     """
     if not isinstance(model, AlternatingDilatedGeometricDiT):
         raise TypeError("M41.2 supports AlternatingDilatedGeometricDiT only")
+    if model.attention_hop_schedule != (1, 2):
+        raise ValueError("partitioned execution supports only the historical (1,2) hop schedule")
     if model.training:
         raise ValueError("M41.2 is inference-only; call model.eval()")
     base = plan.base
