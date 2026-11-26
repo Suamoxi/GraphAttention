@@ -17,11 +17,15 @@ BIND=(-B /home -B /scratch)
 test "$(singularity exec "${BIND[@]}" "$IMAGE" git -C "$REPO" rev-parse HEAD)" = "$(git rev-parse HEAD)"
 echo "GIT=$(git rev-parse HEAD)"
 nvidia-smi
-# CUBLAS_WORKSPACE_CONFIG is required for the deterministic-mode diagnostic.
-# Its presence is recorded; deterministic algorithms remain disabled until
-# the explicit diagnostic arm. No long training is started by this script.
+# Preserve the failed run's default environment first. Optionally repeat
+# with M49_DIAG_CUBLAS_WORKSPACE_CONFIG=:4096:8 to qualify deterministic
+# cuBLAS execution. Never silently change the training environment.
+EXTRA_ENV=()
+if [[ -n "${M49_DIAG_CUBLAS_WORKSPACE_CONFIG:-}" ]]; then
+    EXTRA_ENV+=(--env "CUBLAS_WORKSPACE_CONFIG=$M49_DIAG_CUBLAS_WORKSPACE_CONFIG")
+fi
 singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
     --env M49_PERIODIC_CUDA_DIAGNOSTIC=1 --env OMP_NUM_THREADS=4 \
-    --env CUBLAS_WORKSPACE_CONFIG=:4096:8 \
+    "${EXTRA_ENV[@]}" \
     "$IMAGE" "$PYTHON" -m pytest -q -s -rA \
     'tests/unit/test_m49_periodic_endpoints.py::test_periodic_relative_only_equivariance_training_and_sampling[torch_sparse_triton]'

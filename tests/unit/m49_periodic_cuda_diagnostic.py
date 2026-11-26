@@ -6,6 +6,7 @@ weights, topology, source, or precision policy. Used by the periodic tests.
 """
 from collections.abc import Mapping
 import json
+import os
 
 import torch
 
@@ -69,6 +70,7 @@ def diagnose_forward(model, call, original, sampled):
           gpu=torch.cuda.get_device_name(args[0].device),
           matmul_precision=torch.get_float32_matmul_precision(),
           allow_tf32=torch.backends.cuda.matmul.allow_tf32,
+          cublas_workspace_config=os.environ.get('CUBLAS_WORKSPACE_CONFIG'),
           deterministic=torch.are_deterministic_algorithms_enabled(),
           identical_model_arguments=True,
           original_pair=_error(sampled, original))
@@ -82,7 +84,7 @@ def diagnose_forward(model, call, original, sampled):
         for name, module in (
             ("qkv", block.attention.qkv),
             ("geometry", block.attention.geometry_mlp),
-            ("aggregation", block.attention.out_proj),
+            ("output_projection", block.attention.out_proj),
             ("attention", block.attention),
             ("block", block),
         ):
