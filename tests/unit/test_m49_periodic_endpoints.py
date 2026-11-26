@@ -80,8 +80,11 @@ def periodic_fixture():
     reduction = reduce_cartesian_endpoints(mesh, side=9, policy="periodic_quotient")
     names = ("rho", "rhou", "rhov", "rhow", "rhoE")
     references = ReferenceScales(
-        scales=tuple(ReferenceScale(name, value, "synthetic qualification")
-                     for name, value in (("rho_ref", 1.), ("U_ref", 2.), ("L_ref", 4.))),
+        scales=tuple(ReferenceScale(name, value, "synthetic qualification",
+                                    units=units, provenance="analytic test fixture",
+                                    inference_available=True)
+                     for name, value, units in (("rho_ref", 1., "kg/m^3"),
+                                                ("U_ref", 2., "m/s"), ("L_ref", 4., "m"))),
         scheme="synthetic_periodic",
     )
     original = Sample("periodic-a", mesh,
