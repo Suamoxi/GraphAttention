@@ -55,7 +55,8 @@ def main(cfg: DictConfig) -> None:
     run_generative_training(cfg)
 
 
-def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = False) -> dict[str, Any]:
+def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = False,
+                            m49_legacy_evidence: dict[str, Any] | None = None) -> dict[str, Any]:
     """Train one configured generative task without dataset-specific runner logic."""
 
     if "generative" not in cfg:
@@ -253,6 +254,7 @@ def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = Fal
             from scripts.resume_m49_full import validate_migration
             revision_migration = validate_migration(
                 manifest, checkpoint, runtime_provenance, run_name,
+                legacy_evidence=m49_legacy_evidence,
             )
             if not all(key in checkpoint for key in (
                 "training_generator_state", "train_loader_generator_state",

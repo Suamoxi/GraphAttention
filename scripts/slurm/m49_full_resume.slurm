@@ -16,4 +16,14 @@ cd "$REPO"
 test -z "$(git status --porcelain)" || { echo "Dirty checkout"; exit 2; }
 exec 9>"$ROOT/training/$NAME.lock"
 flock -n 9 || { echo "Run already locked"; exit 2; }
-singularity exec --nv -B /home -B /scratch --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -u -m scripts.resume_m49_full --run-dir "$ROOT/training/$NAME" --max-epochs "${M49_MAX_EPOCHS:-75}"
+# A linked worktree's .git points at the physical GPFS path, not /scratch.
+M49_GIT_ARGS=()
+if [[ "${M49_ACCEPT_REVIEWED_MISSING_GIT:-0}" == 1 ]]; then
+    M49_GIT_ARGS+=(--accept-reviewed-missing-git)
+fi
+HOST_SHA=$(git rev-parse HEAD)
+BIND=(-B /home -B /scratch -B /gpfs-calypso/scratch:/gpfs-calypso/scratch)
+CONTAINER_SHA=$(singularity exec "${BIND[@]}" "$IMAGE" git -C "$REPO" rev-parse HEAD)
+test "$HOST_SHA" = "$CONTAINER_SHA" || { echo "Host/container Git mismatch"; exit 2; }
+echo "Verified host/container Git SHA: $HOST_SHA"
+singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -u -m scripts.resume_m49_full --run-dir "$ROOT/training/$NAME" --max-epochs "${M49_MAX_EPOCHS:-75}" "${M49_GIT_ARGS[@]}"
