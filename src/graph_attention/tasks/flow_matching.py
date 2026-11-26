@@ -423,6 +423,12 @@ def _model_velocity(
     length = periodic_length_from_mesh_metadata(
         getattr(getattr(batch, "source", None), "mesh_metadata", ())
     )
+    if any(m.get("periodic_endpoint_policy") == "periodic_quotient"
+           for m in getattr(getattr(batch, "source", None), "mesh_metadata", ())):
+        if getattr(model, "use_absolute_coordinate_embedding", None) is not False:
+            raise ValueError("periodic quotient requires a relative-only DiNAT")
+        if length is None:
+            raise ValueError("missing nondimensional periodic box length")
     if length is not None:
         model_kwargs["periodic_length"] = length
     if batch.attention_edge_indices:

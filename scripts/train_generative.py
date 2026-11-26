@@ -48,6 +48,7 @@ from graph_attention.training.data_pipeline import (
 )
 from graph_attention.training.model_factory import instantiate_controlled_model
 from graph_attention.utils.provenance import collect_runtime_provenance
+from graph_attention.geometry.relative import periodic_length_from_mesh_metadata
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
@@ -842,6 +843,17 @@ def _forward_model(model: torch.nn.Module, batch: NodeRegressionBatch) -> torch.
         "batch_index": batch.batch_index,
         "conditioning": batch.conditioning,
     }
+    length = periodic_length_from_mesh_metadata(
+        getattr(getattr(batch, "source", None), "mesh_metadata", ())
+    )
+    if any(m.get("periodic_endpoint_policy") == "periodic_quotient"
+           for m in getattr(getattr(batch, "source", None), "mesh_metadata", ())):
+        if getattr(model, "use_absolute_coordinate_embedding", None) is not False:
+            raise ValueError("periodic quotient requires a relative-only DiNAT")
+        if length is None:
+            raise ValueError("missing nondimensional periodic box length")
+    if length is not None:
+        model_kwargs["periodic_length"] = length
     if batch.attention_edge_indices:
         model_kwargs["attention_edge_indices"] = batch.attention_edge_indices
     if getattr(model, "sparse_attention_backend", None) == "torch_sparse_triton":

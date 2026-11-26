@@ -126,7 +126,8 @@ def main():
     if checkpoint["model_class"] != "AlternatingDilatedGeometricDiT":
         raise ValueError("expected M49 DiNAT")
     del checkpoint
-    unique = source.data.get("periodic_endpoint_policy", "keep") == "drop_max"
+    endpoint_policy = source.data.get("periodic_endpoint_policy", "keep")
+    unique = endpoint_policy in ("drop_max", "periodic_quotient")
     if args.sampling_study and (args.epoch != 1000 or unique):
         raise ValueError("sampling study requires original endpoint-inclusive epoch 1000")
     prefix = "m49_sampling" if args.sampling_study else "m49_validation"
@@ -197,6 +198,8 @@ def main():
                   sampling_steps=args.steps, source_checkpoint=ckpt_name,
                   generation_wall_seconds=generation_seconds,
                   model_node_count=n, generation_batch_size=args.batch_size,
+                  periodic_endpoint_policy=endpoint_policy,
+                  periodic_wrap_edges=bool(endpoint_policy == "periodic_quotient"),
                   attention_hop_schedule=list(source.model.get("attention_hop_schedule",(1,2))),
                   model_layers=int(source.model.num_layers),
                   endpoint_values_lifted_for_diagnostics=unique,

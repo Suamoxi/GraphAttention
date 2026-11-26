@@ -318,16 +318,15 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             topologies[hop] = self._attention_edges_with_optional_self(
                 name,raw_edges,num_nodes=inputs.shape[0])
 
-        model_coords = coords
-        if self.coordinate_normalization == "centered_bbox":
-            model_coords = _normalize_coordinates_by_graph(
-                coords,
-                batch_index=batch_index,
-                eps=self.coordinate_normalization_eps,
-            )
-
         hidden = self.input_projection(inputs)
         if self.use_absolute_coordinate_embedding:
+            model_coords = coords
+            if self.coordinate_normalization == "centered_bbox":
+                model_coords = _normalize_coordinates_by_graph(
+                    coords,
+                    batch_index=batch_index,
+                    eps=self.coordinate_normalization_eps,
+                )
             hidden = hidden + self.coordinate_projection(model_coords)
         condition_embedding = self._condition_embedding(
             inputs,
