@@ -83,3 +83,18 @@ def test_sparse_model_input_jacobian_has_finite_hop_support():
     assert np.any(j[:4] != 0)
     assert np.count_nonzero(j[4:]) == 0
     assert all(p.grad is None for p in model.parameters())
+
+
+def test_erf_channel_contract_matches_avbp_task():
+    from graph_attention.data.avbp import AVBP_FIELD_CATALOG
+    from graph_attention.tasks.regression import _concatenate_fields
+    from scripts.analyze_m49_receptive_field import CHANNELS
+
+    names = ("rho", "rhou", "rhov", "rhow", "rhoE")
+    specs = {name: AVBP_FIELD_CATALOG[name] for name in names}
+    fields = {name: torch.full((3,), float(i)) for i, name in enumerate(names)}
+    matrix, channels = _concatenate_fields(names, fields, specs, role="input")
+    assert channels == CHANNELS == ("rho.value", "rhou.x", "rhov.y", "rhow.z", "rhoE.value")
+    torch.testing.assert_close(matrix, torch.arange(5, dtype=torch.float32).expand(3, 5))
+    _, reordered = _concatenate_fields(tuple(reversed(names)), fields, specs, role="input")
+    assert reordered != CHANNELS

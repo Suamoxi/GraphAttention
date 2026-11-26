@@ -31,9 +31,10 @@ from graph_attention.training.model_factory import instantiate_controlled_model
 from graph_attention.utils.provenance import collect_runtime_provenance
 from scripts.evaluate_m49_generation import write
 from scripts.generate_generative import _manifest_reference_ids
-from scripts.m47_generation_metrics import CHANNELS
 from scripts.train_generative import _forward_model, _load_standardizers, _validate_generative_standardizers
 
+# Task batches use field.component names, not population-metric field names.
+CHANNELS = ("rho.value", "rhou.x", "rhov.y", "rhow.z", "rhoE.value")
 TIMES = (0., .5, .95)
 SOURCE_SEED = 5678
 SHAPE = (33, 33, 33)
@@ -192,7 +193,10 @@ def main():
             qualify_open_cartesian_edges(ijk, SHAPE, host.edge_index.numpy())
             batch = device_scalers.transform(task_batch_to_device(host, device=device, dtype=torch.float32))
             if tuple(batch.input_channels) != channels or tuple(batch.target_channels) != channels:
-                raise ValueError("unexpected state channel semantics/order")
+                raise ValueError(
+                    f"expected state channels {channels!r}; "
+                    f"got inputs={batch.input_channels!r}, targets={batch.target_channels!r}"
+                )
             if not torch.isfinite(batch.inputs).all():
                 raise ValueError("nonfinite reference state")
             z = _deterministic_sampling_source(batch, SOURCE_SEED, (sid,))

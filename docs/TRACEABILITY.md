@@ -1748,3 +1748,14 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   The real DiNAT regression, complete checkpoint runner and FP32 Triton
   VJPs are not yet executed on target hardware.
 - No claim of measured effective receptive-field size or training changes.
+
+### M49.4E channel-name qualification fix
+- Calypso array 519682: all three tasks passed the four prior regression
+  tests, then stopped before the first VJP at the channel-name guard.
+- The ERF runner had compared task-qualified field.component names against
+  the short population-metrics labels. Use the exact AVBP task contract:
+  rho.value, rhou.x, rhov.y, rhow.z, rhoE.value; retain strict order checking.
+- Added regression against AVBP_FIELD_CATALOG and the actual task
+  concatenation routine. No change to the derivatives, weights, training
+  or noise. New target execution pending; previous jobs produced no ERF
+  measurements.
