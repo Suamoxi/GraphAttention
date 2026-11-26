@@ -20,6 +20,6 @@ cd "$REPO"
 test -d .git && test -z "$(git status --porcelain)" || { echo "Use a clean standalone checkout"; exit 2; }
 BIND=(-B /home -B /scratch)
 test "$(singularity exec "${BIND[@]}" "$IMAGE" git -C "$REPO" rev-parse HEAD)" = "$(git rev-parse HEAD)"
-singularity exec "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -m pytest -q tests/unit/test_geometry_dilated.py tests/unit/test_m49_exact_three_hop.py tests/unit/test_m49_hop_schedule.py tests/unit/test_m49_relative_only.py
+singularity exec "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -m pytest -q tests/unit/test_geometry_dilated.py tests/unit/test_m49_exact_three_hop.py tests/unit/test_m49_hop_schedule.py tests/unit/test_m49_relative_only.py tests/unit/test_m49_depth_benchmark.py
 nvidia-smi
 singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" "$IMAGE" "$PYTHON" -u -m scripts.benchmark_m49_depth --variant "$VARIANT" --baseline "$BASE" --output "$ROOT/depth_benchmark/${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.json"

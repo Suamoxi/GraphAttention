@@ -190,11 +190,17 @@ def benchmark(args):
 
 def selection(path,variant):
     report=json.loads(path.read_text())
-    current=collect_runtime_provenance()["git"]
+    runtime=collect_runtime_provenance()
+    current=runtime["git"]
     if (report["protocol"]!="m49_depth_real_accumulated_v1" or report["variant"]!=variant
         or report["status"]!="ok" or not report["absolute_coordinate_embedding"]
         or report["provenance"]["git"]["sha"]!=current["sha"] or current["dirty"] is not False):
         raise ValueError("incompatible or unqualified benchmark report")
+    if runtime["runtime"] != report["provenance"]["runtime"] or runtime["hardware"] != report["provenance"]["hardware"]:
+        raise ValueError("training runtime/hardware differs from benchmark")
+    total=torch.cuda.get_device_properties("cuda").total_memory/1024**3
+    if abs(total-report["gpu_total_gib"])>1e-6:
+        raise ValueError("training GPU memory differs from benchmark")
     row=choose_trial(report["trials"],report["gpu_total_gib"])
     if row is None or row!=report["selected"]:
         raise ValueError("no safe reproducible benchmark selection")

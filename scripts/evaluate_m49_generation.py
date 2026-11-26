@@ -110,7 +110,10 @@ def main():
     p.add_argument("--steps", type=int, choices=(50,100,200), default=50)
     p.add_argument("--sampling-study", action="store_true")
     p.add_argument("--boundary", action="store_true")
+    p.add_argument("--batch-size", type=int, default=8)
     args = p.parse_args()
+    if args.batch_size < 1:
+        p.error("batch size must be positive")
     run = args.run_dir.resolve()
     manifest = json.loads((run/"dataset_split_manifest.json").read_text())
     if len(manifest["validation_ids"]) != 180 or len(manifest["train_ids"]) != 800:
@@ -133,7 +136,7 @@ def main():
     if not dest.exists():
         started = perf_counter()
         cfg = OmegaConf.create(dict(run_dir=str(run), checkpoint=ckpt_name, device="cuda",
-            batch_size=8, num_workers=4, overwrite=False, output_name=name,
+            batch_size=args.batch_size, num_workers=4, overwrite=False, output_name=name,
             reference_split="validation",
             sampling=dict(steps=args.steps, method="flow_ode", solver="heun",
                           sampling_eps=0.0, final_denoise=False, seed=5678)))
@@ -141,6 +144,8 @@ def main():
         generation_seconds = perf_counter()-started
     # If metrics fail after generation, reuse completed generation only.
     generation = json.loads((dest/"summary.json").read_text())
+    if int(OmegaConf.load(dest/"generation_config.yaml").batch_size) != args.batch_size:
+        raise ValueError("existing generation batch size differs")
     if generation["source_checkpoint"] != ckpt_name or generation["reference_population"] != "validation" or generation["sampling_seed"] != 5678 or generation["sampling_steps"] != args.steps or generation["sampling_solver"] != "heun":
         raise ValueError("generation artifact protocol mismatch")
     artifact = torch.load(dest/"generated_validation.pt", map_location="cpu", weights_only=True)
@@ -191,7 +196,10 @@ def main():
                   provenance=collect_runtime_provenance(), sampling_seed=5678,
                   sampling_steps=args.steps, source_checkpoint=ckpt_name,
                   generation_wall_seconds=generation_seconds,
-                  model_node_count=n, endpoint_values_lifted_for_diagnostics=unique,
+                  model_node_count=n, generation_batch_size=args.batch_size,
+                  attention_hop_schedule=list(source.model.get("attention_hop_schedule",(1,2))),
+                  model_layers=int(source.model.num_layers),
+                  endpoint_values_lifted_for_diagnostics=unique,
                   endpoint_mismatch_interpretation=("zero by construction, not a learned property" if unique else "independent stored-node predictions"),
                   reference=ref, generated=gen,
                   one_point_wasserstein=population_wasserstein(rn,gn) if rn and gn else None,

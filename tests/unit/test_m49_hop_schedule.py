@@ -28,12 +28,12 @@ def kwargs_for_chain(n=6):
 @pytest.mark.parametrize("checkpointing",[False,True])
 def test_schedule_and_backward(checkpointing):
     model=make_model(checkpointing=checkpointing)
-    kwargs=kwargs_for_chain()
+    kwargs=kwargs_for_chain(7)
     calls=[]
     for block in model.blocks:
         block.attention.register_forward_pre_hook(
             lambda _mod,_args,kw:calls.append(kw["edge_index"].clone()),with_kwargs=True)
-    x=torch.randn(6,3,requires_grad=True)
+    x=torch.randn(7,3,requires_grad=True)
     with torch.no_grad():
         model.final_layer.projection.weight.normal_()
         for block in model.blocks:
