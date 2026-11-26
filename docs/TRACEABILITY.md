@@ -1702,3 +1702,12 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
 - Launcher: m49_periodic_noise.slurm; validation only; separate job-tagged outputs.
 - Tests: test_m49_periodic_noise.py and test_flow_matching_generation.py.
 - No target result yet.
+
+### M49.4 exact-hop scheduling
+- Geometry: geometry/connectivity.py (exact_three_hop_edge_index),
+  geometry/attention.py, configs/geometry/dinat_exact3.yaml.
+- Model: dinat_dit.py and model_factory.py; historical default (1,2).
+- Tests: test_m49_exact_three_hop.py, test_m49_hop_schedule.py,
+  existing geometry_dilated and dinat_dit tests.
+- Nondefault schedules are not qualified for partitioned/streamed execution.
+- Target throughput and generated physical accuracy pending.

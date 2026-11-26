@@ -1026,3 +1026,21 @@ at steps 0,5,10,25,40,45,49,50, reporting pooled standardized endpoint-to-
 representative RMS by channel, and final existing M49 physical metrics.
 Do not interpret tied-source inference as in-distribution or as enforced
 periodicity: the velocity can immediately break endpoint equality.
+
+### M49.4 configurable exact-hop DiNAT (project adaptation)
+
+For a directed local Boolean adjacency A1, A2 is the exact shortest-path
+two-hop shell; A3 = supp(A2 A1) minus the identity and A1/A2 supports.
+Compose sparse edges by shared intermediate vertex, coalesce repeated paths,
+and remove shorter connections. No dense adjacency or mask is materialized.
+The collator constructs shells once per cached native mesh; packed graphs
+remain disconnected. In each block select hop from a repeated explicit
+schedule, default (1,2), with separate topology/displacement/CSR cache per
+hop. Self loops retain their existing meaning (all scheduled hops or local
+one-hop only). The new (1,2,3) schedule changes neither geometric attention
+equations nor Triton kernels. Nondefault schedules support full-mesh execution
+only; existing partitioned/streamed executors are not qualified for them.
+For open 33^3 Cartesian HIT, directed counts are 209088,608058,1243828.
+A schedule's sum of hop lengths bounds one velocity evaluation's spatial
+reach; it is not a measured effective receptive field or a bound on the
+complete iterative generation process.

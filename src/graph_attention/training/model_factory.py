@@ -242,6 +242,7 @@ def _instantiate_matched_dit(
         use_absolute_coordinate_embedding=bool(
             model_cfg.get("use_absolute_coordinate_embedding", True)
         ),
+        attention_hop_schedule=tuple(model_cfg.get("attention_hop_schedule",(1,2))),
     )
     incompatible = dinat_dit.load_state_dict(full_reference.state_dict(), strict=False)
     if incompatible.unexpected_keys:
@@ -271,6 +272,7 @@ def _instantiate_matched_dit(
                     else "local_exact2hop_alternating_local_first"
                 )
             ),
+            "attention_hop_schedule": list(dinat_dit.attention_hop_schedule),
             "include_self_attention": include_self_attention,
             "include_local_self_attention": include_local_self_attention,
             "sparse_attention_backend": sparse_attention_backend,
@@ -282,4 +284,7 @@ def _instantiate_matched_dit(
             ),
         }
     )
+    if dinat_dit.attention_hop_schedule != (1,2):
+        metadata["attention_mode"] = "scheduled_exact_hop_geometric"
+        metadata["layer_topology_schedule"] = "repeat_" + "_".join(map(str,dinat_dit.attention_hop_schedule))
     return dinat_dit, metadata

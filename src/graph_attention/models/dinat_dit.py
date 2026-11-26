@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 import torch
 from torch.utils.checkpoint import checkpoint
@@ -28,6 +28,7 @@ from .sparse_transformer import (
 )
 
 _DILATED_TOPOLOGY_NAME = "dilated"
+_HOP_NAMES = {1: "local", 2: _DILATED_TOPOLOGY_NAME, 3: "dilated_3"}
 
 
 def _tensor_version_or_none(tensor: torch.Tensor) -> int | None:
@@ -91,11 +92,11 @@ class DiNATDiTMultiheadAttention(GeometricSparseMultiheadAttention):
 
 
 class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
-    """DiT backbone with alternating local/exact-two-hop geometric attention.
+    """DiT backbone with configurable repeating exact-hop geometric attention.
 
-    The include_local_self_attention option adds (i,i) only in even-numbered
-    local layers; odd-numbered exact-two-hop layers remain unchanged. The
-    historical include_self_attention option adds (i,i) to both layer types.
+    The default (1,2) preserves the historical alternating architecture.
+    include_local_self_attention adds (i,i) only in one-hop layers;
+    include_self_attention adds (i,i) in every scheduled topology.
     Neither option changes the raw geometric graph topology or exact-two-hop
     definition; both reuse the learned relative-displacement score bias.
     """
@@ -123,6 +124,7 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
         include_self_attention: bool = False,
         include_local_self_attention: bool = False,
         activation_checkpointing: bool = False,
+        attention_hop_schedule: Sequence[int] = (1, 2),
     ) -> None:
         # Sparse geometric attention does not use dense SDPA, but this argument
         # keeps the same public configuration contract as the other DiT models.
@@ -153,6 +155,10 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             coordinate_normalization=coordinate_normalization,
             coordinate_normalization_eps=coordinate_normalization_eps,
         )
+        schedule = tuple(attention_hop_schedule)
+        if not schedule or any(type(hop) is not int or hop not in _HOP_NAMES for hop in schedule):
+            raise ValueError("attention_hop_schedule must contain integers in {1,2,3}")
+        self.attention_hop_schedule = schedule
         self.sparse_attention_backend = backend
         self.include_self_attention = bool(include_self_attention)
         self.include_local_self_attention = bool(include_local_self_attention)
@@ -299,30 +305,18 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             num_nodes=inputs.shape[0],
             device=inputs.device,
         )
-        if (
-            attention_edge_indices is None
-            or _DILATED_TOPOLOGY_NAME not in attention_edge_indices
-        ):
-            raise ValueError(
-                "DiNAT-DiT requires attention_edge_indices['dilated']"
-            )
-        dilated_edge_index = attention_edge_indices[_DILATED_TOPOLOGY_NAME]
-        _validate_edge_index(
-            dilated_edge_index,
-            num_nodes=inputs.shape[0],
-            device=inputs.device,
-        )
-
-        local_attention_edge_index = self._attention_edges_with_optional_self(
-            "local",
-            edge_index,
-            num_nodes=inputs.shape[0],
-        )
-        dilated_attention_edge_index = self._attention_edges_with_optional_self(
-            "dilated",
-            dilated_edge_index,
-            num_nodes=inputs.shape[0],
-        )
+        topologies = {}
+        for hop in dict.fromkeys(self.attention_hop_schedule):
+            name = _HOP_NAMES[hop]
+            if hop == 1:
+                raw_edges = edge_index
+            else:
+                if attention_edge_indices is None or name not in attention_edge_indices:
+                    raise ValueError(f"DiNAT-DiT requires attention_edge_indices[{name!r}]")
+                raw_edges = attention_edge_indices[name]
+                _validate_edge_index(raw_edges,num_nodes=inputs.shape[0],device=inputs.device)
+            topologies[hop] = self._attention_edges_with_optional_self(
+                name,raw_edges,num_nodes=inputs.shape[0])
 
         model_coords = coords
         if self.coordinate_normalization == "centered_bbox":
@@ -341,49 +335,23 @@ class AlternatingDilatedGeometricDiT(_BaseDiTGraphTransformer):
             conditioning=conditioning,
         )
 
-        local_displacement = edge_relative_displacement(
-            coords,
-            local_attention_edge_index,
-            periodic_length=periodic_length,
-        )
-        dilated_displacement = edge_relative_displacement(
-            coords,
-            dilated_attention_edge_index,
-            periodic_length=periodic_length,
-        )
-
-        local_sparse_adj = None
-        dilated_sparse_adj = None
-        if self.sparse_attention_backend == "dgl":
-            local_sparse_adj = _build_dgl_sparse_adjacency(
-                local_attention_edge_index,
-                num_nodes=inputs.shape[0],
-            )
-            dilated_sparse_adj = _build_dgl_sparse_adjacency(
-                dilated_attention_edge_index,
-                num_nodes=inputs.shape[0],
-            )
-        elif self.sparse_attention_backend in {"torch_sparse", "torch_sparse_triton"}:
-            local_sparse_adj = self._cached_torch_sparse_topology(
-                "local",
-                local_attention_edge_index,
-                num_nodes=inputs.shape[0],
-            )
-            dilated_sparse_adj = self._cached_torch_sparse_topology(
-                "dilated",
-                dilated_attention_edge_index,
-                num_nodes=inputs.shape[0],
-            )
+        displacements = {
+            hop: edge_relative_displacement(coords,edges,periodic_length=periodic_length)
+            for hop,edges in topologies.items()
+        }
+        sparse_adjs = dict.fromkeys(topologies)
+        for hop,edges in topologies.items():
+            if self.sparse_attention_backend == "dgl":
+                sparse_adjs[hop] = _build_dgl_sparse_adjacency(edges,num_nodes=inputs.shape[0])
+            elif self.sparse_attention_backend in {"torch_sparse","torch_sparse_triton"}:
+                sparse_adjs[hop] = self._cached_torch_sparse_topology(
+                    _HOP_NAMES[hop],edges,num_nodes=inputs.shape[0])
 
         for layer_index, block in enumerate(self.blocks):
-            if layer_index % 2 == 0:
-                layer_edge_index = local_attention_edge_index
-                layer_displacement = local_displacement
-                layer_sparse_adj = local_sparse_adj
-            else:
-                layer_edge_index = dilated_attention_edge_index
-                layer_displacement = dilated_displacement
-                layer_sparse_adj = dilated_sparse_adj
+            hop = self.attention_hop_schedule[layer_index % len(self.attention_hop_schedule)]
+            layer_edge_index = topologies[hop]
+            layer_displacement = displacements[hop]
+            layer_sparse_adj = sparse_adjs[hop]
 
             attention_kwargs: dict[str, object] = {
                 "edge_displacement": layer_displacement,
