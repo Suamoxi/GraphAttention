@@ -46,35 +46,82 @@ minimum-image displacements change.
 - Independent Gaussian source is unchanged. No prior tying, extra loss,
   projection, state masking or noise-model experiment is introduced.
 
-## Launch / resume
+## Real-mesh and full-size GPU preflight (mandatory before training)
 
-Run on CERFACS Grace in the production Singularity container:
+The launcher now refuses A1/A2/A3 until two same-revision gates have completed:
+
+1. `scripts/slurm/m47_10_mesh_preflight.slurm` (Grace CPU): validates the
+   immutable M46 qualified sample selection and M47 reference hashes, then
+   qualifies all six real AVBP meshes as complete Cartesian periodic hexahedral
+   lattices using **M49 `periodic_quotient`**. It compares the unique-node
+   coordinates to A2/A3, checks every directed A3 one-hop edge for correct
+   signed minimum-image displacement, six different signed neighbors per node,
+   and exactly `6*nside^2` wrap edges. It also checks duplicate conservative
+   field values on **three train and one validation snapshot per case** (no
+   test fields are opened). During actual A2/A3 training every loaded sample
+   is independently checked for exact endpoint agreement.
+2. `scripts/slurm/m47_10_gpu_preflight.slurm` (Grace GPU): uses the real
+   Re94/Ma0.2 `128^3` unique mesh and the production collator to construct
+   `6*N` one-hop and `18*N` exact-two-hop edges. It performs a 10-layer
+   h128/h4 relative-only `torch_sparse_triton` forward, backward, and one
+   AdamW optimizer update with the real mesh/condition and a **synthetic
+   standardized Gaussian Flow Matching state**. The throwaway preflight model
+   temporarily activates adaLN-Zero residual gates to exercise all sparse
+   attention backward kernels; this never changes scientific training weights.
+   It checks finite loss/gradients/parameters, nonzero gradients through all
+   geometric attention blocks, and logs peak GPU memory and timings.
+
+Both stages emit immutable-identity reports under `$M47_10_ROOT/preflight/`:
+`mesh.json`, `gpu.json`, `ready.json`. The training launcher refuses missing,
+failed, stale-Git or changed-reference gates. Successful real-mesh/GPU execution
+is **not implied by the committed source**: inspect the actual Slurm logs and
+reports before interpreting training.
+
+### Launch all three arms with dependencies
+
+Use only shell and Slurm commands on the Calypso login node:
 
 ```bash
 cd /scratch/coop/theret/GraphAttention
 git pull --ff-only origin main
 git status --short
-sbatch scripts/slurm/m47_10_ablation_train.slurm
+bash scripts/slurm/m47_10_submit_all.sh
 ```
 
-Array indices: `0=A1`, `1=A2`, `2=A3`. By default tasks run sequentially
-(`%1`) to avoid GPU contention. Submitting one arm separately:
+The wrapper submits **mesh -> GPU -> training** through Slurm `afterok`
+dependencies. Array task indices are `0=A1`, `1=A2`, `2=A3`, and the training
+array is `%1` (one arm at a time). The training array is not allowed to start
+when either preflight fails. Inspect its printed job IDs with `squeue` and
+`sacct`; logs are under `/scratch/coop/theret/GraphAttention_runs/`.
+
+For manually controlled submissions:
 
 ```bash
-sbatch --array=0 scripts/slurm/m47_10_ablation_train.slurm
-sbatch --array=1 scripts/slurm/m47_10_ablation_train.slurm
-sbatch --array=2 scripts/slurm/m47_10_ablation_train.slurm
+MESH=$(sbatch --parsable scripts/slurm/m47_10_mesh_preflight.slurm)
+GPU=$(sbatch --parsable --dependency=afterok:${MESH%%;*} scripts/slurm/m47_10_gpu_preflight.slurm)
+sbatch --dependency=afterok:${GPU%%;*} --array=0-2%1 scripts/slurm/m47_10_ablation_train.slurm
 ```
 
-If a 12-hour allocation ends before 100 epochs, **resubmit the same index**
-at the same Git revision. The launcher detects a completed `last.pt` and
-uses strict checkpoint/optimizer/Flow Matching RNG restoration. An interrupted
-incomplete epoch is replayed. Concurrent writers to the same arm are blocked.
+If a 12-hour allocation ends before epoch 100, **resubmit the same array task**
+after ensuring the preflight gate still matches this exact Git revision:
+
+```bash
+sbatch --array=0 scripts/slurm/m47_10_ablation_train.slurm  # A1
+sbatch --array=1 scripts/slurm/m47_10_ablation_train.slurm  # A2
+sbatch --array=2 scripts/slurm/m47_10_ablation_train.slurm  # A3
+```
+
+The launcher detects a completed `last.pt` and uses strict checkpoint,
+optimizer and Flow Matching RNG restoration. An interrupted incomplete epoch
+is replayed. Concurrent writers to the same arm are blocked. **Do not update
+Git while a campaign or its resumed jobs are in progress:** this invalidates
+the locked training signatures and the preflight report.
 
 Outputs:
 
 ```
 /scratch/coop/theret/GraphAttention_runs/m47_10_relative_periodic/
+    preflight/{mesh.json,gpu.json,ready.json}
     a1/train_s42/
     a2/train_s42/
     a3/train_s42/
@@ -83,11 +130,11 @@ Outputs:
 Each run saves `last.pt` and `best.pt` every epoch, plus immutable
 `epoch_0010.pt`, `epoch_0020.pt`, ..., `epoch_0100.pt`, and original
 `history.csv`, `history.json`, `run_signature.json`, `split.json`,
-`standardizers.pt`, and `summary.json`. Test fields are not evaluated by the new campaign
-trainer (the legacy M43/M47 behavior is unchanged). Evaluate covariance separately
-on the frozen validation split with the correct per-case scale and this
-checkpoint's recorded data/topology policy. No test samples are used
-for checkpoint selection.
+`standardizers.pt`, and `summary.json`. Test fields are not evaluated by the
+new campaign trainer (the legacy M43/M47 behavior is unchanged). Evaluate
+covariance separately on the frozen validation split with the correct
+per-case scale and each checkpoint's recorded node/topology policy. No test
+samples are used for checkpoint selection.
 
 ## Important interpretation constraints
 

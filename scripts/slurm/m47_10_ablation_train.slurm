@@ -56,6 +56,14 @@ BIND=(-B /home:/home -B /scratch:/scratch)
 for mount in /archivenfs /archive2; do
     if [ -d "$mount" ]; then BIND+=(-B "$mount:$mount"); fi
 done
+# Refuse all training until the same-revision actual-mesh and full-size
+# A3 forward/backward/AdamW preflights have passed. This also blocks stale
+# external physical-reference or stationarity manifests.
+singularity exec "${BIND[@]}" "$IMAGE" "$PYTHON" -u -m scripts.m47_10_preflight \
+    --stage verify --repo "$REPO" --archive-root "$DATA" --reference-dir "$REFS" \
+    --reference-audit "$REF_AUDIT" --qualified-manifest "$QUALIFIED" \
+    --source-inventory "$INVENTORY" --selection-policy "$POLICY" \
+    --output-root "$ROOT"
 printf '[M47.10] arm=%s epoch_target=100 checkpoint_every=10 source=iid mach_re=on\n' "$VARIANT"
 printf '[M47.10] job=%s revision=%s run=%s resume=%s\n' "$SLURM_JOB_ID" "$(git rev-parse HEAD)" "$OUT" "${ARGS[*]:-no}"
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
