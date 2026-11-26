@@ -65,3 +65,33 @@ def test_artifact_reference_fingerprint_and_arg_validation():
         _generation("bad-no-path")
     with pytest.raises(Exception):
         _generation("M38=relative/path")
+
+
+def test_archived_generation_loader_accepts_valid_population_ids(tmp_path, monkeypatch):
+    """Exercise _load itself so mismatched local variable names fail preflight."""
+    import scripts.m47_9_hit_les_forced_helmholtz as audit
+
+    for filename in ("generated_test.pt", "resolved_config.yaml", "summary.json"):
+        (tmp_path / filename).write_text("fixture")
+
+    grid = SimpleNamespace(source_shape=(3, 3, 1))
+    monkeypatch.setattr(
+        audit, "_load_grid_3d",
+        lambda source_cfg, benchmark_cfg: (grid, tmp_path / "mesh.h5"),
+    )
+    monkeypatch.setattr(audit.OmegaConf, "load", lambda _: {})
+    monkeypatch.setattr(audit.torch, "load", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        audit, "_fixed_mesh_samples",
+        lambda artifact: (
+            np.zeros((2, 9, 5)), np.zeros((2, 9, 5)),
+            ("generated_0", "generated_1"),
+            ("reference_0", "reference_1"),
+            ("rho", "rhou", "rhov", "rhow", "rhoE"),
+        ),
+    )
+
+    result = audit._load(tmp_path, {})
+    assert result[2] == ("generated_0", "generated_1")
+    assert result[3] == ("reference_0", "reference_1")
+    assert result[0].shape == (2, 9, 5)
