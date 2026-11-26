@@ -12,7 +12,10 @@ command -v sbatch >/dev/null
 command -v git >/dev/null
 submit_id() {
     local id
-    id=$(sbatch --parsable "$@")
+    if ! id=$(sbatch --parsable "$@"); then
+        echo "Slurm submission failed: sbatch --parsable $*" >&2
+        return 1
+    fi
     id=${id%%;*}
     [[ "$id" =~ ^[0-9]+$ ]] || {
         echo "Unexpected Slurm job ID: $id" >&2; return 2;

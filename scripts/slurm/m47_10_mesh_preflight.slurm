@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=m47_10_mesh
 #SBATCH --partition=grace
+#SBATCH --gres=gpu:0
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
