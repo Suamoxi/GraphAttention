@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable
 
 import hydra
@@ -28,6 +29,7 @@ from graph_attention.training.data_pipeline import (
     task_batch_to_device,
 )
 from graph_attention.training.model_factory import instantiate_controlled_model
+from graph_attention.utils.provenance import collect_runtime_provenance
 
 
 @hydra.main(
@@ -46,6 +48,7 @@ def run_generative_generation(
     """Generate an unpaired population using a frozen validation or test split."""
 
     run_dir = _existing_directory(cfg.run_dir, "run_dir")
+    runtime_provenance = collect_runtime_provenance(Path(__file__).resolve().parents[1])
     source_config_path = run_dir / "resolved_config.yaml"
     source_summary_path = run_dir / "summary.json"
     manifest_path = run_dir / "dataset_split_manifest.json"
@@ -162,6 +165,10 @@ def run_generative_generation(
             f"generation output already exists: {output_dir}; set overwrite=true explicitly"
         )
 
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.reset_peak_memory_stats(device)
+    started = perf_counter()
     artifact, generation = _generate_test_population(
         model,
         test_loader,
@@ -172,6 +179,13 @@ def run_generative_generation(
         sampler=sampler,
         diagnostic_sampler=diagnostic_sampler,
     )
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    generation_seconds = perf_counter() - started
+    peak_allocated_gib = (torch.cuda.max_memory_allocated(device) / 1024**3
+                          if device.type == "cuda" else None)
+    peak_reserved_gib = (torch.cuda.max_memory_reserved(device) / 1024**3
+                         if device.type == "cuda" else None)
     if diagnostic_source_distribution is not None:
         artifact["initial_state_distribution"] = diagnostic_source_distribution
         generation["initial_state_distribution"] = diagnostic_source_distribution
@@ -198,6 +212,12 @@ def run_generative_generation(
         "source_run_name": run_dir.name,
         "source_run_dir": str(run_dir),
         "source_checkpoint": checkpoint_path.name,
+        "source_checkpoint_runtime_provenance": checkpoint.get("runtime_provenance"),
+        "runtime_provenance": runtime_provenance,
+        "generation_batch_size": batch_size,
+        "generation_seconds": generation_seconds,
+        "generation_peak_allocated_gib": peak_allocated_gib,
+        "generation_peak_reserved_gib": peak_reserved_gib,
         "source_checkpoint_epoch": (
             int(checkpoint_epoch) if checkpoint_epoch is not None else None
         ),

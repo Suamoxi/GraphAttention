@@ -1876,3 +1876,17 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
 - tests/unit/test_m49_evaluation_checkpoint.py guards model identity,
   epoch, topology, and sampling-study scope. Target runtime and total
   generation cost not measured. No change to training or model numerics.
+
+
+### M49 main-checkout evaluation and Full DiT inference batch (user decision)
+- Full DiT generation defaults to B8, matching the demonstrated training
+  microbatch; M49_EVAL_BATCH_SIZE overrides it. No change to sampler or
+  population. Inference peak memory/throughput at B8 remain unmeasured.
+- Depth benchmark selection warns rather than rejecting solely on a new
+  SHA. Runtime/hardware, GPU memory size, architecture and previously
+  measured memory gates remain checked. Measurements are historical on
+  a different revision, not a guarantee of present throughput or fit.
+- Generic generation summary records execution and source-checkpoint
+  provenance, sampling batch, elapsed time and CUDA peak allocated/reserved
+  memory. No training numerical or scientific change.
+- New benchmark reuse test and target execution pending.

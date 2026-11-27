@@ -11,6 +11,7 @@ import gc
 import json
 import math
 import statistics
+import sys
 import time
 from pathlib import Path
 
@@ -192,10 +193,16 @@ def selection(path,variant):
     report=json.loads(path.read_text())
     runtime=collect_runtime_provenance()
     current=runtime["git"]
+    measured=report["provenance"]["git"]
     if (report["protocol"]!="m49_depth_real_accumulated_v1" or report["variant"]!=variant
         or report["status"]!="ok" or not report["absolute_coordinate_embedding"]
-        or report["provenance"]["git"]["sha"]!=current["sha"] or current["dirty"] is not False):
+        or not measured["sha"] or measured["dirty"] is not False
+        or not current["sha"] or current["dirty"] is not False):
         raise ValueError("incompatible or unqualified benchmark report")
+    if measured["sha"] != current["sha"]:
+        print(f"[M49] Reusing benchmark from {measured['sha']} on {current['sha']}; "
+              "memory and throughput are historical measurements, not requalified "
+              "for the current revision.", file=sys.stderr, flush=True)
     if runtime["runtime"] != report["provenance"]["runtime"] or runtime["hardware"] != report["provenance"]["hardware"]:
         raise ValueError("training runtime/hardware differs from benchmark")
     total=torch.cuda.get_device_properties("cuda").total_memory/1024**3
