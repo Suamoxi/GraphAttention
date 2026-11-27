@@ -1119,3 +1119,26 @@ floating point), not rotational isotropy or divergence/conservation.
 Full-mesh only; mixed periodic/open batches, unequal scalar lengths,
 non-cubic/partially periodic meshes, weighted meshes and partitioned
 execution are not qualified.
+
+
+### M49 global integral audit (project diagnostic)
+For uniform periodic HIT, use the 32^3 physical representatives and
+uniform quadrature V/N, where V is the product of the original box side
+lengths in meters. The reference fields retain native precision; FP64
+nondimensionalization and accumulation. Saved generated nondimensional
+FP32 states are accumulated in FP64 and dimensionalized with the frozen
+named reference scales. Report mass [kg], momentum [kg m/s], and total
+energy [J], as well as nondimensional means and their distributions.
+For the original 33^3 representation, also report native equal-volume
+hex quadrature (each cell contributes V_cell/8 at each vertex). Its
+pushforward on the periodic quotient must be uniform; for inconsistent
+generated endpoints, report the difference from the canonical unique
+node quadrature explicitly. The two conventions coincide for valid
+endpoint-identical fields. The audit uses only the frozen 800 training
+and 180 validation snapshots and saved canonical unpaired validation
+generations, checking reference IDs, native field order and FP32 reference
+arrays. No test access, correction, clipping or new training. Mass is
+a candidate invariant, subject to the actual simulation's balance;
+forced global momentum and energy are not assumed fixed. Near-zero
+reference variation is reported in absolute units rather than dividing
+by a near-zero global mean or temporal variance.

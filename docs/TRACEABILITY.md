@@ -1846,3 +1846,17 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   model, data split, iid source, loss and scientific diagnostics are
   unchanged. M47.10 launchers retain their own existing qualification.
 - New smoke arm not yet executed on Grace.
+
+
+### M49 global integrals
+- scripts/audit_m49_global_integrals.py and
+  scripts/slurm/m49_global_integrals.slurm: CPU read-only native
+  reference audit and unpaired generated distribution comparisons.
+- tests/unit/test_m49_global_integrals.py: analytic dimensional
+  integrals, uniform periodic quotient of native hex weights,
+  endpoint ambiguity, zero-variance reference and invalid-state handling.
+- Inspect train/validation mass, momentum and energy statistics before
+  selecting any train-derived global constraint or correction. All
+  generated finite values enter raw integral statistics; report
+  admissibility counts separately. No momentum or energy projection.
+- Target data and tests still require execution.
