@@ -103,10 +103,29 @@ def population(values, ids, grid, channels, u_ref):
     return result, nodes
 
 
+def validate_checkpoint(checkpoint, source, epoch, *, sampling_study=False):
+    if checkpoint["epoch"] != epoch-1 or checkpoint["global_step"] != epoch*50:
+        raise ValueError("checkpoint epoch/update mismatch")
+    model_class = checkpoint["model_class"]
+    if model_class not in ("AlternatingDilatedGeometricDiT", "FullDiTGraphTransformer"):
+        raise ValueError("expected M49 DiNAT or Full DiT")
+    if str(source.model._target_).rsplit(".", 1)[-1] != model_class:
+        raise ValueError("checkpoint model differs from frozen source configuration")
+    endpoint_policy = str(source.data.get("periodic_endpoint_policy", "keep"))
+    if endpoint_policy not in ("keep", "drop_max", "periodic_quotient"):
+        raise ValueError("unsupported M49 endpoint policy")
+    if model_class == "FullDiTGraphTransformer" and endpoint_policy != "keep":
+        raise ValueError("Full DiT evaluation is qualified only for the original stored-node baseline")
+    if sampling_study and (epoch != 1000 or endpoint_policy != "keep"
+                           or model_class != "AlternatingDilatedGeometricDiT"):
+        raise ValueError("sampling study requires original endpoint-inclusive DiNAT epoch 1000")
+    return model_class, endpoint_policy
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run-dir", type=Path, required=True)
-    p.add_argument("--epoch", type=int, choices=EPOCHS, required=True)
+    p.add_argument("--epoch", type=int, required=True)
     p.add_argument("--steps", type=int, choices=(50,100,200), default=50)
     p.add_argument("--sampling-study", action="store_true")
     p.add_argument("--boundary", action="store_true")
@@ -114,6 +133,8 @@ def main():
     args = p.parse_args()
     if args.batch_size < 1:
         p.error("batch size must be positive")
+    if not 1 <= args.epoch <= 1000:
+        p.error("epoch must be in [1,1000] and have an immutable epoch_NNNN.pt checkpoint")
     run = args.run_dir.resolve()
     manifest = json.loads((run/"dataset_split_manifest.json").read_text())
     if len(manifest["validation_ids"]) != 180 or len(manifest["train_ids"]) != 800:
@@ -121,15 +142,11 @@ def main():
     source = OmegaConf.load(run/"resolved_config.yaml")
     ckpt_name = f"epoch_{args.epoch:04d}.pt"
     checkpoint = torch.load(run/ckpt_name, map_location="cpu", weights_only=True)
-    if checkpoint["epoch"] != args.epoch-1 or checkpoint["global_step"] != args.epoch*50:
-        raise ValueError("checkpoint epoch/update mismatch")
-    if checkpoint["model_class"] != "AlternatingDilatedGeometricDiT":
-        raise ValueError("expected M49 DiNAT")
+    model_class, endpoint_policy = validate_checkpoint(
+        checkpoint, source, args.epoch, sampling_study=args.sampling_study,
+    )
     del checkpoint
-    endpoint_policy = source.data.get("periodic_endpoint_policy", "keep")
     unique = endpoint_policy in ("drop_max", "periodic_quotient")
-    if args.sampling_study and (args.epoch != 1000 or unique):
-        raise ValueError("sampling study requires original endpoint-inclusive epoch 1000")
     prefix = "m49_sampling" if args.sampling_study else "m49_validation"
     name = f"{prefix}_epoch_{args.epoch:04d}_heun{args.steps}_seed5678"
     dest = run/"generations"/name
@@ -147,7 +164,7 @@ def main():
     generation = json.loads((dest/"summary.json").read_text())
     if int(OmegaConf.load(dest/"generation_config.yaml").batch_size) != args.batch_size:
         raise ValueError("existing generation batch size differs")
-    if generation["source_checkpoint"] != ckpt_name or generation["reference_population"] != "validation" or generation["sampling_seed"] != 5678 or generation["sampling_steps"] != args.steps or generation["sampling_solver"] != "heun":
+    if generation["source_checkpoint"] != ckpt_name or generation["source_checkpoint_epoch"] != args.epoch-1 or generation["model"] != model_class or generation["reference_population"] != "validation" or generation["sampling_seed"] != 5678 or generation["sampling_steps"] != args.steps or generation["sampling_solver"] != "heun":
         raise ValueError("generation artifact protocol mismatch")
     artifact = torch.load(dest/"generated_validation.pt", map_location="cpu", weights_only=True)
     if tuple(artifact["reference_ids"]) != tuple(manifest["validation_ids"]):
@@ -200,7 +217,9 @@ def main():
                   model_node_count=n, generation_batch_size=args.batch_size,
                   periodic_endpoint_policy=endpoint_policy,
                   periodic_wrap_edges=bool(endpoint_policy == "periodic_quotient"),
-                  attention_hop_schedule=list(source.model.get("attention_hop_schedule",(1,2))),
+                  model_class=model_class,
+                  attention_hop_schedule=(list(source.model.get("attention_hop_schedule",(1,2)))
+                                          if model_class == "AlternatingDilatedGeometricDiT" else None),
                   model_layers=int(source.model.num_layers),
                   endpoint_values_lifted_for_diagnostics=unique,
                   endpoint_mismatch_interpretation=("zero by construction, not a learned property" if unique else "independent stored-node predictions"),

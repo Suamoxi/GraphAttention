@@ -1860,3 +1860,19 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   generated finite values enter raw integral statistics; report
   admissibility counts separately. No momentum or energy projection.
 - Target data and tests still require execution.
+
+
+### M49 common generation evaluator extension
+- Accept exact immutable epoch_NNNN.pt checkpoints (1..1000) from the
+  original FullDiTGraphTransformer baseline and the DiNAT variants,
+  checking epoch/global step and frozen model identity; the separate
+  sampling study remains restricted to original DiNAT epoch 1000.
+- Preserve the existing 180-snapshot unpaired validation, 50-step
+  Heun, seed 5678, frozen scaler and physical diagnostics. Full DiT
+  reports no sparse hop schedule. New scripts/slurm/m49_full_eval.slurm
+  defaults to epoch 75, B1 inference, 12 h Grace limit. Epoch 80 may
+  be selected only if its immutable checkpoint exists. Never read a
+  changing last.pt as an evaluation milestone.
+- tests/unit/test_m49_evaluation_checkpoint.py guards model identity,
+  epoch, topology, and sampling-study scope. Target runtime and total
+  generation cost not measured. No change to training or model numerics.
