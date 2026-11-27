@@ -1890,3 +1890,14 @@ Status: implementation committed; full-repo/GH200 numerical and capacity qualifi
   provenance, sampling batch, elapsed time and CUDA peak allocated/reserved
   memory. No training numerical or scientific change.
 - New benchmark reuse test and target execution pending.
+
+
+### M49 ordinary main-checkout resume (user decision)
+- Use main for new jobs; no new per-experiment clones or required detached
+  SHA. Keep existing live jobs untouched. Clean, identified ordinary
+  resume revisions may differ: save resume_revision_history boundaries,
+  retain frozen resolved config, split, scalers and state restore. M49
+  resume launcher uses the saved config directly. Legacy Full DiT's
+  missing-provenance migration remains exceptional and unchanged.
+- Unit coverage for clean revision transitions and missing/dirty provenance
+  in test_m49_resume_revision_history.py. Target execution pending.

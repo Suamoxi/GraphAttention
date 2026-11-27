@@ -279,8 +279,12 @@ saved split/scaler equality, RNG and optimizer step counters exactly and
 reports numerical deviations in loss, parameters, AdamW moments and
 continuation updates. Thresholds are smoke-test heuristics, not a claim of
 bitwise GPU determinism. Test samples are not evaluated.
-Strict resume still prohibits changing Git revisions; an already-running
-pinned legacy run needs an explicit, reviewed migration before using the fix.
+Ordinary strict resume now permits clean, identified Git revision changes.
+The original manifest/configuration remains frozen; each continuation
+records the previous and current checkpoint SHAs and completed epoch in
+resume_revision_history. Cross-revision numerical equivalence is not
+claimed. A legacy run with unidentified original provenance still needs
+the reviewed migration below.
 
 ### M49 Full DiT legacy migration
 

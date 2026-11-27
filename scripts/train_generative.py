@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,27 @@ from graph_attention.geometry.relative import periodic_length_from_mesh_metadata
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     run_generative_training(cfg)
+
+
+def _resume_revision_history(checkpoint, runtime):
+    """Record continuation boundaries without requiring a detached checkout."""
+    history = list(checkpoint.get("resume_revision_history", []))
+    previous = checkpoint.get("runtime_provenance", {}).get("git", {})
+    current = runtime["git"]
+    if not previous.get("sha") or not current.get("sha"):
+        raise RuntimeError("strict resume requires identified checkpoint and current Git revisions")
+    if previous.get("dirty") is not False or current.get("dirty") is not False:
+        raise RuntimeError("strict resume requires clean checkpoint and current revisions")
+    if previous["sha"] != current["sha"]:
+        record = {
+            "from_sha": previous["sha"], "to_sha": current["sha"],
+            "completed_epochs": int(checkpoint["epoch"]) + 1,
+        }
+        history.append(record)
+        print(f"[resume] {record}; configuration and checkpoint checks remain strict. "
+              "Cross-revision numerical equivalence is not asserted.",
+              file=sys.stderr, flush=True)
+    return history
 
 
 def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = False,
@@ -105,9 +127,10 @@ def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = Fal
         if contract(previous) != contract(cfg):
             raise RuntimeError("resume configuration differs from original run")
         manifest = json.loads((output_dir / "dataset_split_manifest.json").read_text())
-        if (manifest["runtime_provenance"]["git"]["sha"] != runtime_provenance["git"]["sha"]
-                and not m49_resume_migration):
-            raise RuntimeError("resume Git revision differs from original run")
+        if not m49_resume_migration:
+            original_git = manifest["runtime_provenance"]["git"]
+            if not original_git.get("sha") or original_git.get("dirty") is not False:
+                raise RuntimeError("unidentified original Git provenance requires reviewed legacy migration")
     dataset = instantiate(cfg.data)
     if not hasattr(dataset, "field_catalog"):
         raise TypeError("configured dataset must expose a field_catalog")
@@ -240,6 +263,7 @@ def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = Fal
     prior_peak_allocated_gib = 0.0
     prior_peak_reserved_gib = 0.0
     revision_migration = None
+    resume_revision_history = []
 
     if resume_existing:
         if not last_path.is_file():
@@ -262,6 +286,11 @@ def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = Fal
                 "optimizer_state_dict", "history", "global_step",
             )):
                 raise RuntimeError("M49 migration requires complete epoch checkpoint")
+        resume_revision_history = list(checkpoint.get("resume_revision_history", []))
+        if strict_resume and not m49_resume_migration:
+            if checkpoint.get("revision_migration") is not None:
+                raise RuntimeError("use the reviewed legacy Full DiT migration launcher for this run")
+            resume_revision_history = _resume_revision_history(checkpoint, runtime_provenance)
         model.load_state_dict(checkpoint["model_state_dict"])
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         initialization = checkpoint.get("initialization", initialization)
@@ -417,6 +446,8 @@ def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = Fal
             session_wall_seconds = time.perf_counter() - fit_start
             if revision_migration is not None:
                 checkpoint["revision_migration"] = revision_migration
+            if resume_revision_history:
+                checkpoint["resume_revision_history"] = resume_revision_history
             checkpoint["history"] = history
             checkpoint["global_step"] = global_step
             checkpoint["training_generator_state"] = training_generator.get_state()
@@ -474,6 +505,8 @@ def run_generative_training(cfg: DictConfig, *, m49_resume_migration: bool = Fal
     summary = {
         "run_name": run_name,
         "revision_migration": revision_migration,
+        "resume_revision_history": resume_revision_history,
+        "runtime_provenance": runtime_provenance,
         **adapter.summary_metadata(),
         "model": type(model).__name__,
         "model_parameters": sum(parameter.numel() for parameter in model.parameters()),

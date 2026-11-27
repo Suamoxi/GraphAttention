@@ -363,6 +363,21 @@ At minimum preserve:
 - statistical scalers;
 - random seeds.
 
+## Repository workflow
+
+Use the single normal `main` checkout by default for new experiments,
+training, generation, and analysis. Do not require a new branch, clone,
+worktree, detached HEAD or pinned commit solely to launch a run. Record
+actual Git provenance instead. Ordinary checkpoint resumes retain the
+frozen configuration, split, scalers and model/optimizer state, and record
+clean revision transitions rather than enforcing identical Git SHAs.
+Reusing a benchmark on a newer revision is permitted with a provenance
+warning; its performance measurements remain historical. Existing special
+legacy migrations with missing provenance retain their reviewed safeguards.
+Do not change files beneath jobs actively using the same checkout; finish
+or stop those jobs before pulling changes there. Leave already-running
+legacy checkouts alone.
+
 ## Testing requirements
 
 Keep distinct categories of tests:

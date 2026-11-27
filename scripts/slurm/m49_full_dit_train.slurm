@@ -91,7 +91,7 @@ case "$MODE" in
         RESUME=false
         ;;
     resume)
-        test -s "$RUN_DIR/last.pt" || { echo "Missing last.pt"; exit 2; }
+        test -s "$RUN_DIR/last.pt" && test -s "$RUN_DIR/resolved_config.yaml" || { echo "Missing last.pt or resolved_config.yaml"; exit 2; }
         RESUME=true
         ;;
     *) echo "M49_MODE must be start or resume"; exit 2;;
@@ -100,9 +100,8 @@ esac
 git rev-parse HEAD
 nvidia-smi
 echo "RUN_DIR=$RUN_DIR cumulative_epochs=$MAX_EPOCHS resume=$RESUME"
-# Explicitly use this checkout's source, including in a detached worktree.
-# New runs use a standalone checkout under /scratch (no linked worktree).
-# Preserve the old launch path for existing legacy worktrees.
+# The normal checkout on main is sufficient; record its actual SHA.
+# Preserve the old path bindings for existing legacy worktrees.
 if [[ "$ARCH" == dinat_unique || "$ARCH" == dinat_relative || "$ARCH" == dinat_periodic || "$ARCH" == dinat_depth ]]; then
     test -d "$REPO/.git" || { echo "Use a standalone checkout for this ablation"; exit 2; }
     test "$(singularity exec "${BIND[@]}" "$IMAGE" git -C "$REPO" rev-parse HEAD)" = "$(git rev-parse HEAD)"
@@ -131,6 +130,16 @@ if [[ "$ARCH" == dinat_unique || "$ARCH" == dinat_relative || "$ARCH" == dinat_p
 else
     BIND+=(-B /gpfs-calypso/scratch:/gpfs-calypso/scratch)
 fi
+if [[ "$MODE" == resume ]]; then
+    # Reuse the exact saved contract, including old absolute split/case paths.
+    # No need to reconstruct a Hydra config from a previous checkout.
+    singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
+        "$IMAGE" "$PYTHON" -u -m scripts.train_generative \
+        --config-path "$RUN_DIR" --config-name resolved_config \
+        run_name="$RUN_NAME" generative.output_root="$ROOT/training" \
+        generative.resume=true generative.max_epochs="$MAX_EPOCHS" \
+        generative.strict_resume=true generative.evaluate_test=false
+else
 singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
     "$IMAGE" "$PYTHON" -u -m scripts.train_generative \
     "${DATA_ARGS[@]}" \
@@ -149,6 +158,7 @@ singularity exec --nv "${BIND[@]}" --env "PYTHONPATH=$REPO/src:$REPO" \
     generative.max_epochs="$MAX_EPOCHS" generative.resume="$RESUME" \
     generative.strict_resume=true generative.checkpoint_every="$CHECKPOINT_EVERY" \
     generative.evaluate_test=false
+fi
 
 if [[ "$ARCH" == dinat_depth ]]; then
     if [[ -f "$RUN_DIR/depth_benchmark.json" ]]; then
