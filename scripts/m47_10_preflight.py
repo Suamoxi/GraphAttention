@@ -254,8 +254,11 @@ def run_gpu(args: argparse.Namespace, expected: dict) -> None:
         raise AssertionError("A3 exact-two-hop degree must be 18 for every node")
     topology_seconds = perf_counter() - start
     device = torch.device("cuda:0")
-    torch.cuda.reset_peak_memory_stats(device)
+    # Moving the packed batch initializes the CUDA runtime/allocator before
+    # querying or resetting its memory counters. A fresh Python process can
+    # otherwise fail here with RuntimeError: Invalid device argument.
     prepared = task_batch_to_device(host, device=device, dtype=torch.float32)
+    torch.cuda.reset_peak_memory_stats(device)
     # This is a resource/kernel correctness test, not an optimization study:
     # synthetic STANDARDIZED Gaussian targets avoid fitting a scientific scaler.
     rng = torch.Generator(device=device).manual_seed(104710)
